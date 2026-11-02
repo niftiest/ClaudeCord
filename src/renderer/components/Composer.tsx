@@ -412,7 +412,7 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
           <textarea
             ref={textareaRef}
             className="composer-input"
-            placeholder={lock !== null ? 'Chat is open elsewhere' : 'Message #channel  ·  / for commands  ·  @ for files  ·  ! for a shell command'}
+            placeholder={lock !== null ? 'Chat is open elsewhere' : 'Message Claude  ·  / for commands  ·  @ for files  ·  ! for a shell command'}
             disabled={lock !== null}
             value={text}
             rows={1}

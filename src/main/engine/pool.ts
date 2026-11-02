@@ -1,5 +1,5 @@
 import type { SpawnSpec } from './transport'
-import type { LiveEvent, EngineSnapshot, TurnInfo } from '../../shared/engine-types'
+import type { BackgroundTask, LiveEvent, EngineSnapshot, TurnInfo } from '../../shared/engine-types'
 
 /** Narrow surface of Transport the pool depends on -- lets tests inject a
  *  fake transport (no real child_process spawned) while the production
@@ -43,6 +43,14 @@ function settingsKey(spec: SpawnSpec): string {
   return JSON.stringify([spec.model, spec.effort, spec.permissionMode, spec.skipPermissions, spec.chrome, spec.maxBudgetUsd, spec.extraArgs?.includes('--prompt-suggestions') ?? false])
 }
 
+/** Claude Code's new list, keeping when each task started and how far it has got. */
+function mergeBackgroundTasks(known: BackgroundTask[], incoming: BackgroundTask[], now: number): BackgroundTask[] {
+  return incoming.map(t => {
+    const before = known.find(k => k.id === t.id)
+    return before === undefined ? { ...t, startedAt: now } : { ...t, startedAt: before.startedAt, lastTool: before.lastTool, tokens: before.tokens }
+  })
+}
+
 type QueueItem = { key: string; spec: SpawnSpec; msg: object }
 
 interface Entry {
@@ -65,6 +73,9 @@ interface Entry {
    *  here so a chat reopened mid-turn shows the real figures. */
   turnStartedAt: number
   turnTokens: number
+  /** What this process has running in the background. They die with it, so it isn't
+   *  idle while there are any, even though no turn is running. */
+  backgroundTasks: BackgroundTask[]
   /** Set the instant this entry is reaped/shut down. Captured by closures
    *  passed to `transport.on`/`onExit` at spawn time, so a transport's own
    *  late-firing callbacks (e.g. a delayed OS-level exit after we've already
@@ -158,7 +169,9 @@ export class SessionPool {
     // have since changed makes way for a new one, which resumes the same chat. The new
     // one has to wait for the old to exit: until then its session lock still stands,
     // and it would read as another program holding the chat.
-    if (entry !== undefined && !entry.busy && !entry.disposed && (entry.reload === true || settingsKey(entry.spec) !== settingsKey(spec))) {
+    // Not while it has background work: replacing it would kill that work, so this
+    // message goes to the process as it is.
+    if (entry !== undefined && !entry.busy && !entry.disposed && entry.backgroundTasks.length === 0 && (entry.reload === true || settingsKey(entry.spec) !== settingsKey(spec))) {
       const after: Array<() => void> = [() => this.send(sessionKey, spec, msg)]
       this.waitingForExit.set(sessionKey, after)
       entry.transport.onExit(() => {
@@ -233,6 +246,11 @@ export class SessionPool {
     return { startedAt: entry.turnStartedAt, tokens: entry.turnTokens, lastActivity: entry.lastActivity }
   }
 
+  /** What this chat's process is running in the background. */
+  backgroundTasks(sessionKey: string): BackgroundTask[] {
+    return this.live.get(sessionKey)?.backgroundTasks ?? []
+  }
+
   /** A snapshot of every live engine for the pool HUD (engine:list). */
   snapshot(): EngineSnapshot[] {
     const out: EngineSnapshot[] = []
@@ -245,7 +263,8 @@ export class SessionPool {
         effort: entry.spec.effort ?? null,
         startedAt: entry.startedAt,
         lastActivity: entry.lastActivity,
-        busy: entry.busy
+        busy: entry.busy,
+        background: entry.backgroundTasks.length
       })
     }
     return out
@@ -274,7 +293,7 @@ export class SessionPool {
    *  was released. */
   releaseIdle(sessionKey: string): boolean {
     const entry = this.live.get(sessionKey)
-    if (entry === undefined || entry.disposed || entry.busy) return false
+    if (entry === undefined || entry.disposed || entry.busy || entry.backgroundTasks.length > 0) return false
     this.dispose(sessionKey, entry)
     this.drainQueue()
     return true
@@ -286,7 +305,7 @@ export class SessionPool {
     const entry = this.live.get(sessionKey)
     if (entry === undefined || entry.disposed) return 'none'
     entry.reload = true
-    return entry.busy ? 'afterTurn' : 'restarted'
+    return entry.busy || entry.backgroundTasks.length > 0 ? 'afterTurn' : 'restarted'
   }
 
   /** Asks a live process something (not a turn: it doesn't count as activity).
@@ -332,7 +351,7 @@ export class SessionPool {
     // that existed when reapIdle was called.
     const snapshot = [...this.live.entries()]
     for (const [key, entry] of snapshot) {
-      if (entry.disposed) continue
+      if (entry.disposed || entry.backgroundTasks.length > 0) continue
       if (nowMs - entry.lastActivity > this.idleReapMs) {
         this.dispose(key, entry)
       }
@@ -370,7 +389,7 @@ export class SessionPool {
   private spawn(sessionKey: string, spec: SpawnSpec, msg: object): void {
     const transport = this.transportFactory(spec)
     const now = this.now()
-    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: true, turnStartedAt: now, turnTokens: 0, disposed: false }
+    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: true, turnStartedAt: now, turnTokens: 0, backgroundTasks: [], disposed: false }
     this.live.set(sessionKey, entry)
 
     transport.on((e) => {
@@ -384,6 +403,22 @@ export class SessionPool {
       // false), so the UI stops showing it as streaming.
       if (e.kind === 'result') entry.busy = false
       if (e.kind === 'usage') entry.turnTokens += e.outputTokens
+      // Nobody sent this turn: a background task finished and Claude Code carried on.
+      if (e.kind === 'init' && !entry.busy) {
+        entry.busy = true
+        entry.turnStartedAt = entry.lastActivity
+        entry.turnTokens = 0
+      }
+      if (e.kind === 'background') {
+        entry.backgroundTasks = mergeBackgroundTasks(entry.backgroundTasks, e.tasks, entry.lastActivity)
+        this.emitTo(sessionKey, { kind: 'background', tasks: entry.backgroundTasks })
+        return
+      }
+      if (e.kind === 'taskProgress') {
+        entry.backgroundTasks = entry.backgroundTasks.map(t => t.id === e.taskId ? { ...t, lastTool: e.lastTool ?? t.lastTool, tokens: e.tokens ?? t.tokens } : t)
+        this.emitTo(sessionKey, { kind: 'background', tasks: entry.backgroundTasks })
+        return
+      }
       this.emitTo(sessionKey, e)
     })
 

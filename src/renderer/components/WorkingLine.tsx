@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { workingDetails, type PendingTool } from '../lib'
+import { backgroundTaskLabel, workingDetails, type PendingTool } from '../lib'
+import type { BackgroundTask } from '../../shared/engine-types'
 
 /** The line under a chat while Claude works, like the terminal's spinner. The word
  *  is ClaudeCord's own: Claude Code picks its words inside the terminal and doesn't
@@ -12,6 +13,34 @@ const VERBS = [
 
 export function pickVerb(seed: number): string {
   return VERBS[Math.abs(Math.floor(seed)) % VERBS.length]!
+}
+
+const MAX_TASK_ROWS = 4
+
+/** Work still going after Claude's turn ended. Without this a chat waiting on it looks
+ *  finished, until a reply turns up by itself. */
+export function BackgroundTasksLine({ tasks, running }: { tasks: BackgroundTask[]; running: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  if (tasks.length === 0) return null
+  const count = tasks.length === 1 ? '1 background task' : `${tasks.length} background tasks`
+  return (
+    <div className="background-tasks" role="status">
+      {!running && (
+        <div className="working-line background-tasks-head">
+          <span className="working-star" aria-hidden="true">✻</span> Waiting on {count}… <span className="working-details">(Claude picks this up when it finishes; you can keep chatting)</span>
+        </div>
+      )}
+      {tasks.slice(0, MAX_TASK_ROWS).map(task => {
+        const { title, details } = backgroundTaskLabel(task, now)
+        return <div className="background-task" key={task.id} title={title}>{title} <span className="working-details">({details.join(' · ')})</span></div>
+      })}
+      {tasks.length > MAX_TASK_ROWS && <div className="background-task working-details">and {tasks.length - MAX_TASK_ROWS} more</div>}
+    </div>
+  )
 }
 
 export function WorkingLine({ startedAt, tokens, pending, lastActivity, status, waitingOnYou }: {

@@ -8,9 +8,9 @@ export function describeUpdate(s: UpdateStatus): string {
     case 'idle': return 'Not checked yet.'
     case 'checking': return 'Checking for updates…'
     case 'none': return 'You have the latest version.'
-    case 'available': return s.version ? `Version ${s.version} is available.` : 'A new version is available.'
+    case 'available': return `Version ${s.version} is available, but it couldn't be downloaded automatically${s.reason !== undefined ? `: ${s.reason}` : '.'}`
     case 'downloading': return `Downloading version ${s.version}… ${s.percent}%`
-    case 'ready': return `Version ${s.version} is ready. Restart ClaudeCord to finish updating.`
+    case 'ready': return `Version ${s.version} is ready. It installs the next time ClaudeCord is idle, or restart now.`
     case 'error': return `Couldn't check for updates: ${s.message}`
     case 'unsupported': return s.reason
   }
@@ -36,7 +36,7 @@ export function UpdatesPanel() {
       <div className="settings-row">
         <div className="settings-row-label">ClaudeCord {status.currentVersion}
           <span className="settings-hint">
-            {status.channel === 'portable' ? 'Portable version: new versions are downloaded from the Releases page.' : status.channel === 'dev' ? 'Development build.' : 'Installed version: updates download and install automatically.'}
+            {status.channel === 'portable' ? 'Portable version: a new version downloads beside this file, starts, and removes the old one.' : status.channel === 'dev' ? 'Development build.' : 'Installed version: updates download and install automatically.'}
           </span>
         </div>
       </div>
@@ -58,15 +58,23 @@ export function UpdatesPanel() {
   )
 }
 
-/** Slim bar across the top of the app when an update is ready to install (or,
- *  for the portable build, available to download). Dismissible per version. */
+/** Slim bar across the top of the app when an update is ready to install, when a
+ *  portable build couldn't fetch one itself, or just after a portable update. */
 export function UpdateBar() {
   const status = useUpdateStatus()
   const [dismissed, setDismissed] = useState<string | null>(null)
   if (status === null) return null
   const ready = status.state === 'ready'
   const portableAvailable = status.state === 'available' && status.channel === 'portable'
-  if (!ready && !portableAvailable) return null
+  if (!ready && !portableAvailable) {
+    if (!status.justUpdated || dismissed === status.currentVersion) return null
+    return (
+      <div className="update-bar" role="status">
+        <span>Updated to ClaudeCord {status.currentVersion}.</span>
+        <button type="button" className="update-bar-x" aria-label="Dismiss" onClick={() => setDismissed(status.currentVersion)}>✕</button>
+      </div>
+    )
+  }
   const version = status.state === 'ready' || status.state === 'available' ? status.version : ''
   if (dismissed === version) return null
   return (

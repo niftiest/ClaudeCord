@@ -63,6 +63,7 @@ const api: ClaudeCordApi & EngineApi = {
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(ENGINE_IPC.pickDirectory),
   isSessionLive: (sessionPk: number): Promise<boolean> => ipcRenderer.invoke(ENGINE_IPC.isSessionLive, sessionPk),
   turnInfo: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.turnInfo, sessionPk),
+  backgroundTasks: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.backgroundTasks, sessionPk),
   onEvent: cb => {
     const listener = (_e: IpcRendererEvent, sessionPk: number, ev: LiveEvent) => cb(sessionPk, ev)
     ipcRenderer.on(ENGINE_IPC.event, listener)
@@ -165,6 +166,7 @@ const update: UpdateApi = {
   getUpdateStatus: () => ipcRenderer.invoke(UPDATE_IPC.getStatus),
   checkForUpdates: () => ipcRenderer.invoke(UPDATE_IPC.check),
   installUpdate: () => ipcRenderer.invoke(UPDATE_IPC.install),
+  setUpdateHold: hold => ipcRenderer.invoke(UPDATE_IPC.setHold, hold),
   openUpdateDownload: () => ipcRenderer.invoke(UPDATE_IPC.openDownload),
   onUpdateStatus: cb => {
     const listener = (_e: IpcRendererEvent, s: UpdateStatus) => cb(s)

@@ -376,7 +376,6 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .turn-author { font-size:13px; font-weight:700; color:var(--txt); }
 .turn-author.claude { color:var(--accent); }
 .turn-time { font-size:11px; color:var(--mu); font-variant-numeric:tabular-nums; }
-.turn-model { font-family:var(--mono); font-size:10.5px; color:var(--dim); }
 .turn-typing { font-size:11px; color:var(--mu); }
 .bubble-claude { max-width:780px; background:var(--s1); color:var(--txt); border-radius:14px 14px 14px 4px;
   padding:11px 15px; font-size:14.5px; line-height:1.5; text-wrap:pretty; }
@@ -598,6 +597,9 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .shell-output { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--mono); font-size:12.5px; line-height:1.4; }
 .working-line { flex:none; padding:0 18px 8px; font-size:12.5px; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .working-details { color:var(--mu); }
+.background-tasks { flex:none; padding-bottom:8px; }
+.background-tasks-head { padding-bottom:2px; }
+.background-task { padding:0 18px 0 32px; font-size:12px; color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .working-star { display:inline-block; animation:working-spin 3s linear infinite; }
 @keyframes working-spin { to { transform:rotate(360deg); } }
 .tool-run { margin:4px 0; }
@@ -622,6 +624,9 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .project-options { position:relative; flex:none; align-self:center; }
 .project-options-pop { right:0; left:auto; width:260px; }
 .project-option { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px; color:var(--txt); }
+.project-option-fixed { font-size:12px; color:var(--mu); }
+.project-options-link { background:none; border:0; padding:0; color:var(--accent); font:inherit; font-size:12px; cursor:pointer; text-align:left; }
+.project-options-link:hover { text-decoration:underline; }
 .project-option select { background:var(--s3); color:var(--txt); border:1px solid var(--line); border-radius:4px; padding:2px 6px; }
 .nav-actions { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 12px 10px; background:var(--sunk); }
 .nav-actions .iconrail-btn { width:32px; height:32px; font-size:14px; }

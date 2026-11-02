@@ -15,7 +15,7 @@ import type { ChannelMeta, ChannelGroup } from '../shared/shell-types'
 // no runtime/electron/node dependency, same rationale as engine-ipc-
 // contract.ts's own type-only StreamedRow import.
 import type { NewProjectOptions } from '../shared/engine-ipc-contract'
-import type { LiveEvent, PermissionRequest } from '../shared/engine-types'
+import type { BackgroundTask, LiveEvent, PermissionRequest } from '../shared/engine-types'
 // Type-only: StreamedRow's home module (src/main/jsonl/stream.ts) reads real
 // files, but importing just its *type* is erased at compile time -- same
 // pattern engine-ipc-contract.ts already uses.
@@ -601,6 +601,8 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'status':
     case 'usage':
     case 'suggestion':
+    case 'background':
+    case 'taskProgress':
     case 'other':
       return prev
   }
@@ -770,6 +772,15 @@ export function workingDetails(d: {
     out.push(`no output for ${elapsedLabel(d.now - d.lastActivity)}`)
   }
   return out
+}
+
+/** One line about a background task: what it is, what it's doing, how long it's taken. */
+export function backgroundTaskLabel(task: BackgroundTask, now: number): { title: string; details: string[] } {
+  const kind = task.type === 'local_bash' ? 'Bash' : task.type === 'local_agent' ? (task.agent ?? 'Agent') : task.type.replace(/^local_/, '')
+  const details = [elapsedLabel(now - task.startedAt)]
+  if (task.lastTool !== null) details.push(task.lastTool)
+  if (task.tokens !== null && task.tokens > 0) details.push(`${tokenLabel(task.tokens)} tokens`)
+  return { title: task.description.length > 0 ? `${kind}: ${task.description}` : kind, details }
 }
 
 /** Live-turn state for the LiveIndicator badge: 'idle' when no turn is

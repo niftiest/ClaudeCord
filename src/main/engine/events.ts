@@ -1,5 +1,5 @@
 import type { Usage } from '../../shared/types'
-import type { LiveEvent } from '../../shared/engine-types'
+import type { BackgroundTask, LiveEvent } from '../../shared/engine-types'
 import { blocksFromContent } from '../jsonl/parse'
 import { parseMcpServers } from './mcp-status'
 
@@ -19,9 +19,33 @@ function extractUsage(raw: unknown): Usage | undefined {
   return usage
 }
 
+/** Claude Code sends its whole list each time it changes. Start times are the pool's to add. */
+function parseBackgroundTasks(raw: unknown): BackgroundTask[] {
+  if (!Array.isArray(raw)) return []
+  const tasks: BackgroundTask[] = []
+  for (const t of raw) {
+    if (!isPlainObject(t) || typeof t.task_id !== 'string') continue
+    tasks.push({
+      id: t.task_id,
+      type: typeof t.task_type === 'string' ? t.task_type : 'task',
+      description: typeof t.description === 'string' ? t.description : '',
+      agent: typeof t.subagent_type === 'string' ? t.subagent_type : null,
+      startedAt: 0,
+      lastTool: null,
+      tokens: null
+    })
+  }
+  return tasks
+}
+
 function parseSystem(row: Record<string, unknown>): LiveEvent {
   const other: LiveEvent = { kind: 'other', type: 'system' }
   if (row.subtype === 'status') return { kind: 'status', status: typeof row.status === 'string' ? row.status : null }
+  if (row.subtype === 'background_tasks_changed') return { kind: 'background', tasks: parseBackgroundTasks(row.tasks) }
+  if (row.subtype === 'task_progress' && typeof row.task_id === 'string') {
+    const tokens = isPlainObject(row.usage) && typeof row.usage.total_tokens === 'number' ? row.usage.total_tokens : null
+    return { kind: 'taskProgress', taskId: row.task_id, lastTool: typeof row.last_tool_name === 'string' ? row.last_tool_name : null, tokens }
+  }
   if (row.subtype !== 'init') return other
   const sessionId = row.session_id
   const cwd = row.cwd
@@ -113,6 +137,10 @@ export function parseEvent(line: string): LiveEvent | null {
   if (!isPlainObject(value)) return null
   const type = value.type
   if (typeof type !== 'string') return null
+
+  // A subagent's own messages and tokens share this stream. It reports through its
+  // task; showing them as Claude's would put its words in the chat's reply.
+  if ((type === 'assistant' || type === 'stream_event') && typeof value.parent_tool_use_id === 'string') return { kind: 'other', type }
 
   switch (type) {
     case 'system':

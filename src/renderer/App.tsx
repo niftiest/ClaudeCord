@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
-import type { PermissionRequest, ExternalLock, RemoteSession } from '../shared/engine-types'
+import type { BackgroundTask, PermissionRequest, ExternalLock, RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
 import { Nav } from './components/Nav'
 import { IconRail } from './components/IconRail'
@@ -31,7 +31,7 @@ import { MemoryDialog } from './components/MemoryDialog'
 import { ProjectOptions } from './components/ProjectOptions'
 import { effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
 import { ShellRuns } from './components/ShellRuns'
-import { WorkingLine } from './components/WorkingLine'
+import { WorkingLine, BackgroundTasksLine } from './components/WorkingLine'
 import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
@@ -120,6 +120,8 @@ export function App() {
   // 'result' event. This flag is what Composer uses to decide send-vs-queue,
   // and (with queuedCount) what LiveIndicator shows in the header.
   const [running, setRunning] = useState(false)
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([])
+  const updateHoldRef = useRef(false)
   // Live-turn reconciliation (Plan 2 Task 10): a transient "typing" preview
   // built from accumulating engine:event deltas, rendered as a temporary
   // bubble at the bottom of Transcript while `running` is true. Cleared
@@ -570,6 +572,10 @@ export function App() {
       if (ev.kind === 'usage') setTurnTokens(n => n + ev.outputTokens)
       if (ev.kind === 'suggestion') setSuggestion(ev.text)
       if (ev.kind === 'init') setLiveModel(ev.model)
+      // Also how a turn nobody sent shows up: Claude Code carrying on after a background task.
+      if (ev.kind === 'init') setRunning(true)
+      if (ev.kind === 'background') setBackgroundTasks(ev.tasks)
+      if (ev.kind === 'exit') setBackgroundTasks([])
       if (ev.kind === 'result') void api.contextUsage(sid).then(c => { if (c !== null) setContext(c) })
       if (ev.kind === 'status') setLiveStatus(ev.status === 'compacting' ? ev.status : null)
       else if (clearsRunning(ev)) setLiveStatus(null)
@@ -591,6 +597,13 @@ export function App() {
   // otherwise the first turn's init event brings it. While any server is still
   // starting, ask again: nothing else would report how it turned out.
   const sessionPk = session?.id ?? null
+  useEffect(() => {
+    setBackgroundTasks([])
+    if (sessionPk === null) return
+    let alive = true
+    void api.backgroundTasks(sessionPk).then(t => { if (alive) setBackgroundTasks(t) })
+    return () => { alive = false }
+  }, [sessionPk])
   useEffect(() => {
     setMcpServers(null)
     if (sessionPk === null) return
@@ -1102,7 +1115,8 @@ export function App() {
           )}
           {session !== null && settings !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
-              onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }} />
+              onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
+              onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }} />
           )}
           {session !== null && <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} />}
         </header>
@@ -1156,6 +1170,7 @@ export function App() {
           <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus} pending={pending} lastActivity={lastEventAt}
             waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0} />
         )}
+        {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} />}
         {session !== null && <ShellRuns runs={shellRuns} />}
         {session !== null && (
           // Keyed on the session id (same reasoning as Transcript above): a
@@ -1171,7 +1186,12 @@ export function App() {
               return null
             }}
             initialDraft={draftsRef.current.get(session.id) ?? ''}
-            onDraftChange={text => { draftsRef.current.set(session.id, text) }}
+            onDraftChange={text => {
+              draftsRef.current.set(session.id, text)
+              // Drafts live only in this window, so an automatic update waits for them.
+              const hold = [...draftsRef.current.values()].some(d => d.trim().length > 0)
+              if (hold !== updateHoldRef.current) { updateHoldRef.current = hold; void api.setUpdateHold(hold) }
+            }}
             onSend={onSend} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
         )}
       </main>

@@ -258,7 +258,6 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
           )
         }
 
-        const model = modelOf(turn)
         return (
           <Fragment key={keyAt(0)}>
             {dayDivider}
@@ -268,7 +267,6 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                 <div className="turn-meta">
                   <span className="turn-author claude">Claude</span>
                   {ts && <time className="turn-time">{ts}</time>}
-                  {model && <span className="turn-model">{model}</span>}
                 </div>
                 {(() => {
                   const renderItem = (it: RenderItem, k: string): ReactNode => {
@@ -347,9 +345,3 @@ function firstTs(items: RenderItem[]): string | null {
   return null
 }
 
-/** The model recorded on a Claude turn's first text item, if any (shown mono in
- *  the meta line). Effort isn't in the durable render model, so it's omitted. */
-function modelOf(turn: { items: RenderItem[] }): string | null {
-  for (const it of turn.items) if (it.kind === 'text' && it.model) return it.model
-  return null
-}

@@ -14,7 +14,6 @@ export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notification
 type Section = SettingsSection
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'startup', label: 'Startup & System' },
-  { id: 'updates', label: 'Updates' },
   { id: 'defaults', label: 'New chat defaults' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'appearance', label: 'Appearance' },
@@ -23,7 +22,8 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'mcp', label: 'MCP servers' },
   { id: 'skills', label: 'Skills & commands' },
   { id: 'openrouter', label: 'OpenRouter' },
-  { id: 'engine', label: 'Engine' }
+  { id: 'engine', label: 'Engine' },
+  { id: 'updates', label: 'Updates' }
 ]
 
 const PER_PROJECT_HINT = 'Choose per project adds this to Project options in each chat’s header, shared by every chat in that folder. Any other choice here overrides what each project picked.'
@@ -195,7 +195,7 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           {section === 'updates' && (
             <Group title="Updates">
               <UpdatesPanel />
-              <Toggle label="Check for updates automatically" hint="On launch and every few hours."
+              <Toggle label="Check for updates automatically" hint="On launch and every few hours. A new version downloads by itself and installs the next time ClaudeCord is idle: nothing running, no unsent message, and you've been away for a few minutes. Turn this off to update only when you choose."
                 value={settings.autoCheckUpdates} on={v => patch({ autoCheckUpdates: v })} />
             </Group>
           )}

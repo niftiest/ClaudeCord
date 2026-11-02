@@ -13,6 +13,7 @@ import { AUTOSTART_ARG } from './ipc'
 import { applyStartupSettings } from './elevation'
 import { registerClaudeSettingsIpc } from './claude-settings-ipc'
 import { createDesktop, type Desktop } from './desktop'
+import { isDeletablePrevious, launchExePath, previousFromArgv, removePrevious, UPDATED_HIDDEN_ARG } from './portable-update'
 
 // Module-level so every app-lifecycle listener below can reach the same
 // handle -- `registerEngineIpc`'s own `dispose()` is idempotent (Plan 2
@@ -45,12 +46,12 @@ function createWindow(): void {
   const startup = getSettings(db)
   // A login start with "Start minimised": no splash, window stays in the tray
   // (or minimised to the taskbar when there's no tray icon).
-  const startHidden = startup.startMinimized && process.argv.includes(AUTOSTART_ARG)
+  const startHidden = (startup.startMinimized && process.argv.includes(AUTOSTART_ARG)) || process.argv.includes(UPDATED_HIDDEN_ARG)
   if (!startHidden) splash = createSplash(icon)
   // Older registrations didn't pass AUTOSTART_ARG; refresh the plain Run key
   // (the admin scheduled task is only rewritten from Settings, elevated).
   if (startup.startWithWindows && !startup.startWithAdmin && app.isPackaged) {
-    applyStartupSettings({ startWithWindows: true, startWithAdmin: false, exePath: app.getPath('exe'), appArgs: [AUTOSTART_ARG] })
+    applyStartupSettings({ startWithWindows: true, startWithAdmin: false, exePath: launchExePath(app.getPath('exe')), appArgs: [AUTOSTART_ARG] })
   }
 
   // Never open bigger than the screen: 1080p at 150% scaling is only 1280x720.
@@ -111,7 +112,10 @@ function createWindow(): void {
   })
   const manage = registerManageIpc(db, engine)
   const claudeSettings = registerClaudeSettingsIpc(db, win, engine)
-  const updater = registerUpdater(win, { autoCheck: () => getSettings(db).autoCheckUpdates })
+  const updater = registerUpdater(win, {
+    autoCheck: () => getSettings(db).autoCheckUpdates,
+    activeWork: () => engine?.activeWork() ?? 0
+  })
 
   // "Close button minimises to tray": hide instead of closing, unless the app
   // is quitting (tray menu, update install, Windows shutting down).
@@ -141,9 +145,11 @@ if (process.platform === 'win32') app.setAppUserModelId('com.niftiestpixel.claud
 // One ClaudeCord at a time: a second launch (double-clicking the shortcut
 // again) focuses the running window instead of starting a second app against
 // the same catalog and the same claude sessions.
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
+function start(): void {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
   app.on('second-instance', () => {
     const w = mainWindow
     if (w === null || w.isDestroyed() || !revealed) return // still on the splash
@@ -152,6 +158,16 @@ if (!app.requestSingleInstanceLock()) {
     w.focus()
   })
   app.whenReady().then(createWindow)
+}
+
+// Started by the previous portable version as it quits: it holds the single-instance
+// lock until it has exited, which is also when its exe can be deleted.
+const previousExe = previousFromArgv(process.argv)
+const portableExe = process.env.PORTABLE_EXECUTABLE_FILE
+if (previousExe !== null && portableExe !== undefined && isDeletablePrevious(previousExe, portableExe)) {
+  void removePrevious(previousExe).finally(start)
+} else {
+  start()
 }
 app.on('window-all-closed', () => {
   // Fix 3: tear the engine down (pool/bridge/watchers) before quitting --

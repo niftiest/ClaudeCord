@@ -28,6 +28,7 @@ import type { MessageRow } from './jsonl/rows'
 import type { TranscriptPage, ChannelRow, IndexProgress } from '../shared/types'
 import type { ChannelIcon } from '../shared/shell-types'
 import { IPC } from '../shared/ipc'
+import { launchExePath } from './portable-update'
 
 /** Messages per page. Scrolling up requests the previous page. */
 export const PAGE_SIZE = 60
@@ -237,12 +238,12 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
       applyStartupSettings({
         startWithWindows: after.startWithWindows,
         startWithAdmin: after.startWithAdmin,
-        exePath: app.getPath('exe'),
+        exePath: launchExePath(app.getPath('exe')),
         appArgs: [AUTOSTART_ARG]
       })
       // Newly enabling admin: relaunch elevated (one UAC prompt), then quit.
       if (after.startWithAdmin && !before.startWithAdmin && !isElevated()) {
-        if (relaunchElevated(app.getPath('exe'))) app.quit()
+        if (relaunchElevated(launchExePath(app.getPath('exe')))) app.quit()
       }
     }
     hooks.onSettingsChanged?.(after)

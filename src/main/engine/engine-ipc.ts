@@ -133,6 +133,8 @@ export type EngineHooks = {
 
 export type EngineIpcHandle = {
   dispose(): void
+  /** Chats with a turn or background task running: a restart now would cut them off. */
+  activeWork(): number
   /** OS pids of ClaudeCord's own pooled `claude` processes, by session id. */
   ownedProcesses(): Array<{ sessionId: string; pid: number | null }>
   /** Gracefully close ClaudeCord's own processes for these session ids (lets
@@ -568,6 +570,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? null : pool.turnInfo(info.filePath)
   })
+  ipcMain.handle(ENGINE_IPC.backgroundTasks, (_e, sessionPk: number) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    return info === null ? [] : pool.backgroundTasks(info.filePath)
+  })
   ipcMain.handle(ENGINE_IPC.listEngines, () => pool.snapshot())
   ipcMain.handle(ENGINE_IPC.killEngine, (_e, pid: number) => pool.killByPid(pid))
 
@@ -647,6 +653,9 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     ownedProcesses() {
       return pool.snapshot().map(e => ({ sessionId: sessionIdOf(e.sessionKey), pid: e.pid }))
     },
+    activeWork() {
+      return pool.snapshot().filter(e => e.busy || e.background > 0).length
+    },
     stopOwned(sessionIds) {
       const want = new Set(sessionIds.map(s => s.toLowerCase()))
       let n = 0
@@ -669,6 +678,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.pickDirectory)
       ipcMain.removeHandler(ENGINE_IPC.isSessionLive)
       ipcMain.removeHandler(ENGINE_IPC.turnInfo)
+      ipcMain.removeHandler(ENGINE_IPC.backgroundTasks)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)
       ipcMain.removeHandler(ENGINE_IPC.listRemote)

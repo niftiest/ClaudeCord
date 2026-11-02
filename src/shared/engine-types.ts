@@ -16,6 +16,10 @@ export type LiveEvent =
   | { kind: 'usage'; outputTokens: number }
   /** Claude's prediction of what the user will say next. */
   | { kind: 'suggestion'; text: string }
+  /** Everything running in the background now. The pool adds start times and the latest progress. */
+  | { kind: 'background'; tasks: BackgroundTask[] }
+  /** How one background agent is getting on. The pool folds this into `background`. */
+  | { kind: 'taskProgress'; taskId: string; lastTool: string | null; tokens: number | null }
   | { kind: 'other'; type: string }
   /** Synthesized by SessionPool (never parsed off the wire -- see pool.ts's
    *  `transport.onExit` handler) the instant a transport's process exits,
@@ -60,6 +64,20 @@ export type PermissionDecision = { behavior: 'allow'; updatedInput?: unknown } |
  *  best-effort from recency + the renderer's own permission state:
  *  'spawning' (no pid yet), 'streaming' (recent activity), 'idle' (quiet). The
  *  renderer promotes a session with a pending permission request to 'blocked'. */
+/** A command or agent still working after Claude's turn moved on. Claude Code picks
+ *  the chat back up by itself when one finishes. */
+export type BackgroundTask = {
+  id: string
+  /** Claude Code's task type, e.g. local_bash or local_agent. */
+  type: string
+  description: string
+  /** Subagent type, for an agent. */
+  agent: string | null
+  startedAt: number
+  lastTool: string | null
+  tokens: number | null
+}
+
 /** The running turn as the engine pool sees it. */
 export type TurnInfo = { startedAt: number; tokens: number; lastActivity: number }
 
@@ -72,6 +90,8 @@ export type EngineSnapshot = {
   lastActivity: number
   /** A turn is running now. False for a process kept loaded between turns. */
   busy: boolean
+  /** Background tasks this process is still running. */
+  background: number
 }
 
 /** A live `claude` process OUTSIDE ClaudeCord (typically a terminal) holding a
