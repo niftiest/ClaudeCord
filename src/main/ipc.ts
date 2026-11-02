@@ -3,7 +3,7 @@ import { applyStartupSettings, relaunchElevated, isElevated } from './elevation'
 import type { Catalog } from './catalog/db'
 import { listProjects, listSessions, listSubagents, sumTotalCostUsd } from './catalog/repos'
 import { readOriginRepo } from './engine/github'
-import { search } from './catalog/search'
+import { search, searchProject } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
 import type { AppSettings } from '../shared/shell-types'
 import {
@@ -34,13 +34,14 @@ import { launchExePath } from './portable-update'
 export const PAGE_SIZE = 60
 /** Rows read past a page's end so a boundary tool_use finds its tool_result. */
 const LOOKAHEAD_ROWS = 5
+const JUMP_CONTEXT_ROWS = 10
 
 type NodeRow = { uuid: string; seq: number }
 
 export async function loadTranscript(
   db: Catalog,
   sessionPk: number,
-  opts: { before?: number; limit?: number } = {}
+  opts: { before?: number; limit?: number; fromSeq?: number } = {}
 ): Promise<TranscriptPage> {
   const empty: TranscriptPage = { items: [], oldestSeq: null, hasMore: false }
 
@@ -79,7 +80,13 @@ export async function loadTranscript(
   // A caller-supplied limit of 0 or negative would otherwise slice an empty
   // (or backwards) window; clamp to at least one message per page.
   const limit = Math.max(1, opts.limit ?? PAGE_SIZE)
-  const window = eligible.slice(Math.max(0, eligible.length - limit))
+  // Going to a message: everything from it on, so the view stays one unbroken run,
+  // plus a few before it to read it in context.
+  const target = opts.fromSeq === undefined ? -1 : eligible.findIndex(uuid => (seqOf.get(uuid) ?? -1) >= opts.fromSeq!)
+  const windowStart = target === -1
+    ? Math.max(0, eligible.length - limit)
+    : Math.min(Math.max(0, target - JUMP_CONTEXT_ROWS), Math.max(0, eligible.length - limit))
+  const window = eligible.slice(windowStart)
   const windowSet = new Set(window)
 
   const firstSeq = seqOf.get(window[0]!)!
@@ -182,11 +189,12 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
   seedLocalSecrets(db)
   ipcMain.handle(IPC.listProjects, () => listProjects(db))
   ipcMain.handle(IPC.listSessions, (_e, projectId: number) => listSessions(db, projectId))
-  ipcMain.handle(IPC.loadTranscript, (_e, sessionPk: number, opts?: { before?: number; limit?: number }) =>
+  ipcMain.handle(IPC.loadTranscript, (_e, sessionPk: number, opts?: { before?: number; limit?: number; fromSeq?: number }) =>
     loadTranscript(db, sessionPk, opts))
   ipcMain.handle(IPC.syncSessionIfStale, (_e, sessionPk: number) => syncSessionIfStale(db, sessionPk))
   ipcMain.handle(IPC.listSubagents, (_e, toolUseId: string) => listSubagents(db, toolUseId))
   ipcMain.handle(IPC.search, (_e, query: string) => search(db, query))
+  ipcMain.handle(IPC.searchProject, (_e, projectId: number, query: string) => searchProject(db, projectId, query))
   ipcMain.handle(IPC.indexRun, async () => {
     await runIndex(db, {
       onProgress: p => {

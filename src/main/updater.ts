@@ -1,7 +1,7 @@
 import { app, ipcMain, net, powerMonitor, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { autoUpdater } from 'electron-updater'
-import { UPDATE_IPC, type UpdateState, type UpdateStatus } from '../shared/update-types'
+import { canRestartForUpdate, UPDATE_IPC, type UpdateState, type UpdateStatus } from '../shared/update-types'
 import { compareVersions } from '../shared/semver'
 import { downloadPortable, handoffArgs, pickPortableAsset, previousFromArgv, type PortableAsset } from './portable-update'
 
@@ -18,8 +18,6 @@ const RECHECK_EVERY_MS = 6 * 60 * 60 * 1000
 const RETRY_AFTER_MS = 2 * 60 * 1000
 const MAX_RETRIES = 3
 const IDLE_CHECK_EVERY_MS = 60 * 1000
-/** Only restart by itself once nobody has touched the computer for this long. */
-const AWAY_SECONDS = 5 * 60
 /** Set only when building a test copy, to update from a local server. */
 const FEED_OVERRIDE = import.meta.env.MAIN_VITE_UPDATE_FEED as string | undefined
 const LATEST_RELEASE = FEED_OVERRIDE ?? `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`
@@ -31,7 +29,7 @@ declare global {
 
 export type UpdaterHandle = { dispose(): void }
 
-export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; activeWork: () => number }): UpdaterHandle {
+export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; autoInstall: () => boolean; activeWork: () => number }): UpdaterHandle {
   const channel: UpdateStatus['channel'] = !app.isPackaged ? 'dev'
     : process.env.PORTABLE_EXECUTABLE_DIR !== undefined ? 'portable' : 'installer'
   let state: UpdateState = channel === 'dev'
@@ -47,7 +45,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
 
   if (channel === 'installer') {
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.autoInstallOnAppQuit = opts.autoInstall()
     autoUpdater.logger = null
     autoUpdater.on('checking-for-update', () => set({ state: 'checking' }))
     autoUpdater.on('update-not-available', () => set({ state: 'none', checkedAt: Date.now() }))
@@ -154,12 +152,13 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
     }
     timers.push(setTimeout(auto, FIRST_CHECK_DELAY_MS))
     timers.push(setInterval(() => { retries = 0; auto() }, RECHECK_EVERY_MS))
-    // A restart interrupts, so it waits until it can't: nothing running, nothing
-    // half-typed, and nobody at the computer.
     timers.push(setInterval(() => {
-      if (state.state !== 'ready' || hold || !opts.autoCheck()) return
-      if (opts.activeWork() > 0 || powerMonitor.getSystemIdleTime() < AWAY_SECONDS) return
-      restartIntoUpdate()
+      const autoInstall = opts.autoInstall()
+      // Turned off means off: an installed build otherwise applies the update on quit.
+      if (channel === 'installer') autoUpdater.autoInstallOnAppQuit = autoInstall
+      if (canRestartForUpdate({ autoInstall, ready: state.state === 'ready', unsent: hold, activeWork: opts.activeWork(), idleSeconds: powerMonitor.getSystemIdleTime() })) {
+        restartIntoUpdate()
+      }
     }, IDLE_CHECK_EVERY_MS))
   }
 

@@ -1,3 +1,4 @@
+import type { ProjectSearchResult } from './project-search'
 import type { ProjectSummary, SessionSummary, SearchHit, TranscriptPage, IndexProgress, ChannelRow } from './types'
 import type { ChannelIcon, ChannelGroup, AppSettings } from './shell-types'
 import type { McpServerInfo, SkillInfo } from '../main/mcp-skills'
@@ -19,6 +20,7 @@ export const IPC = {
   syncSessionIfStale: 'catalog:syncSessionIfStale',
   listSubagents: 'catalog:listSubagents',
   search: 'catalog:search',
+  searchProject: 'catalog:searchProject',
   indexRun: 'index:run',
   indexProgress: 'index:progress',
   // Channel metadata (Plan 3 Task 2) -- rename/favorite/group/icon, surfaced
@@ -61,12 +63,14 @@ export const IPC = {
 export type ClaudeCordApi = {
   listProjects(): Promise<ProjectSummary[]>
   listSessions(projectId: number): Promise<SessionSummary[]>
-  loadTranscript(sessionPk: number, opts?: { before?: number; limit?: number }): Promise<TranscriptPage>
+  /** `fromSeq` loads back far enough to include that message, however many pages away. */
+  loadTranscript(sessionPk: number, opts?: { before?: number; limit?: number; fromSeq?: number }): Promise<TranscriptPage>
   /** Re-indexes the session if its transcript changed on disk since the
    *  catalog last recorded it; resolves true when it did (nav may be stale). */
   syncSessionIfStale(sessionPk: number): Promise<boolean>
   listSubagents(toolUseId: string): Promise<SessionSummary[]>
   search(query: string): Promise<SearchHit[]>
+  searchProject(projectId: number, query: string): Promise<ProjectSearchResult>
   runIndex(): Promise<void>
   /** Tells main the first load is done: show the window, close the splash. */
   appReady(): void

@@ -12,7 +12,10 @@ import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldSc
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
-export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false }: {
+/** How long the view stays on a message it just went to, unless the reader moves it. */
+const JUMP_HOLD_MS = 1200
+
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -52,6 +55,9 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   toolCardsExpanded?: boolean
   /** Tool calls in the running turn still waiting for a result. */
   pendingToolIds?: ReadonlySet<string>
+  /** A message to scroll to and flash, once it's among `items`. */
+  jumpTo?: string | null
+  onJumped?: () => void
 }) {
   const pending = permissionRequests ?? []
   const preview = livePreview ?? null
@@ -156,14 +162,14 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // pull it proactively until content fills the viewport or hasMore is false.
   useLayoutEffect(() => {
     const el = parentRef.current
-    if (el === null || loadingOlder || !hasMore) return
+    if (el === null || loadingOlder || !hasMore || holdingJump()) return
     if (el.scrollHeight <= el.clientHeight) onReachTop()
   }, [items, hasMore, loadingOlder, onReachTop])
 
   function handleScroll() {
     reportAtBottom()
     const el = parentRef.current
-    if (el === null || loadingOlder || !hasMore) return
+    if (el === null || loadingOlder || !hasMore || holdingJump()) return
     if (el.scrollTop < 240) onReachTop()
   }
 
@@ -173,6 +179,40 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
     if (el === null || preview === null) return
     el.scrollTop = el.scrollHeight
   }, [preview])
+
+  // Going to one message. Runs after the layout effects above, which keep the reading
+  // position across a prepend, and stops them holding the view at the bottom. For a
+  // moment it then stays on the message: rendering above it still moves things, and
+  // landing near the top of what's loaded mustn't pull in another page and shift it.
+  const jumpHold = useRef<{ timer: ReturnType<typeof setInterval>; until: number } | null>(null)
+  const releaseJump = (): void => {
+    if (jumpHold.current !== null) clearInterval(jumpHold.current.timer)
+    jumpHold.current = null
+  }
+  useEffect(() => releaseJump, [])
+  useEffect(() => {
+    if (jumpTo === null) return
+    const uuid = jumpTo
+    const find = (): Element | null => parentRef.current?.querySelector(`[data-msg="${CSS.escape(uuid)}"]`) ?? null
+    onJumped?.()
+    const first = find()
+    if (first === null) return
+    cancelAnimationFrame(pinRaf.current)
+    releaseJump()
+    const center = (): void => { find()?.scrollIntoView({ block: 'center' }) }
+    center()
+    first.classList.remove('jump-flash')
+    void (first as HTMLElement).offsetWidth // restart the animation on a second visit
+    first.classList.add('jump-flash')
+    const until = Date.now() + JUMP_HOLD_MS
+    const timer = setInterval(() => {
+      if (Date.now() >= until) { releaseJump(); return }
+      center()
+    }, 120)
+    jumpHold.current = { timer, until }
+    setTimeout(() => find()?.classList.remove('jump-flash'), 2200)
+  }, [jumpTo])
+  const holdingJump = (): boolean => jumpHold.current !== null && Date.now() < jumpHold.current.until
 
   // Imperative jump to the absolute bottom on demand (App bumps the signal when
   // the user sends). Re-arms follow so the just-sent turn — which lands a beat
@@ -203,7 +243,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   }
 
   return (
-    <div className="stream" ref={parentRef} onScroll={handleScroll}>
+    <div className="stream" ref={parentRef} onScroll={handleScroll} onWheel={releaseJump} onMouseDown={releaseJump} onKeyDown={releaseJump}>
       {hasMore && <div className="empty">{loadingOlder ? 'Loading earlier messages…' : 'Scroll up for earlier messages'}</div>}
       {turns.map((turn, ti) => {
         const keyAt = (li: number): string => itemKeys[turn.startIndex + li]!
@@ -247,7 +287,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                   </div>
                   {turn.items.map((it, li) => (
                     it.kind === 'text'
-                      ? <div key={keyAt(li)} className="bubble-me txt">{it.text}</div>
+                      ? <div key={keyAt(li)} className="bubble-me txt" data-msg={it.uuid}>{it.text}</div>
                       : it.kind === 'image'
                         ? <ChatImage key={keyAt(li)} source={it.source} />
                         : null
@@ -271,8 +311,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                 {(() => {
                   const renderItem = (it: RenderItem, k: string): ReactNode => {
                     if (it.kind === 'text') return it.literal === true
-                      ? <pre key={k} className="bubble-claude shell-output">{it.text}</pre>
-                      : <Markdown key={k} text={it.text} className="bubble-claude" />
+                      ? <pre key={k} className="bubble-claude shell-output" data-msg={it.uuid}>{it.text}</pre>
+                      : <Markdown key={k} text={it.text} className="bubble-claude" anchor={it.uuid} />
                     if (it.kind === 'thinking') return (
                       <details key={k} className="turn-thinking" open={thinkingExpanded || undefined}>
                         <summary className="thinking">✳ thought · {it.text.length} chars</summary>

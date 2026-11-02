@@ -114,6 +114,7 @@ function createWindow(): void {
   const claudeSettings = registerClaudeSettingsIpc(db, win, engine)
   const updater = registerUpdater(win, {
     autoCheck: () => getSettings(db).autoCheckUpdates,
+    autoInstall: () => getSettings(db).autoInstallUpdates,
     activeWork: () => engine?.activeWork() ?? 0
   })
 

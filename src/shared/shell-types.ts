@@ -52,6 +52,8 @@ export type AppSettings = {
   themeScope: AppThemeScope
   /** Check GitHub for a new ClaudeCord version on launch and every few hours. */
   autoCheckUpdates: boolean
+  /** Restart into a downloaded update by itself once nothing would be interrupted. */
+  autoInstallUpdates: boolean
   /** Claude in Chrome for chats run by ClaudeCord: 'auto' follows Claude
    *  Code's own "enabled by default" preference; 'on' / 'off' override it. */
   chromeIntegration: 'auto' | 'on' | 'off'

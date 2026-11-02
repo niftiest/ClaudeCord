@@ -32,6 +32,8 @@ import { ProjectOptions } from './components/ProjectOptions'
 import { effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
 import { ShellRuns } from './components/ShellRuns'
 import { WorkingLine, BackgroundTasksLine } from './components/WorkingLine'
+import { ProjectSearchBox, ProjectSearchResults } from './components/ProjectSearch'
+import type { ProjectSearchResult } from '../shared/project-search'
 import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
@@ -121,6 +123,12 @@ export function App() {
   // and (with queuedCount) what LiveIndicator shows in the header.
   const [running, setRunning] = useState(false)
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([])
+  const [findQuery, setFindQuery] = useState('')
+  const [findResult, setFindResult] = useState<ProjectSearchResult | null>(null)
+  const [findLoading, setFindLoading] = useState(false)
+  const findInputRef = useRef<HTMLInputElement>(null)
+  const jumpPendingRef = useRef(false)
+  const [jumpTarget, setJumpTarget] = useState<{ sessionPk: number; uuid: string; seq: number } | null>(null)
   const updateHoldRef = useRef(false)
   // Live-turn reconciliation (Plan 2 Task 10): a transient "typing" preview
   // built from accumulating engine:event deltas, rendered as a temporary
@@ -523,13 +531,13 @@ export function App() {
   // would re-run that effect constantly. session/oldestSeq/hasMore are its
   // only reactive dependencies — sessionReqId and loadingOlderRef are refs
   // (stable identity, read via .current) and the setters are stable too.
-  const loadOlder = useCallback(async () => {
+  const loadOlder = useCallback(async (fromSeq?: number) => {
     if (session === null || oldestSeq === null || loadingOlderRef.current || !hasMore) return
     const reqId = sessionReqId.current
     loadingOlderRef.current = true
     setLoadingOlder(true)
     try {
-      const page = await api.loadTranscript(session.id, { before: oldestSeq })
+      const page = await api.loadTranscript(session.id, fromSeq === undefined ? { before: oldestSeq } : { before: oldestSeq, fromSeq })
       if (isStaleResponse(reqId, sessionReqId.current)) return // the session changed while this page was in flight
       if (page.items.length > 0) {
         setItems(prev => [...page.items, ...prev])
@@ -549,6 +557,20 @@ export function App() {
       }
     }
   }, [session, oldestSeq, hasMore])
+
+  // Going to a search result: load back to it, then Transcript scrolls there.
+  useEffect(() => {
+    if (jumpTarget === null || session === null || session.id !== jumpTarget.sessionPk) return
+    if (sessionLoading || loadingOlder || oldestSeq === null || oldestSeq <= jumpTarget.seq) return
+    if (hasMore) void loadOlder(jumpTarget.seq)
+    else setJumpTarget(null)
+  }, [jumpTarget, session, sessionLoading, loadingOlder, oldestSeq, hasMore, loadOlder])
+  // Reading a different chat by now: don't yank the view when coming back to that one.
+  const openSessionId = session?.id ?? null
+  useEffect(() => {
+    setJumpTarget(t => t !== null && openSessionId !== null && t.sessionPk !== openSessionId && !jumpPendingRef.current ? null : t)
+    jumpPendingRef.current = false
+  }, [openSessionId])
 
   // Tracks turn-running state AND the live typing preview for whatever
   // session is currently open, by watching engine events scoped to its pk.
@@ -597,6 +619,24 @@ export function App() {
   // otherwise the first turn's init event brings it. While any server is still
   // starting, ask again: nothing else would report how it turned out.
   const sessionPk = session?.id ?? null
+  // A search belongs to what was on screen: opening a chat goes back to reading it.
+  useEffect(() => { setFindQuery('') }, [sessionPk])
+  const findProjectId = project?.id ?? null
+  // New messages can match too, so a change in the chat searches again. Debounced, and
+  // an answer to an older search is dropped.
+  const findTerms = findQuery.trim()
+  useEffect(() => {
+    if (findTerms === '' || findProjectId === null) { setFindResult(null); setFindLoading(false); return }
+    let alive = true
+    setFindLoading(true)
+    const timer = setTimeout(() => {
+      void api.searchProject(findProjectId, findTerms)
+        .then(r => { if (alive) { setFindResult(r); setFindLoading(false) } })
+        .catch(() => { if (alive) { setFindResult({ hits: [], total: 0 }); setFindLoading(false) } })
+    }, 180)
+    return () => { alive = false; clearTimeout(timer) }
+  }, [findTerms, findProjectId, items.length])
+
   useEffect(() => {
     setBackgroundTasks([])
     if (sessionPk === null) return
@@ -827,6 +867,7 @@ export function App() {
     // Composer is only mounted while a session is open, so this is a
     // defensive no-op, not a reachable path.
     if (session === null) return
+    setFindQuery('') // the reply is what to look at now
     const combined = buildOutgoingText(text, pastedTexts)
     // Guard: an empty send (whitespace-only, no images) is a no-op.
     if (combined.trim().length === 0 && images.length === 0) return
@@ -960,6 +1001,19 @@ export function App() {
   // while open. Its Delete… reuses the wizard above; `manageEpoch` tells it to
   // rescan after the wizard removed something.
   const [manageOpen, setManageOpen] = useState(false)
+  // Ctrl+F searches the open project, unless something is open on top of it.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || (e.key !== 'f' && e.key !== 'F')) return
+      e.preventDefault()
+      if (settingsOpen || manageOpen || searchOpen) return
+      findInputRef.current?.focus()
+      findInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [settingsOpen, manageOpen, searchOpen])
+
   const [manageEpoch, setManageEpoch] = useState(0)
   const onManageDelete = useCallback((target: DeleteTarget) => setDeleteTarget(target), [])
   // After a rename / import / restore: main has already re-synced the catalog;
@@ -1107,6 +1161,7 @@ export function App() {
             </div>
             <div className="path">{project?.cwd ?? `${channels.length} projects indexed`}</div>
           </div>
+          {session !== null && <ProjectSearchBox ref={findInputRef} value={findQuery} onChange={setFindQuery} />}
           {session !== null && (
             <button type="button" className="chead-term" onClick={openChatInTerminal}
               title="Open this chat in Claude Code in a terminal: for /mcp, logins, reconnecting tools, and anything else the app can't do">
@@ -1135,18 +1190,33 @@ export function App() {
           // collision — React then fails to unmount the previous Transcript on a
           // session switch, stacking a new .stream under the stale one (each
           // switch leaked one, splitting the chat into 50/50 scroll boxes).
-          : <Transcript key={`transcript-${session.id}`} items={items} hasMore={hasMore} loadingOlder={loadingOlder}
+          : <><div style={{ display: findTerms === '' ? 'contents' : 'none' }}><Transcript key={`transcript-${session.id}`} items={items} hasMore={hasMore} loadingOlder={loadingOlder}
               loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview}
               showToolCalls={toolDisplay !== 'hidden'} groupToolCalls={toolDisplay === 'grouped'} fileMissing={transcriptFileMissing}
               claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
               thinkingExpanded={settings?.thinkingExpanded ?? false}
               toolCardsExpanded={settings?.toolCardsExpanded ?? false}
               pendingToolIds={pendingToolIds}
+              jumpTo={jumpTarget !== null && jumpTarget.sessionPk === session.id && oldestSeq !== null && oldestSeq <= jumpTarget.seq ? jumpTarget.uuid : null}
+              onJumped={() => setJumpTarget(null)}
               onAtBottomChange={v => { atBottomRef.current = v }}
               scrollToBottomSignal={scrollToBottomTick}
               permissionRequests={permissionsByPk.get(session.id) ?? []}
               onResolvePermission={(id, decision, editedInput, denyMessage) =>
-                onResolvePermission(session.id, id, decision, editedInput, denyMessage)} />}
+                onResolvePermission(session.id, id, decision, editedInput, denyMessage)} /></div>
+              {findTerms !== '' && (
+                <ProjectSearchResults query={findQuery} result={findResult} loading={findLoading} currentSessionPk={session.id}
+                  claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
+                  onJump={hit => {
+                    setFindQuery('')
+                    setJumpTarget({ sessionPk: hit.sessionPk, uuid: hit.uuid, seq: hit.seq })
+                    if (hit.sessionPk !== session.id && project !== null) {
+                      jumpPendingRef.current = true
+                      void openSearchResult(hit.sessionPk, project.dirName)
+                    }
+                  }} />
+              )}
+            </>}
         {session !== null && (terminalPrompt !== null || terminalNotice !== null) && (
           <div className="term-prompt" role="status">
             {terminalPrompt !== null ? (

@@ -60,14 +60,16 @@ const COMPONENTS: Components = {
   img: ({ src, alt }) => <span className="md-image-ref">🖼 {alt !== undefined && alt !== '' ? alt : typeof src === 'string' ? src : 'image'}</span>
 }
 
-export const Markdown = memo(function Markdown({ text, highlight = true, className = '' }: {
+export const Markdown = memo(function Markdown({ text, highlight = true, className = '', anchor }: {
   text: string
+  /** The message this is, so the chat can scroll to it. */
+  anchor?: string
   /** Off while streaming: colouring half a code block on every token isn't worth it. */
   highlight?: boolean
   className?: string
 }) {
   return (
-    <div className={`md ${className}`}>
+    <div className={`md ${className}`} data-msg={anchor}>
       <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={highlight ? REHYPE : []} components={COMPONENTS}>{text}</ReactMarkdown>
     </div>
   )

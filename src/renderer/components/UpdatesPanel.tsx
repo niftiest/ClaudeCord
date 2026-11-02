@@ -3,14 +3,16 @@ import { api } from '../api'
 import type { UpdateStatus } from '../../shared/update-types'
 
 /** Plain-language line for an update status. */
-export function describeUpdate(s: UpdateStatus): string {
+export function describeUpdate(s: UpdateStatus, autoInstall = false): string {
   switch (s.state) {
     case 'idle': return 'Not checked yet.'
     case 'checking': return 'Checking for updates…'
     case 'none': return 'You have the latest version.'
     case 'available': return `Version ${s.version} is available, but it couldn't be downloaded automatically${s.reason !== undefined ? `: ${s.reason}` : '.'}`
     case 'downloading': return `Downloading version ${s.version}… ${s.percent}%`
-    case 'ready': return `Version ${s.version} is ready. It installs the next time ClaudeCord is idle, or restart now.`
+    case 'ready': return autoInstall
+      ? `Version ${s.version} is ready. It installs the next time ClaudeCord is idle, or restart now.`
+      : `Version ${s.version} is ready. Restart ClaudeCord to install it.`
     case 'error': return `Couldn't check for updates: ${s.message}`
     case 'unsupported': return s.reason
   }
@@ -27,7 +29,7 @@ export function useUpdateStatus(): UpdateStatus | null {
 }
 
 /** Settings > Updates: current version, status, and the actions that apply. */
-export function UpdatesPanel() {
+export function UpdatesPanel({ autoInstall }: { autoInstall: boolean }) {
   const status = useUpdateStatus()
   if (status === null) return null
   const busy = status.state === 'checking' || status.state === 'downloading'
@@ -40,7 +42,7 @@ export function UpdatesPanel() {
           </span>
         </div>
       </div>
-      <p className={`updates-status updates-${status.state}`}>{describeUpdate(status)}</p>
+      <p className={`updates-status updates-${status.state}`}>{describeUpdate(status, autoInstall)}</p>
       <div className="updates-actions">
         {status.channel !== 'dev' && status.state !== 'ready' && (
           <button type="button" className="btn-secondary" disabled={busy} onClick={() => void api.checkForUpdates()}>

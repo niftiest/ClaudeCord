@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  MODELS, EFFORTS, resolveModelPricing, costOfSession, formatCost, formatCostWhole, contextWindowFor,
+  MODELS, EFFORTS, sortModels, resolveModelPricing, costOfSession, formatCost, formatCostWhole, contextWindowFor,
   buildAvatarPrompt, formatImagePrice
 } from '../src/shared/models'
 
@@ -118,5 +118,28 @@ describe('formatCostWhole', () => {
   it('shows $0 for zero and <$1 for a tiny nonzero total', () => {
     expect(formatCostWhole(0)).toBe('$0')
     expect(formatCostWhole(0.4)).toBe('<$1')
+  })
+})
+
+describe('sortModels', () => {
+  const labels = (l: string[]) => sortModels(l.map(label => ({ label }))).map(m => m.label)
+
+  it("sorts Claude Code's list by name, newest version first", () => {
+    expect(labels(['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 5.5', 'Haiku 4.5', 'Sonnet 5', 'Opus 5', 'Fable 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 4.6']))
+      .toEqual(['Fable 5.1', 'Fable 5', 'Haiku 5.5', 'Haiku 4.5', 'Opus 5.5', 'Opus 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 5.5', 'Sonnet 5', 'Sonnet 4.6'])
+  })
+
+  it('compares versions as numbers, not text', () => {
+    expect(labels(['Opus 4.9', 'Opus 4.10'])).toEqual(['Opus 4.10', 'Opus 4.9'])
+  })
+
+  it('keeps a label with extra words beside its version, and copes with none', () => {
+    expect(labels(['Opus 5', 'Opus', 'Opus 5.5 (1M context)', 'Custom'])).toEqual(['Custom', 'Opus', 'Opus 5.5 (1M context)', 'Opus 5'])
+  })
+
+  it("doesn't change the list it was given", () => {
+    const list = [{ label: 'Opus 5' }, { label: 'Fable 5' }]
+    sortModels(list)
+    expect(list[0]!.label).toBe('Opus 5')
   })
 })

@@ -1,5 +1,6 @@
 import type { Catalog } from './db'
 import type { SearchHit } from '../../shared/types'
+import { excerptAround, searchTerms, type ProjectSearchHit, type ProjectSearchResult } from '../../shared/project-search'
 
 /**
  * FTS5 treats quotes and operators (AND/OR/NOT/NEAR, *, ^, -, :, parens) as
@@ -32,6 +33,30 @@ function toMatchExpression(query: string): string {
     .map(t => t.replace(/"/g, ''))
   if (terms.length === 0) return ''
   return terms.map(t => `"${t}"`).join(' AND ')
+}
+
+const PROJECT_SEARCH_LIMIT = 200
+
+/** Ctrl+F: messages in one project's chats containing every word. A plain scan rather
+ *  than the full-text index, which only matches whole words and ignores punctuation.
+ *  Only what the chat shows as a message: not subagents' own traffic or task pings. */
+export function searchProject(db: Catalog, projectId: number, query: string, limit = PROJECT_SEARCH_LIMIT): ProjectSearchResult {
+  const terms = searchTerms(query)
+  if (terms.length === 0) return { hits: [], total: 0 }
+  const where = `
+    FROM messages m JOIN sessions s ON s.id = m.session_pk
+    WHERE s.project_id = ? AND s.kind = 'main' AND m.is_sidechain = 0 AND m.role IN ('user', 'assistant')
+      AND m.text NOT LIKE '<task-notification>%'
+      ${terms.map(() => `AND m.text LIKE ? ESCAPE '\\'`).join(' ')}`
+  const patterns = terms.map(t => `%${t.replace(/[\\%_]/g, c => `\\${c}`)}%`)
+  const { total } = db.prepare(`SELECT COUNT(*) AS total ${where}`).get(projectId, ...patterns) as { total: number }
+  const rows = db.prepare(`
+    SELECT m.id, m.session_pk AS sessionPk, m.uuid, m.seq, s.title, m.role, m.ts, m.text ${where}
+    ORDER BY m.ts DESC, m.seq DESC
+    LIMIT ?
+  `).all(projectId, ...patterns, limit) as Array<Omit<ProjectSearchHit, 'trimmed'>>
+  const hits = rows.reverse().map(r => ({ ...r, ...excerptAround(r.text, terms) }))
+  return { hits, total }
 }
 
 export function search(db: Catalog, query: string, limit = 100): SearchHit[] {

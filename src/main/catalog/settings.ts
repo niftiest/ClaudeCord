@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultSkipPermissions: true, defaultBudgetUsd: null,
   notifyTurnComplete: true, notifyInputNeeded: true, notifyPermission: true, notifyError: true,
   doNotDisturb: false, quietHoursStart: null, quietHoursEnd: null,
-  theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, chromeIntegration: 'auto', density: 'comfortable', thinkingExpanded: false, toolCardsExpanded: false,
+  theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', thinkingExpanded: false, toolCardsExpanded: false,
   toolDisplay: 'grouped', promptSuggestions: 'off', showBlade: false, showContextRail: true,
   openRouterKey: '', avatarModel: 'openai/gpt-image-1', claudeIcon: { kind: 'initials' },
   claudeBin: 'claude', idleReapMin: 30, maxConcurrent: 4, extraFlags: [],

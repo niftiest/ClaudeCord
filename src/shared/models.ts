@@ -18,6 +18,24 @@ export const MODELS: ModelOption[] = [
   { value: 'claude-opus-4-8', label: 'Opus 4.8', hint: 'Previous-generation Opus' }
 ]
 
+/** For showing a model list: by name, newest version first within each. A label
+ *  with no version comes first in its name. Claude Code's own order isn't either. */
+export function sortModels<T extends { label: string }>(models: readonly T[]): T[] {
+  const parts = (label: string): { name: string; version: number[] } => {
+    const m = /^(.*?)\s+(\d+(?:\.\d+)*)/.exec(label)
+    return { name: (m?.[1] ?? label).toLowerCase(), version: m?.[2]?.split('.').map(Number) ?? [Infinity] }
+  }
+  return [...models].sort((a, b) => {
+    const x = parts(a.label), y = parts(b.label)
+    if (x.name !== y.name) return x.name.localeCompare(y.name)
+    for (let i = 0; i < Math.max(x.version.length, y.version.length); i++) {
+      const diff = (y.version[i] ?? 0) - (x.version[i] ?? 0)
+      if (diff !== 0) return diff
+    }
+    return 0
+  })
+}
+
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
 

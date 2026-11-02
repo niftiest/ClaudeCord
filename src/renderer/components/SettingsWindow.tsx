@@ -3,7 +3,7 @@ import { api } from '../api'
 import type { AppSettings } from '../../shared/shell-types'
 import { McpSettings } from './McpSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { MODELS, EFFORTS } from '../../shared/models'
+import { MODELS, EFFORTS, sortModels } from '../../shared/models'
 import { IconPicker } from './IconPicker'
 import { ClaudeAvatar } from './ClaudeAvatar'
 import { UpdatesPanel } from './UpdatesPanel'
@@ -98,7 +98,7 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
             <Group title="New chat defaults">
               <TextField label="Default working directory" hint="Used when no project is open." value={settings.defaultCwd ?? ''} placeholder="(none)" on={v => patch({ defaultCwd: v.trim() === '' ? null : v })} />
               <Select label="Model" value={settings.defaultModel ?? ''}
-                options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.model ?? 'default'})` }, ...MODELS.map(m => ({ value: m.value, label: m.label }))]}
+                options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.model ?? 'default'})` }, ...sortModels(MODELS).map(m => ({ value: m.value, label: m.label }))]}
                 on={v => patch({ defaultModel: v === '' ? null : v })} />
               <Select label="Effort" value={settings.defaultEffort ?? ''}
                 options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.effort ?? 'default'})` }, ...EFFORTS.map(e => ({ value: e, label: e }))]}
@@ -194,9 +194,11 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           )}
           {section === 'updates' && (
             <Group title="Updates">
-              <UpdatesPanel />
-              <Toggle label="Check for updates automatically" hint="On launch and every few hours. A new version downloads by itself and installs the next time ClaudeCord is idle: nothing running, no unsent message, and you've been away for a few minutes. Turn this off to update only when you choose."
+              <UpdatesPanel autoInstall={settings.autoInstallUpdates} />
+              <Toggle label="Check for updates automatically" hint="On launch and every few hours. A new version downloads in the background when one is found. Off: only when you click Check for updates."
                 value={settings.autoCheckUpdates} on={v => patch({ autoCheckUpdates: v })} />
+              <Toggle label="Install updates automatically" hint="Restarts into a downloaded update once nothing is running, no message is unsent, and you've been away for a few minutes. Off: it waits for you to click Restart to update."
+                value={settings.autoInstallUpdates} on={v => patch({ autoInstallUpdates: v })} />
             </Group>
           )}
           {section === 'claude' && (

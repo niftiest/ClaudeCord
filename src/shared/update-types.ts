@@ -29,6 +29,15 @@ export type UpdateStatus = UpdateState & {
   justUpdated: boolean
 }
 
+/** Only restart by itself once nobody has touched the computer for this long. */
+export const AWAY_SECONDS = 5 * 60
+
+/** Whether to restart into a downloaded update unasked. A restart interrupts, so it
+ *  waits until it can't: nothing running, nothing half-typed, and nobody at the computer. */
+export function canRestartForUpdate(c: { autoInstall: boolean; ready: boolean; unsent: boolean; activeWork: number; idleSeconds: number }): boolean {
+  return c.autoInstall && c.ready && !c.unsent && c.activeWork === 0 && c.idleSeconds >= AWAY_SECONDS
+}
+
 export type UpdateApi = {
   getUpdateStatus(): Promise<UpdateStatus>
   /** Manual "Check for updates". */

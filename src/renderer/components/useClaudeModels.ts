@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { EFFORTS, MODELS } from '../../shared/models'
+import { EFFORTS, MODELS, sortModels } from '../../shared/models'
 import type { ClaudeModel } from '../../shared/claude-info-types'
 
 /** Used until Claude answers, or if it can't be asked. */
-const FALLBACK: ClaudeModel[] = MODELS.map(m => ({ value: m.value, label: m.label, description: m.hint, resolved: null, efforts: [...EFFORTS] }))
+const FALLBACK: ClaudeModel[] = sortModels(MODELS.map(m => ({ value: m.value, label: m.label, description: m.hint, resolved: null, efforts: [...EFFORTS] })))
 
 let request: Promise<ClaudeModel[]> | null = null
 
@@ -12,7 +12,7 @@ let request: Promise<ClaudeModel[]> | null = null
  *  the list doesn't depend on the project and asking starts a brief process. */
 function loadModels(): Promise<ClaudeModel[]> {
   request ??= api.claudeInfo(null).then(r => {
-    if (r.ok && r.info.models.length > 0) return r.info.models
+    if (r.ok && r.info.models.length > 0) return sortModels(r.info.models)
     request = null
     return FALLBACK
   }).catch(() => { request = null; return FALLBACK })
