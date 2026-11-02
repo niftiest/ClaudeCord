@@ -4,6 +4,7 @@ import { resolveNewProjectOptions, type NewChatDefaults, type NewProjectOptions 
 import { EFFORTS } from '../../shared/models'
 import { modelOption, useClaudeModels } from './useClaudeModels'
 import type { FolderContents } from '../../shared/shell-run-types'
+import type { GithubRepoOption, GithubStatus } from '../../shared/github-types'
 
 /** Modal for starting a brand-new chat (Plan 2 Task 8): a working directory
  *  (typed, or via the native folder picker), whether to run with
@@ -69,6 +70,41 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
   // Set while asking about a folder Claude has never worked in.
   const [trustPrompt, setTrustPrompt] = useState<FolderContents | null>(null)
 
+  // GitHub: only when gh is installed and signed in. A repo picks the folder, and is cloned or
+  // pulled on Create, before the trust check, so that check sees what actually arrived.
+  const [github, setGithub] = useState<GithubStatus | null>(null)
+  const [repos, setRepos] = useState<GithubRepoOption[] | null>(null)
+  const [reposError, setReposError] = useState<string | null>(null)
+  const [repo, setRepo] = useState('')
+  const [preparing, setPreparing] = useState(false)
+  // The repo + folder already cloned or pulled, so a second Create (after a prompt) doesn't repeat it.
+  const [prepared, setPrepared] = useState<string | null>(null)
+  const [repoWarning, setRepoWarning] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    void api.githubStatus().then(status => {
+      if (!alive) return
+      setGithub(status)
+      if (status.state !== 'ready') return
+      void api.githubRepos().then(list => {
+        if (!alive) return
+        if (list.ok) setRepos(list.repos)
+        else setReposError(list.error)
+      })
+    })
+    return () => { alive = false }
+  }, [])
+
+  function pickRepo(fullName: string) {
+    setRepo(fullName)
+    setPrepared(null)
+    setRepoWarning(null)
+    setTrustPrompt(null)
+    const option = repos?.find(r => r.fullName === fullName)
+    if (option !== undefined) setCwd(option.destination)
+    else if (repos?.some(r => r.destination === cwd)) setCwd('')
+  }
+
   async function browse() {
     const picked = await api.pickDirectory()
     if (picked !== null) { setCwd(picked); setTrustPrompt(null) }
@@ -86,6 +122,15 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
       defaults
     )
     if (!resolved.ok) { setError(resolved.error); return }
+    const repoKey = `${repo}|${resolved.options.cwd}`
+    if (repo !== '' && prepared !== repoKey) {
+      setError(null)
+      setPreparing(true)
+      const outcome = await api.githubPrepare({ repo, cwd: resolved.options.cwd }).finally(() => setPreparing(false))
+      if (!outcome.ok) { setError(outcome.error); return }
+      setPrepared(repoKey)
+      if (outcome.warning !== undefined) { setRepoWarning(outcome.warning); return }
+    }
     if (trustPrompt !== null) {
       await api.trustFolder(resolved.options.cwd)
       setTrustPrompt(null)
@@ -111,11 +156,30 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         onClick={e => e.stopPropagation()}>
         <h2 className="modal-title">New chat</h2>
 
+        {github?.state === 'ready' && (
+          <label className="field">
+            <span className="field-label">GitHub repository</span>
+            <select className="field-input" value={repo} disabled={repos === null || preparing}
+              onChange={e => pickRepo(e.target.value)}>
+              <option value="">{repos === null && reposError === null ? 'Loading your repositories…' : 'None: use a folder'}</option>
+              {(repos ?? []).map(r => (
+                <option key={r.fullName} value={r.fullName} title={r.description ?? undefined}>
+                  {r.fullName}{r.isPrivate ? ' (private)' : ''}{r.isArchived ? ' (archived)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {reposError !== null && <p className="field-note">Couldn’t list your repositories: {reposError}</p>}
+        {repos !== null && repos.length === 0 && <p className="field-note">All your repositories already have a project.</p>}
+        {repo !== '' && <p className="field-note">Created in the folder below: cloned if it’s new there, or pulled if it’s already there.</p>}
+        {github?.state === 'signed_out' && <p className="field-note">Run <code>gh auth login</code> to start a chat from one of your GitHub repositories.</p>}
+
         <label className="field">
           <span className="field-label">Working directory</span>
           <div className="field-row">
             <input className="field-input" type="text" value={cwd} placeholder="C:\path\to\project"
-              onChange={e => { setCwd(e.target.value); setTrustPrompt(null) }} />
+              onChange={e => { setCwd(e.target.value); setTrustPrompt(null); setRepoWarning(null) }} />
             <button type="button" className="btn-secondary" onClick={() => void browse()}>Browse…</button>
           </div>
         </label>
@@ -156,6 +220,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         </label>
 
         {error !== null && <div className="modal-error">{error}</div>}
+        {repoWarning !== null && <div className="modal-error" role="alert">{repoWarning} Press Create again to start the chat anyway.</div>}
         {trustPrompt !== null && <TrustPrompt contents={trustPrompt} skipPermissions={skipPermissions} />}
         {confirming && (
           <div className="modal-error" role="alert">
@@ -164,10 +229,10 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         )}
 
         <div className="modal-actions">
-          <button type="button" className="btn-secondary" onClick={onCancel} disabled={creating}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={onCancel} disabled={creating || preparing}>Cancel</button>
           <button type="button" className="btn-primary" onClick={() => void submit()}
-            disabled={cwd.trim().length === 0 || creating}>
-            {creating ? 'Creating…' : trustPrompt !== null ? 'Trust folder and create' : confirming ? 'Yes, create it' : 'Create chat'}
+            disabled={cwd.trim().length === 0 || creating || preparing}>
+            {preparing ? 'Getting the repository…' : creating ? 'Creating…' : trustPrompt !== null ? 'Trust folder and create' : confirming ? 'Yes, create it' : 'Create chat'}
           </button>
         </div>
       </div>

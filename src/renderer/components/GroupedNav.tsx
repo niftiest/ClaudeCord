@@ -20,11 +20,23 @@ function ChannelAvatar({ icon }: { icon: ResolvedIcon }) {
   }
 }
 
-function ChannelItem({ channel, selected, unread, remote, onSelect, onContextMenu }: {
+function RepoIcon({ repo }: { repo: string }) {
+  const label = `Linked to GitHub: ${repo}`
+  return (
+    <span className="ch-repo" role="img" aria-label={label} title={label}>
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+      </svg>
+    </span>
+  )
+}
+
+function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, onContextMenu }: {
   channel: ChannelRow
   selected: boolean
   unread: boolean
   remote: boolean
+  showRepo: boolean
   onSelect: (channel: ChannelRow) => void
   onContextMenu: (channel: ChannelRow, x: number, y: number) => void
 }) {
@@ -43,6 +55,7 @@ function ChannelItem({ channel, selected, unread, remote, onSelect, onContextMen
       <div className="ch-body">
         <div className="ch-top">
           <span className="ch-name">{name}</span>
+          {showRepo && channel.repo != null && <RepoIcon repo={channel.repo} />}
           {channel.meta.starred && <span className="ch-star" aria-label="Starred" title="Starred">★</span>}
           <time className="ch-time">{relativeTime(channel.lastActivity)}</time>
         </div>
@@ -58,7 +71,8 @@ function ChannelItem({ channel, selected, unread, remote, onSelect, onContextMen
 /** One collapsible section (Starred / a named group / Ungrouped). Section
  *  collapse state is purely local UI state (not persisted) -- reopening the
  *  app always shows every section expanded. */
-function Section({ section, selectedId, unread, remote, onSelect, onContextMenu, defaultCollapsed = false }: {
+function Section({ section, selectedId, unread, remote, showRepos, onSelect, onContextMenu, defaultCollapsed = false }: {
+  showRepos: boolean
   section: NavSection
   selectedId: number | null
   unread: Set<number>
@@ -81,7 +95,7 @@ function Section({ section, selectedId, unread, remote, onSelect, onContextMenu,
         section.channels.length === 0
           ? <div className="nav-section-empty">No chats here yet.</div>
           : section.channels.map(c => (
-            <ChannelItem key={c.id} channel={c} selected={c.id === selectedId} unread={unread.has(c.id)} remote={remote.has(c.id)}
+            <ChannelItem key={c.id} channel={c} selected={c.id === selectedId} unread={unread.has(c.id)} remote={remote.has(c.id)} showRepo={showRepos}
               onSelect={onSelect} onContextMenu={onContextMenu} />
           ))
       )}
@@ -94,7 +108,9 @@ function Section({ section, selectedId, unread, remote, onSelect, onContextMenu,
  *  and an Ungrouped section last -- exactly what `groupChannels`
  *  (src/renderer/lib.ts) computes. Right-clicking a row surfaces
  *  `onContextMenu`, which Nav.tsx wires to ChannelContextMenu. */
-export function GroupedNav({ sections, selectedId, unread, remote = new Set<number>(), onSelect, onContextMenu }: {
+export function GroupedNav({ sections, selectedId, unread, remote = new Set<number>(), showRepos = false, onSelect, onContextMenu }: {
+  /** Show which projects are linked to a GitHub repo: only when the GitHub CLI is ready. */
+  showRepos?: boolean
   sections: NavSection[]
   selectedId: number | null
   unread: Set<number>
@@ -106,7 +122,7 @@ export function GroupedNav({ sections, selectedId, unread, remote = new Set<numb
     <>
       {sections.map(s => (
         <Section key={s.kind === 'group' ? `group:${s.groupId}` : s.kind === 'time' ? `time:${s.bucket}` : s.kind}
-          section={s} selectedId={selectedId} unread={unread} remote={remote} onSelect={onSelect} onContextMenu={onContextMenu}
+          section={s} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
           defaultCollapsed={s.kind === 'hidden'} />
       ))}
     </>

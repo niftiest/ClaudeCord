@@ -70,6 +70,7 @@ up safely.
 - **Edit what Claude remembers.** Right-click a project to open its folder, or to view and edit its `CLAUDE.md` and Claude's auto-memory notes. Running chats pick up changes on their next message.
 - **Replies that look right.** Tables, bold, bullets, headings, links and code blocks are formatted properly, with syntax colours and a copy button on code. Images show as thumbnails that open larger when clicked.
 - **Run shell commands from a chat.** Start a message with `!` to run a command in the chat's folder, without Claude and without using tokens. Claude sees the output with your next message, or you can leave it out.
+- **Start from GitHub.** If the GitHub CLI (`gh`) is installed and signed in, projects linked to a GitHub repo show a GitHub icon, and New chat lists your repositories that don't have a project yet. Pick one and ClaudeCord clones it (or pulls it, if it's already in that folder), then starts the chat with the settings you chose.
 - **Know what you're opening.** Before a new chat starts in a folder Claude has never worked in, ClaudeCord asks whether you trust it and names the hooks, MCP servers and settings it would pick up.
 - **Know when a tool is down.** If a chat's MCP server fails or needs a sign-in, a warning appears in the header, with the reason and a Reconnect or Sign in button.
 - **Claude Code's settings, without the files.** Choose Claude's default model and effort, what it may do without

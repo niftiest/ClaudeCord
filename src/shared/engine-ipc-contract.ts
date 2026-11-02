@@ -1,3 +1,4 @@
+import type { GithubRepoList, GithubStatus, PrepareRepoOutcome } from './github-types'
 import type { FolderTrust, ShellRun } from './shell-run-types'
 import type { MemoryFile, MemoryFileContent, MemorySaveResult } from './project-memory-types'
 import type { ProjectSettings, ContextUsage } from './project-options'
@@ -69,6 +70,12 @@ export const ENGINE_IPC = {
   /** invoke: whether a new chat may start in a folder without asking. */
   folderTrust: 'engine:folderTrust',
   trustFolder: 'engine:trustFolder',
+  /** invoke: is the GitHub CLI installed and signed in. */
+  githubStatus: 'engine:githubStatus',
+  /** invoke: the user's repos that have no project yet. */
+  githubRepos: 'engine:githubRepos',
+  /** invoke: clone or pull a repo, ready for a new chat there. */
+  githubPrepare: 'engine:githubPrepare',
   /** broadcast: (sessionPk, ExternalLock | null) whenever a chat's lock changes. */
   lockChanged: 'engine:lockChanged',
   /** invoke: every chat currently under Remote Control. */
@@ -144,6 +151,9 @@ export type EngineApi = {
   onShellChanged(cb: (sessionPk: number, runs: ShellRun[]) => void): () => void
   folderTrust(cwd: string): Promise<FolderTrust>
   trustFolder(cwd: string): Promise<void>
+  githubStatus(): Promise<GithubStatus>
+  githubRepos(): Promise<GithubRepoList>
+  githubPrepare(options: { repo: string; cwd: string }): Promise<PrepareRepoOutcome>
   send(sessionPk: number, text: string, images?: EngineImageInput[]): void
   interrupt(sessionPk: number): void
   resolvePermission(

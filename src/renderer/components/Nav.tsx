@@ -7,7 +7,7 @@ import { GroupedNav } from './GroupedNav'
 import { ChannelContextMenu } from './ChannelContextMenu'
 
 export function Nav({
-  channels, groups, selectedId, width, unread, remote, totalCost, elevated, activeChats, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
+  channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
   onRename, onToggleStar, onMoveToGroup, onCreateGroup, onDeleteGroup, onRenameGroup, onSetGroupIcon, onSetIcon,
   onToggleHidden, onDeleteChannel, onDeleteChat
 }: {
@@ -19,6 +19,8 @@ export function Nav({
   unread: Set<number>
   /** Project ids holding a chat under Remote Control (/rc). */
   remote?: Set<number>
+  /** The GitHub CLI is installed and signed in, so repo links are shown. */
+  showRepos?: boolean
   /** Total estimated USD cost across all sessions, shown in the header subline. */
   totalCost: number
   /** Running elevated (Windows) -- surfaces the ADMIN badge in the footer strip. */
@@ -77,7 +79,7 @@ export function Nav({
       </button>
       {channels.length === 0 && <div className="empty">No projects indexed yet.</div>}
       <div className="nav-list">
-        <GroupedNav sections={sections} selectedId={selectedId} unread={unread} remote={remote} onSelect={onSelect}
+        <GroupedNav sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}
           onContextMenu={(channel, x, y) => setContextMenu({ channel, x, y })} />
       </div>
       <button type="button" className="nav-foot" onClick={onOpenPool} title="Engine pool">

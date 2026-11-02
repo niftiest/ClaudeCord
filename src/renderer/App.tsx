@@ -58,6 +58,8 @@ function readStoredBool(key: string, fallback: boolean): boolean {
 }
 
 export function App() {
+  const [githubReady, setGithubReady] = useState(false)
+  useEffect(() => { void api.githubStatus().then(s => setGithubReady(s.state === 'ready')) }, [])
   const [progress, setProgress] = useState<Progress | null>(null)
   const [channels, setChannels] = useState<ChannelRow[]>([])
   const [groups, setGroups] = useState<ChannelGroup[]>([])
@@ -1012,7 +1014,7 @@ export function App() {
             onManageMemory={setMemoryChannel}
             onOpenManage={() => setManageOpen(true)} onOpenSettings={() => { setSettingsSection(undefined); setSettingsOpen(true) }}
             onCollapse={() => setSidebarExpanded(false)} channels={channels} groups={groups} selectedId={project?.id ?? null} width={navWidth}
-            unread={unread} remote={remoteProjects} totalCost={totalCost} elevated={elevated} activeChats={activeChats}
+            unread={unread} remote={remoteProjects} showRepos={githubReady} totalCost={totalCost} elevated={elevated} activeChats={activeChats}
             onSelect={p => void openProject(p)} onNewChat={() => setNewChatOpen(true)}
             onOpenSearch={() => setSearchOpen(true)} onOpenPool={() => setPoolOpen(true)}
             onRename={onRenameChannel} onToggleStar={onToggleStar} onMoveToGroup={onMoveToGroup}

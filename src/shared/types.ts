@@ -21,7 +21,11 @@ export type ProjectSummary = {
  *  in this file) and ChannelMeta (shell-types.ts) -- the canonical shape for
  *  the IPC boundary (`listChannels`) both the main-process merge and the
  *  renderer's nav cross. */
-export type ChannelRow = ProjectSummary & { meta: ChannelMeta }
+export type ChannelRow = ProjectSummary & {
+  meta: ChannelMeta
+  /** `owner/name` when the project's folder is a clone of a GitHub repo. */
+  repo?: string | null
+}
 
 export type SessionSummary = {
   id: number; sessionId: string; title: string | null; messageCount: number

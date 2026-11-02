@@ -26,6 +26,8 @@ import type { ClaudeInfoResult, McpCheckResult, McpServerStatus } from '../../sh
 import { Transport } from './transport'
 import { PermissionBridge } from './permission-bridge'
 import { startNewChat } from './new-chat'
+import { availableRepos, defaultCloneRoot, githubStatus, listGithubRepos, prepareRepo, readOriginRepo, realRunner } from './github'
+import type { GithubRepoList } from '../../shared/github-types'
 import { createIndexDebouncer, syncSessionToCatalog } from './catalog-sync'
 import { isExternallyLiveSession, sweepStaleSdkLocks, type OwnedProcess } from './live-sessions'
 import { LockMonitor } from './lock-monitor'
@@ -420,6 +422,18 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.trustFolder, (_e, cwd: string): void => {
     updateSettings(db, { trustedFolders: [...getSettings(db).trustedFolders, cwd] })
   })
+  ipcMain.handle(ENGINE_IPC.githubStatus, () => githubStatus(realRunner))
+  ipcMain.handle(ENGINE_IPC.githubRepos, async (): Promise<GithubRepoList> => {
+    try {
+      const repos = await listGithubRepos(realRunner)
+      const cwds = (db.prepare("SELECT cwd FROM projects WHERE cwd IS NOT NULL AND cwd <> ''").all() as Array<{ cwd: string }>).map(r => r.cwd)
+      const root = defaultCloneRoot(cwds.filter(cwd => readOriginRepo(cwd) !== null), homedir())
+      return { ok: true, repos: availableRepos(repos, cwds, root) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(ENGINE_IPC.githubPrepare, (_e, options: { repo: string; cwd: string }) => prepareRepo(realRunner, options))
   ipcMain.handle(ENGINE_IPC.contextUsage, async (_e, sessionPk: number): Promise<ContextUsage | null> => {
     const info = getEngineSessionInfo(db, sessionPk)
     const answer = info === null ? null : pool.request(info.filePath, 'get_context_usage')
@@ -645,6 +659,9 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeListener(ENGINE_IPC.resolvePermission, onResolvePermission)
       ipcMain.removeListener(ENGINE_IPC.setSessionOverrides, onSetSessionOverrides)
       ipcMain.removeHandler(ENGINE_IPC.newChat)
+      ipcMain.removeHandler(ENGINE_IPC.githubStatus)
+      ipcMain.removeHandler(ENGINE_IPC.githubRepos)
+      ipcMain.removeHandler(ENGINE_IPC.githubPrepare)
       ipcMain.removeHandler(ENGINE_IPC.pickDirectory)
       ipcMain.removeHandler(ENGINE_IPC.isSessionLive)
       ipcMain.removeHandler(ENGINE_IPC.getLock)

@@ -110,6 +110,9 @@ const api: ClaudeCordApi & EngineApi = {
   },
   folderTrust: (cwd: string) => ipcRenderer.invoke(ENGINE_IPC.folderTrust, cwd),
   trustFolder: (cwd: string) => ipcRenderer.invoke(ENGINE_IPC.trustFolder, cwd),
+  githubStatus: () => ipcRenderer.invoke(ENGINE_IPC.githubStatus),
+  githubRepos: () => ipcRenderer.invoke(ENGINE_IPC.githubRepos),
+  githubPrepare: (options: { repo: string; cwd: string }) => ipcRenderer.invoke(ENGINE_IPC.githubPrepare, options),
   onLockChanged: cb => {
     const listener = (_e: IpcRendererEvent, sessionPk: number, lock: ExternalLock | null) => cb(sessionPk, lock)
     ipcRenderer.on(ENGINE_IPC.lockChanged, listener)

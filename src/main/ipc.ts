@@ -2,6 +2,7 @@ import { ipcMain, app, shell, type BrowserWindow } from 'electron'
 import { applyStartupSettings, relaunchElevated, isElevated } from './elevation'
 import type { Catalog } from './catalog/db'
 import { listProjects, listSessions, listSubagents, sumTotalCostUsd } from './catalog/repos'
+import { readOriginRepo } from './engine/github'
 import { search } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
 import type { AppSettings } from '../shared/shell-types'
@@ -144,7 +145,11 @@ export async function loadTranscript(
  *  defaults for a channel with no metadata row yet, so every project always
  *  gets a `meta`, never undefined. */
 export function listChannels(db: Catalog): ChannelRow[] {
-  return listProjects(db).map(p => ({ ...p, meta: getChannelMeta(db, p.dirName) }))
+  return listProjects(db).map(p => ({
+    ...p,
+    meta: getChannelMeta(db, p.dirName),
+    repo: p.cwd !== null && p.cwd.length > 0 ? readOriginRepo(p.cwd) : null
+  }))
 }
 
 /** One-time seed of secrets from a git-ignored `local-secrets.json` at the

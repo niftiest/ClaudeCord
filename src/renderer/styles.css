@@ -257,6 +257,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ch:hover .ch-name, .ch[aria-selected="true"] .ch-name { color:var(--tx); }
 .ch-star { flex:none; color:var(--amber); font-size:11px; }
+.ch-repo { flex:none; display:inline-flex; align-items:center; color:var(--mu); }
 .ch-time { margin-left:auto; flex:none; font-size:11px; color:var(--mu); font-variant-numeric:tabular-nums; }
 .ch-preview { margin-top:1px; font-size:12.5px; color:var(--mu); line-height:1.35;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
