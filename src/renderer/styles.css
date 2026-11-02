@@ -343,9 +343,9 @@ body { margin:0; background:var(--bg); color:var(--tx);
 
 /* ── Main chat — Discord roominess: full-width, generous spacing ── */
 .main { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--bg); }
-.chead { height:var(--head-h); flex:none; display:flex; align-items:center; gap:10px; padding:0 16px;
+.chead { min-height:var(--head-h); flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 16px;
   box-shadow:0 1px 0 rgba(0,0,0,.24); background:var(--bg); z-index:1; }
-.chead-main { min-width:0; flex:1; }
+.chead-main { min-width:0; flex:1 1 180px; }
 .chead-title-row { display:flex; align-items:center; gap:8px; }
 .chead h1 { margin:0; font-size:15.5px; font-weight:700; letter-spacing:-.01em;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -763,7 +763,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .search-hit-time { flex:none; font-size:11px; color:var(--mu); font-variant-numeric:tabular-nums; }
 
 /* ── Settings window ── */
-.settings-window { display:flex; width:820px; max-width:calc(100vw - 32px); height:600px; max-height:calc(100vh - 64px);
+.settings-window { display:flex; width:min(1100px, calc(100vw - 48px)); height:min(900px, calc(100vh - 48px));
   background:var(--bg); border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 16px 48px rgba(0,0,0,.5); }
 .settings-nav { width:200px; flex:none; background:var(--s1); padding:14px 10px; display:flex; flex-direction:column; gap:2px; overflow-y:auto; }
 .settings-nav-title { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--mu); padding:6px 10px 8px; font-weight:700; }
@@ -771,7 +771,8 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .settings-nav-item:hover { background:var(--s2); }
 .settings-nav-item.active { background:var(--s3); color:var(--tx); font-weight:600; }
 .settings-close { margin-top:auto; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px; font-weight:600; cursor:pointer; }
-.settings-body { flex:1; overflow-y:auto; padding:22px 26px; }
+.settings-body { flex:1; min-width:0; overflow-x:hidden; overflow-y:auto; padding:22px 26px; }
+.settings-body select, .settings-body input, .settings-body table { max-width:100%; box-sizing:border-box; }
 .settings-group h2 { margin:0 0 16px; font-size:19px; font-weight:700; }
 .settings-note { color:var(--mu); font-size:13px; }
 
@@ -797,8 +798,8 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .im-selected { border-color:var(--accent); }
 .im-price { margin-left:auto; flex:none; font-family:var(--mono); font-size:11px; color:var(--good);
   font-variant-numeric:tabular-nums; white-space:nowrap; }
-.settings-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 0; border-bottom:1px solid var(--line); }
-.settings-row-label { display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--tx); }
+.settings-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; padding:11px 0; border-bottom:1px solid var(--line); }
+.settings-row-label { flex:1 1 240px; min-width:0; display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--tx); }
 .settings-hint { font-size:11.5px; color:var(--mu); font-weight:400; max-width:360px; }
 .settings-row input[type=text], .settings-row input[type=number], .settings-row input[type=password], .settings-row select {
   background:var(--s1); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:13px; min-width:200px; }
@@ -1246,7 +1247,7 @@ td.mg-c-date { font-family:var(--mono); font-size:11.5px; }
 .cc-add { display:flex; gap:6px; margin-top:4px; }
 .cc-add input { flex:1; }
 .cc-table { width:100%; border-collapse:collapse; font-size:13px; margin:6px 0 12px; }
-.cc-table td { padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+.cc-table td { padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:middle; overflow-wrap:anywhere; }
 .cc-table td:last-child { text-align:right; }
 .cc-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 12px; }
 .settings-sub { margin:22px 0 8px; font-size:13px; font-weight:700; color:var(--txt); text-transform:uppercase; letter-spacing:.03em; }

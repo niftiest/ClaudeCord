@@ -36,7 +36,7 @@ function DaysSelect({ value, presets, onChange, never, inherit, disabled }: {
   const [custom, setCustom] = useState(false)
   const cur = value === 'inherit' ? 'inherit' : value === null ? 'never' : presets.includes(value) && !custom ? String(value) : 'custom'
   return (
-    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', maxWidth: '100%' }}>
       <select value={cur} disabled={disabled} onChange={e => {
         const v = e.target.value
         if (v === 'custom') { setCustom(true); return }
@@ -49,7 +49,7 @@ function DaysSelect({ value, presets, onChange, never, inherit, disabled }: {
         <option value="custom">Custom…</option>
       </select>
       {cur === 'custom' && (
-        <input type="number" min={1} max={36500} style={{ width: 80 }} disabled={disabled}
+        <input type="number" min={1} max={36500} style={{ width: 80, minWidth: 0 }} disabled={disabled}
           defaultValue={typeof value === 'number' ? value : 30}
           onBlur={e => { const n = Math.floor(Number(e.target.value)); if (n >= 1 && n <= 36500) onChange(n) }} />
       )}

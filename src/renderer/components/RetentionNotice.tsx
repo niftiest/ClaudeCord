@@ -8,10 +8,10 @@ export const LOW_RETENTION_DAYS = 365
 /** Why Claude Code may delete chats sooner than the user expects, or null. */
 export function retentionWarning(s: RetentionStatus): string | null {
   const lower = s.overrides.filter(o => o.days < s.claudeDays)
-  if (s.claudeDays < LOW_RETENTION_DAYS) {
-    return s.claudeDaysSet
-      ? `Claude Code deletes chats older than ${s.claudeDays} days.`
-      : `Claude Code deletes chats older than ${s.claudeDays} days unless you change it.`
+  // A period the user set themselves is their choice, however short: only the
+  // default they may not know about gets a heads-up.
+  if (!s.claudeDaysSet && s.claudeDays < LOW_RETENTION_DAYS) {
+    return `Claude Code deletes chats older than ${s.claudeDays} days unless you change it.`
   }
   if (lower.length > 0) {
     const min = Math.min(...lower.map(o => o.days))
@@ -22,9 +22,12 @@ export function retentionWarning(s: RetentionStatus): string | null {
 
 /** Slim bar across the chat pane when Claude Code is set to delete old chats
  *  soon. "Keep chats longer" opens Settings → Chat history. */
-export function RetentionNotice({ onOpenSettings, onDismiss }: { onOpenSettings: () => void; onDismiss: () => void }) {
+export function RetentionNotice({ settingsOpen, onOpenSettings, onDismiss }: { settingsOpen: boolean; onOpenSettings: () => void; onDismiss: () => void }) {
   const [status, setStatus] = useState<RetentionStatus | null>(null)
-  useEffect(() => { void api.retentionStatus().then(setStatus).catch(() => setStatus(null)) }, [])
+  // Re-read when Settings closes, so fixing the period there clears the bar.
+  useEffect(() => {
+    if (!settingsOpen) void api.retentionStatus().then(setStatus).catch(() => setStatus(null))
+  }, [settingsOpen])
   if (status === null) return null
   const warning = retentionWarning(status)
   if (warning === null) return null

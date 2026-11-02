@@ -1040,6 +1040,7 @@ export function App() {
         <UpdateBar />
         {settings !== null && !settings.retentionNoticeDismissed && (
           <RetentionNotice
+            settingsOpen={settingsOpen}
             onOpenSettings={() => { setSettingsSection('history'); setSettingsOpen(true) }}
             onDismiss={() => { void api.updateSettings({ retentionNoticeDismissed: true }).then(setSettings) }} />
         )}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, screen } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createSplash, type Splash } from './splash'
@@ -53,9 +53,11 @@ function createWindow(): void {
     applyStartupSettings({ startWithWindows: true, startWithAdmin: false, exePath: app.getPath('exe'), appArgs: [AUTOSTART_ARG] })
   }
 
+  // Never open bigger than the screen: 1080p at 150% scaling is only 1280x720.
+  const workArea = screen.getPrimaryDisplay().workAreaSize
   const win = new BrowserWindow({
-    width: 1600,
-    height: 1000,
+    width: Math.min(1600, workArea.width),
+    height: Math.min(1000, workArea.height),
     // Hidden until the renderer reports it has loaded (app:ready) -- the
     // splash is all the user sees until then.
     show: false,
