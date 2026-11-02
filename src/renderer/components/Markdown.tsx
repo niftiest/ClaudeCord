@@ -1,0 +1,74 @@
+import { memo, useState, type ComponentProps, type ReactNode } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
+import rehypeHighlight from 'rehype-highlight'
+import { common } from 'lowlight'
+import apache from 'highlight.js/lib/languages/apache'
+import dos from 'highlight.js/lib/languages/dos'
+import powershell from 'highlight.js/lib/languages/powershell'
+import { api } from '../api'
+
+/** Claude's replies, rendered as the terminal would format them. Choices come from
+ *  a scan of 10,742 real replies:
+ *  - singleTilde off: 157 of them say "~2,000" for "about", which GFM's default
+ *    would pair up into strikethrough. "~~x~~" still works.
+ *  - remark-breaks: Claude's single newlines are meant as line breaks.
+ *  - Raw HTML stays visible text: replies mention tags like <summary> as words, and
+ *    nothing in a transcript should be able to inject markup.
+ *  - Images aren't fetched: opening a chat shouldn't contact whatever a reply names.
+ *  - The highlight languages are the ones replies use, on top of the common set. */
+
+const REMARK = [[remarkGfm, { singleTilde: false }], remarkBreaks] as ComponentProps<typeof ReactMarkdown>['remarkPlugins']
+const REHYPE = [[rehypeHighlight, { languages: { ...common, apache, dos, bat: dos, powershell, ps1: powershell }, detect: false }]] as ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+
+function textOf(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (typeof node === 'object' && node !== null && 'props' in node) return textOf((node.props as { children?: ReactNode }).children)
+  return ''
+}
+
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false)
+  const language = /language-([\w+#-]+)/.exec(String((children as { props?: { className?: string } } | undefined)?.props?.className ?? ''))?.[1] ?? null
+  return (
+    <div className="md-code">
+      <div className="md-code-head">
+        <span>{language ?? ''}</span>
+        <button type="button" onClick={() => {
+          void navigator.clipboard.writeText(textOf(children).replace(/\n$/, ''))
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        }}>{copied ? 'Copied' : 'Copy'}</button>
+      </div>
+      <pre>{children}</pre>
+    </div>
+  )
+}
+
+const COMPONENTS: Components = {
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
+  // Never navigates the app's own window; the main process only opens web and mail links.
+  a: ({ href, children }) => (
+    <a href={href} title={href} onClick={e => {
+      e.preventDefault()
+      if (href !== undefined) void api.openLink(href)
+    }}>{children}</a>
+  ),
+  img: ({ src, alt }) => <span className="md-image-ref">🖼 {alt !== undefined && alt !== '' ? alt : typeof src === 'string' ? src : 'image'}</span>
+}
+
+export const Markdown = memo(function Markdown({ text, highlight = true, className = '' }: {
+  text: string
+  /** Off while streaming: colouring half a code block on every token isn't worth it. */
+  highlight?: boolean
+  className?: string
+}) {
+  return (
+    <div className={`md ${className}`}>
+      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={highlight ? REHYPE : []} components={COMPONENTS}>{text}</ReactMarkdown>
+    </div>
+  )
+})

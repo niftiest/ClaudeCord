@@ -1,0 +1,492 @@
+import { safeExtraFlags, type SpawnSpec } from './transport'
+import { allowAlwaysRule } from './permission-bridge'
+import type { StreamedRow } from '../jsonl/stream'
+import type { ContentBlock } from '../../shared/types'
+import type { LiveEvent, PermissionRequest, PermissionDecision } from '../../shared/engine-types'
+
+/** Engine core: ties the primitives built in Tasks 1-5 (pool, watcher,
+ *  permission bridge, transport) into the one thing the IPC boundary
+ *  (engine-ipc.ts, Task 6's electron half) actually calls. Node-only -- must
+ *  never import electron; enforced by tests/architecture.test.ts the same as
+ *  the rest of src/main/engine.
+ *
+ *  Narrow "Like" interfaces (PoolLike/WatcherLike/BridgeLike below) mirror the
+ *  pattern pool.ts already established with TransportLike: the real
+ *  SessionPool/SessionWatcher/PermissionBridge classes structurally satisfy
+ *  them, but tests can inject lightweight fakes instead of standing up a real
+ *  child-process pool or a real chokidar watch. */
+
+export type SessionInfo = {
+  sessionPk: number
+  sessionKey: string
+  filePath: string
+  cwd: string
+  resumeId: string
+  indexedOffset: number
+  /** True when this session has never been spawned against before (its
+   *  durable file doesn't exist yet -- a brand-new chat from Task 8's
+   *  startNewChat, before its first send). Optional so existing fixtures/
+   *  tests that predate Task 8 (an established, resumable session) keep
+   *  meaning "not new" by simply omitting the field -- see buildSpawnSpec. */
+  isNew?: boolean
+}
+
+export type ImageBlockInput = { mediaType: string; dataBase64: string }
+
+export interface PoolLike {
+  send(sessionKey: string, spec: SpawnSpec, msg: object): void
+  interrupt(sessionKey: string): void
+  on(sessionKey: string, cb: (e: LiveEvent) => void): void
+}
+
+export interface WatcherLike {
+  watch(filePath: string, fromOffset: number, onRows: (rows: StreamedRow[], endOffset: number) => void): void
+  stop(): void
+}
+
+export interface BridgeLike {
+  readonly toolName: string
+  onRequest(cb: (req: PermissionRequest) => void): void
+  resolve(id: string, decision: PermissionDecision): void
+}
+
+/** Persists "allow always" rules per cwd so the NEXT spawn against that
+ *  working directory passes them via `--allowedTools`. A simple JSON-file
+ *  backed implementation is wired in by engine-ipc.ts; tests use an
+ *  in-memory fake. */
+export type RulesStore = {
+  add(cwd: string, rule: string): void
+  get(cwd: string): string[]
+}
+
+/** Injected by engine-ipc.ts (the real net/fs-backed PermissionRelay) to wire
+ *  a skip-permissions-OFF spawn to ClaudeCord's in-process permission bridge.
+ *  Given a sessionKey it returns the two spawn args -- the per-session
+ *  `--mcp-config` path and the fully-qualified `--permission-prompt-tool`
+ *  name. Optional: when absent (unit tests, or a build without the relay) the
+ *  coordinator falls back to `defaults.mcpConfigArg` + `bridge.toolName`. */
+export type PermissionRelayLike = {
+  ensure(sessionKey: string): { mcpConfigArg: string; permissionPromptTool: string }
+}
+
+export type EngineDefaults = {
+  skipPermissions: boolean
+  model?: string
+  effort?: string
+  permissionMode?: string
+  claudeBin: string
+  mcpConfigArg: string
+}
+
+export type EngineCoordinatorDeps = {
+  pool: PoolLike
+  makeWatcher: () => WatcherLike
+  bridge: BridgeLike
+  lookupSession: (sessionPk: number) => SessionInfo | null
+  rulesStore: RulesStore
+  /** Wires a skip-permissions-OFF spawn to the in-process bridge (see
+   *  PermissionRelayLike). Omit to fall back to defaults.mcpConfigArg +
+   *  bridge.toolName. */
+  permissionRelay?: PermissionRelayLike
+  defaults: EngineDefaults
+  /** Predicate mirroring the pool's own two-writer guard: true when a
+   *  terminal (or anything outside this app) already holds the session's
+   *  file open. Checked here too -- not just inside whatever pool
+   *  implementation is injected -- so `send()` never even builds a
+   *  SpawnSpec/starts a watcher for a session this app must not touch, and so
+   *  the refusal behaves identically regardless of whether the injected pool
+   *  happens to enforce the same guard itself. */
+  isExternallyLive: (sessionKey: string) => boolean
+  /** Whether this spawn should enable Claude in Chrome (--chrome). Read at
+   *  spawn time so a settings change applies to the next process. */
+  chromeEnabled?: () => boolean
+  /** Spending cap and extra CLI flags from the app settings, read at spawn
+   *  time so a change applies to the next process. */
+  spawnExtras?: () => { maxBudgetUsd: number | null; extraFlags: string[] }
+  /** What should reach Claude ahead of the chat's next message (`!` output). */
+  contextForMessage?: (sessionPk: number) => ContentBlock[]
+  /** Whether this chat's next process should ask for prompt suggestions. */
+  wantsSuggestions?: (sessionPk: number) => boolean
+  /** Keeps each project's model, effort and permission choices, shared by its chats. */
+  projectDefaults?: {
+    load: (sessionPk: number) => Partial<EngineDefaults>
+    save: (sessionPk: number, overrides: Partial<EngineDefaults>) => void
+  }
+}
+
+/** Builds the exact MCP result an "other" refusal reads as -- a fresh literal
+ *  per call, same rationale as pool.ts's refusedExternalLive: no shared
+ *  mutable object a subscriber could stash and have mutate later. */
+function refusedExternalLive(): LiveEvent {
+  return { kind: 'other', type: 'refused-external-live' }
+}
+
+function unknownSessionEvent(): LiveEvent {
+  return { kind: 'other', type: 'unknown-session' }
+}
+
+/** Builds the stream-json `user` turn sent over the transport's stdin.
+ *  Text-only content stays a bare string (matches §2's simplest input
+ *  shape); any images promote it to the block-array form with the text
+ *  block first, mirroring the plan's recorded example verbatim. */
+function buildUserMessage(text: string, images?: ImageBlockInput[], before: ContentBlock[] = []): object {
+  if ((images === undefined || images.length === 0) && before.length === 0) {
+    return { type: 'user', message: { role: 'user', content: text } }
+  }
+  const blocks: ContentBlock[] = [
+    ...before,
+    { type: 'text', text },
+    ...(images ?? []).map((img): ContentBlock => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.dataBase64 }
+    }))
+  ]
+  return { type: 'user', message: { role: 'user', content: blocks } }
+}
+
+/** Builds the SpawnSpec for one turn against an already-resolved session.
+ *
+ *  --session-id vs --resume (Task 8): a session whose durable file doesn't
+ *  exist yet (`info.isNew`, from repos.ts's fs.existsSync check) has never
+ *  been spawned before -- the CLI must be told to CREATE that session id
+ *  (`--session-id`); there is nothing to `--resume`. Every other session
+ *  (the file already exists -- an established chat, or this same chat's
+ *  second-or-later spawn after an idle-reap) resumes in place from its
+ *  durable `session_id`, never a fork. In practice this decision only bites
+ *  once per session's lifetime in a given pool: SessionPool reuses one live
+ *  Transport across every send() while it's alive, so a SpawnSpec is only
+ *  ever consumed at the moment of an actual (re)spawn.
+ *
+ *  CRITICAL branch (per the T5 pairing): the permission tool + its MCP
+ *  server + any persisted "allow always" rules are only wired in when
+ *  `skipPermissions` is false. `--dangerously-skip-permissions` bypasses the
+ *  permission-prompt-tool entirely, so setting it anyway would be dead
+ *  config at best and a confusing signal at worst. */
+function buildSpawnSpec(
+  info: SessionInfo,
+  defaults: EngineDefaults,
+  bridge: BridgeLike,
+  rulesStore: RulesStore,
+  permissionRelay?: PermissionRelayLike,
+  chrome = false,
+  extras: { maxBudgetUsd: number | null; extraFlags: string[] } = { maxBudgetUsd: null, extraFlags: [] }
+): SpawnSpec {
+  const spec: SpawnSpec = {
+    cwd: info.cwd,
+    skipPermissions: defaults.skipPermissions
+  }
+  if (info.isNew === true) {
+    spec.sessionId = info.resumeId
+  } else {
+    spec.resumeId = info.resumeId
+  }
+  if (defaults.model !== undefined) spec.model = defaults.model
+  if (defaults.effort !== undefined) spec.effort = defaults.effort
+  if (defaults.permissionMode !== undefined) spec.permissionMode = defaults.permissionMode
+  if (chrome) spec.chrome = true
+  if (extras.maxBudgetUsd !== null && extras.maxBudgetUsd > 0) spec.maxBudgetUsd = extras.maxBudgetUsd
+
+  if (!defaults.skipPermissions) {
+    // The relay (when wired) owns the per-session pipe + config and computes
+    // the fully-qualified prompt-tool name (mcp__<server>__<tool>). Falling
+    // back to bridge.toolName + defaults.mcpConfigArg keeps the coordinator's
+    // unit tests -- which inject no relay -- working unchanged.
+    const wiring = permissionRelay !== undefined
+      ? permissionRelay.ensure(info.sessionKey)
+      : { mcpConfigArg: defaults.mcpConfigArg, permissionPromptTool: bridge.toolName }
+    spec.permissionPromptTool = wiring.permissionPromptTool
+    const extraArgs = ['--mcp-config', wiring.mcpConfigArg]
+    const rules = rulesStore.get(info.cwd)
+    if (rules.length > 0) extraArgs.push('--allowedTools', rules.join(','))
+    spec.extraArgs = extraArgs
+  }
+  const userFlags = safeExtraFlags(extras.extraFlags)
+  if (userFlags.length > 0) spec.extraArgs = [...(spec.extraArgs ?? []), ...userFlags]
+
+  return spec
+}
+
+type PendingPermission = { req: PermissionRequest; sessionPk: number; cwd: string }
+
+/**
+ * Pure coordination logic wiring pool + watcher + permission bridge +
+ * catalog lookup + rules persistence into the surface engine-ipc.ts forwards
+ * to the renderer. Every dependency is injected so this is fully testable
+ * with fakes -- no electron, no real child processes, no real filesystem
+ * watching.
+ */
+export class EngineCoordinator {
+  private readonly sessionInfoByPk = new Map<number, SessionInfo>()
+  private readonly sessionKeyToPk = new Map<string, number>()
+  private readonly watchers = new Map<number, WatcherLike>()
+  private readonly subscribedKeys = new Set<string>()
+  private readonly pendingPermissions = new Map<string, PendingPermission>()
+  /** Per-chat overrides set by Task 8's New-Chat dialog (model/effort/
+   *  skipPermissions chosen at creation time), consulted ahead of the
+   *  coordinator's global EngineDefaults for that one sessionPk. Only used when
+   *  no `projectDefaults` store is wired (tests). Callers must omit a
+   *  field entirely (not set it to `undefined`) to fall back to the global
+   *  default for it -- see effectiveDefaults, which spreads this object
+   *  directly over `deps.defaults`. */
+  private readonly sessionDefaults = new Map<number, Partial<EngineDefaults>>()
+
+  private readonly eventListeners: Array<(sessionPk: number, e: LiveEvent) => void> = []
+  private readonly rowsListeners: Array<(sessionPk: number, rows: StreamedRow[]) => void> = []
+  private readonly permissionListeners: Array<(sessionPk: number, req: PermissionRequest) => void> = []
+
+  constructor(private readonly deps: EngineCoordinatorDeps) {
+    // Registered once, globally: the bridge is shared across every spawned
+    // session, and each parked request already carries its own sessionKey to
+    // route back to a sessionPk.
+    this.deps.bridge.onRequest((req) => this.handleBridgeRequest(req))
+  }
+
+  /** Resolves the session, ensures its watcher + event subscription are
+   *  running, builds the SpawnSpec for this turn, and hands it to the pool.
+   *  A sessionPk the catalog doesn't know about (deleted session, stale
+   *  reference, race with a prune) surfaces as an `unknown-session` event
+   *  instead of throwing -- a bad IPC call from the renderer must never crash
+   *  the main process. */
+  send(sessionPk: number, text: string, images?: ImageBlockInput[]): void {
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null) {
+      this.emitEvent(sessionPk, unknownSessionEvent())
+      return
+    }
+    this.cacheSessionInfo(sessionPk, info)
+
+    if (this.deps.isExternallyLive(info.sessionKey)) {
+      this.emitEvent(sessionPk, refusedExternalLive())
+      return
+    }
+
+    this.ensureEventSubscription(info.sessionKey, sessionPk)
+    this.ensureWatcher(sessionPk, info)
+
+    const spec = buildSpawnSpec(info, this.effectiveDefaults(sessionPk), this.deps.bridge, this.deps.rulesStore,
+      this.deps.permissionRelay, this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
+    // A slash command has to be the whole message, or Claude reads it as text.
+    const before = text.trimStart().startsWith('/') ? [] : this.deps.contextForMessage?.(sessionPk) ?? []
+    const userMessage = buildUserMessage(text, images, before)
+    this.deps.pool.send(info.sessionKey, spec, userMessage)
+  }
+
+  /** Registers per-chat overrides (Task 8) for one sessionPk -- e.g. the
+   *  model/effort/skipPermissions chosen in the New-Chat dialog. Pass only
+   *  the fields to override; an omitted field falls back to the
+   *  coordinator's global EngineDefaults (see effectiveDefaults). */
+  setSessionDefaults(sessionPk: number, overrides: Partial<EngineDefaults>): void {
+    this.sessionDefaults.set(sessionPk, overrides)
+    this.deps.projectDefaults?.save(sessionPk, overrides)
+  }
+
+  /** Like setSessionDefaults but MERGES over any existing overrides rather
+   *  than replacing them -- the chat header's model/effort selectors change
+   *  one field at a time and must not clobber the other, nor the
+   *  skipPermissions the New-Chat dialog may already have registered. */
+  mergeSessionDefaults(sessionPk: number, overrides: Partial<EngineDefaults>): void {
+    const next: Partial<EngineDefaults> = { ...this.overridesFor(sessionPk), ...overrides }
+    // undefined means "back to the default", which only works if the key is gone:
+    // effectiveDefaults spreads this over the defaults.
+    for (const key of Object.keys(next) as Array<keyof EngineDefaults>) if (next[key] === undefined) delete next[key]
+    this.sessionDefaults.set(sessionPk, next)
+    this.deps.projectDefaults?.save(sessionPk, next)
+  }
+
+  /** The flags that make a terminal run this chat the way it runs here: permissions,
+   *  model, effort, Chrome and the user's extra flags. Not the spending cap, which
+   *  Claude only applies to non-interactive runs, or ClaudeCord's own permission
+   *  server, which is what a terminal's own prompts replace. */
+  terminalFlags(sessionPk: number): string[] {
+    const d = this.effectiveDefaults(sessionPk)
+    const flags: string[] = []
+    if (d.skipPermissions) flags.push('--dangerously-skip-permissions')
+    else if (d.permissionMode !== undefined) flags.push('--permission-mode', d.permissionMode)
+    if (d.model !== undefined) flags.push('--model', d.model)
+    if (d.effort !== undefined) flags.push('--effort', d.effort)
+    if (this.deps.chromeEnabled?.() === true) flags.push('--chrome')
+    return [...flags, ...safeExtraFlags(this.deps.spawnExtras?.().extraFlags ?? [])]
+  }
+
+  interrupt(sessionPk: number): void {
+    const info = this.resolveCachedOrLookup(sessionPk)
+    if (info === null) return
+    this.deps.pool.interrupt(info.sessionKey)
+  }
+
+  /** Pairs with PermissionBridge's parked promise (Task 5): `allow_always`
+   *  derives a persisted rule from the ORIGINAL pending request (tool/input)
+   *  and stores it against the session's cwd before resolving -- so the rule
+   *  is in place for the NEXT spawn's `--allowedTools`, not this one (this
+   *  turn's tool call has already happened; there is nothing to retrofit it
+   *  onto). `allow` and `allow_always` both resolve as an ordinary `allow`.
+   *  An unknown id (already resolved, timed out, or simply never parked here
+   *  -- e.g. a stale renderer retry) still forwards to `bridge.resolve` (a
+   *  documented no-op for an unrecognized id) but never leaves a pending
+   *  entry behind either way, since the `delete` below runs unconditionally. */
+  resolvePermission(id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string): void {
+    const pending = this.pendingPermissions.get(id)
+    this.pendingPermissions.delete(id)
+
+    if (decision === 'deny') {
+      this.deps.bridge.resolve(id, { behavior: 'deny', message: denyMessage ?? 'Denied by user' })
+      return
+    }
+
+    if (decision === 'allow_always' && pending !== undefined) {
+      const rule = allowAlwaysRule(pending.req.tool, pending.req.input)
+      this.deps.rulesStore.add(pending.cwd, rule)
+    }
+
+    this.deps.bridge.resolve(id, { behavior: 'allow', updatedInput: editedInput ?? pending?.req.input })
+  }
+
+  onEvent(cb: (sessionPk: number, e: LiveEvent) => void): void {
+    this.eventListeners.push(cb)
+  }
+
+  onRows(cb: (sessionPk: number, rows: StreamedRow[]) => void): void {
+    this.rowsListeners.push(cb)
+  }
+
+  onPermission(cb: (sessionPk: number, req: PermissionRequest) => void): void {
+    this.permissionListeners.push(cb)
+  }
+
+  /** Starts tailing a session's transcript WITHOUT sending anything -- used
+   *  while a terminal holds the chat, so its turns stream into the open
+   *  transcript (via onRows) instead of waiting for the periodic sweep.
+   *  Idempotent (reuses a running watcher). Returns false for an unknown
+   *  sessionPk. */
+  watchSession(sessionPk: number): boolean {
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null) return false
+    this.cacheSessionInfo(sessionPk, info)
+    this.ensureWatcher(sessionPk, info)
+    return true
+  }
+
+  /** Stops the session's watcher (if one is running) so repeated sends to
+   *  the same session never leak watchers across the session's lifetime, and
+   *  a closed chat stops tailing its file. Safe to call for a session with no
+   *  watcher (nothing to dispose, e.g. a session that was only ever refused
+   *  for being externally live).
+   *
+   *  Deliberately does NOT clear `sessionInfoByPk`/`sessionKeyToPk` or deny
+   *  any of the session's pending permission requests: closing a chat's view
+   *  (switching to a different one) is not the same as abandoning its
+   *  in-flight turn -- the pool/transport keep running independently of the
+   *  watcher, a tool call can still be waiting on a decision, and
+   *  `resolvePermission`'s `allow_always` needs the cached cwd to persist a
+   *  rule even if that answer arrives after the chat view was closed.
+   *  PermissionBridge's own per-request timeout (Task 5) is what eventually
+   *  cleans up a request nobody ever answers. */
+  disposeSession(sessionPk: number): void {
+    const watcher = this.watchers.get(sessionPk)
+    if (watcher === undefined) return
+    watcher.stop()
+    this.watchers.delete(sessionPk)
+  }
+
+  /** Whole-coordinator teardown for app quit (Plan 2 review Fix 3):
+   *  `disposeSession` above is per-session and, before this fix, was called
+   *  from nowhere -- every SessionWatcher ever started leaked for the app's
+   *  full lifetime. This stops EVERY active watcher (regardless of whether
+   *  its session has a turn mid-flight -- the whole process is exiting, so
+   *  there is no "later" for it to resume) and clears every per-session
+   *  bookkeeping map, so nothing in this coordinator instance keeps a
+   *  reference alive past teardown. Deliberately does NOT touch
+   *  `pendingPermissions` -- same rationale as `disposeSession`, and moot at
+   *  app-quit either way. Idempotent: a second call finds every map already
+   *  empty and is a no-op. */
+  disposeAll(): void {
+    for (const watcher of this.watchers.values()) watcher.stop()
+    this.watchers.clear()
+    this.sessionInfoByPk.clear()
+    this.sessionKeyToPk.clear()
+    this.sessionDefaults.clear()
+    this.subscribedKeys.clear()
+  }
+
+  // ---------------------------------------------------------------------
+  // internals
+  // ---------------------------------------------------------------------
+
+  private handleBridgeRequest(req: PermissionRequest): void {
+    const sessionPk = this.sessionKeyToPk.get(req.sessionKey)
+    if (sessionPk === undefined) {
+      // A permission request whose sessionKey doesn't map back to any
+      // sessionPk this coordinator has ever sent for -- nothing in the
+      // renderer knows which chat to show it against. Log and drop rather
+      // than forward a request no UI surface can route, and don't park it
+      // (parking with no route would just leak on out on the pending map
+      // until its own timeout).
+      console.warn(`[engine-coordinator] permission request for unmapped sessionKey "${req.sessionKey}" -- dropping`)
+      return
+    }
+
+    const cwd = this.sessionInfoByPk.get(sessionPk)?.cwd ?? ''
+    this.pendingPermissions.set(req.id, { req, sessionPk, cwd })
+    for (const cb of this.permissionListeners) cb(sessionPk, req)
+  }
+
+  /** Merges any Task 8 per-session overrides over the coordinator's global
+   *  EngineDefaults. A session with no overrides registered returns
+   *  `deps.defaults` by reference (no allocation on the hot path every
+   *  send() already is). */
+  private effectiveDefaults(sessionPk: number): EngineDefaults {
+    return { ...this.deps.defaults, ...this.overridesFor(sessionPk) }
+  }
+
+  /** The choices that apply to this chat, which belong to its project when stored. */
+  private overridesFor(sessionPk: number): Partial<EngineDefaults> {
+    // Read fresh each time: another chat in the folder may have changed them.
+    if (this.deps.projectDefaults !== undefined) return this.deps.projectDefaults.load(sessionPk)
+    return this.sessionDefaults.get(sessionPk) ?? {}
+  }
+
+  private spawnExtrasFor(sessionPk: number): { maxBudgetUsd: number | null; extraFlags: string[] } {
+    const extras = this.deps.spawnExtras?.() ?? { maxBudgetUsd: null, extraFlags: [] }
+    return this.deps.wantsSuggestions?.(sessionPk) === true ? { ...extras, extraFlags: [...extras.extraFlags, '--prompt-suggestions'] } : extras
+  }
+
+  private cacheSessionInfo(sessionPk: number, info: SessionInfo): void {
+    this.sessionInfoByPk.set(sessionPk, info)
+    this.sessionKeyToPk.set(info.sessionKey, sessionPk)
+  }
+
+  private resolveCachedOrLookup(sessionPk: number): SessionInfo | null {
+    const cached = this.sessionInfoByPk.get(sessionPk)
+    if (cached !== undefined) return cached
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null) return null
+    this.cacheSessionInfo(sessionPk, info)
+    return info
+  }
+
+  /** Registers exactly one pool subscriber per sessionKey -- pool.on() has no
+   *  matching "off", so calling it again on every send would pile up
+   *  duplicate subscribers that each re-emit the same event. */
+  private ensureEventSubscription(sessionKey: string, sessionPk: number): void {
+    if (this.subscribedKeys.has(sessionKey)) return
+    this.subscribedKeys.add(sessionKey)
+    this.deps.pool.on(sessionKey, (e) => this.emitEvent(sessionPk, e))
+  }
+
+  /** Starts exactly one watcher per session, from the offset the catalog has
+   *  already indexed up to. A repeated send to the same session reuses the
+   *  running watcher instead of starting a second one against the same file
+   *  (which would double-emit every appended row). */
+  private ensureWatcher(sessionPk: number, info: SessionInfo): void {
+    if (this.watchers.has(sessionPk)) return
+    const watcher = this.deps.makeWatcher()
+    watcher.watch(info.filePath, info.indexedOffset, (rows) => {
+      for (const cb of this.rowsListeners) cb(sessionPk, rows)
+    })
+    this.watchers.set(sessionPk, watcher)
+  }
+
+  private emitEvent(sessionPk: number, e: LiveEvent): void {
+    for (const cb of this.eventListeners) cb(sessionPk, e)
+  }
+}

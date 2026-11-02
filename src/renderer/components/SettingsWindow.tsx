@@ -1,0 +1,266 @@
+import { useEffect, useState } from 'react'
+import { api } from '../api'
+import type { AppSettings } from '../../shared/shell-types'
+import { McpSettings } from './McpSettings'
+import { SkillsSettings } from './SkillsSettings'
+import { MODELS, EFFORTS } from '../../shared/models'
+import { IconPicker } from './IconPicker'
+import { ClaudeAvatar } from './ClaudeAvatar'
+import { UpdatesPanel } from './UpdatesPanel'
+import { ClaudeCodeSettings, type ProjectChoice } from './ClaudeCodeSettings'
+import { ChatHistorySettings } from './ChatHistorySettings'
+
+export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'mcp' | 'skills' | 'openrouter' | 'engine'
+type Section = SettingsSection
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'startup', label: 'Startup & System' },
+  { id: 'updates', label: 'Updates' },
+  { id: 'defaults', label: 'New chat defaults' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'claude', label: 'Claude Code' },
+  { id: 'history', label: 'Chat history' },
+  { id: 'mcp', label: 'MCP servers' },
+  { id: 'skills', label: 'Skills & commands' },
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'engine', label: 'Engine' }
+]
+
+const PER_PROJECT_HINT = 'Choose per project adds this to Project options in each chat’s header, shared by every chat in that folder. Any other choice here overrides what each project picked.'
+
+const IS_WINDOWS = navigator.userAgent.includes('Windows')
+
+/** Sectioned settings, persisted via the settings store. Each control patches
+ *  one field through `api.updateSettings`, which validates and returns the full
+ *  new settings (so an invalid value is silently reverted to what stuck).
+ *  The "MCP & Skills" section is read-only (lists configured servers/skills for
+ *  the user + the open project). */
+export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, initialSection, projects = [] }: {
+  onClose: () => void
+  onSettingsChanged?: (s: AppSettings) => void
+  projectCwd?: string | null
+  initialSection?: SettingsSection
+  /** Projects for the Claude Code / Chat history per-project choices. */
+  projects?: ProjectChoice[]
+}) {
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [section, setSection] = useState<Section>(initialSection ?? 'startup')
+  // Claude Code's own model/effort, shown as what "(default)" means.
+  const [claudeDefaults, setClaudeDefaults] = useState<{ model: string | null; effort: string | null }>({ model: null, effort: null })
+  useEffect(() => {
+    void api.claudeSettingsGet({ scope: 'user' }).then(v => {
+      const m = v.effective.model?.value; const e = v.effective.effortLevel?.value
+      setClaudeDefaults({ model: typeof m === 'string' ? m : null, effort: typeof e === 'string' ? e : null })
+    }).catch(() => {})
+  }, [section])
+  const [usage, setUsage] = useState<import('../../shared/ipc').OpenRouterUsage | null | 'loading'>('loading')
+  const [claudeIconEdit, setClaudeIconEdit] = useState(false)
+
+  useEffect(() => { void api.getSettings().then(setSettings) }, [])
+  useEffect(() => { void api.openRouterUsage().then(setUsage).catch(() => setUsage(null)) }, [])
+
+  async function patch(p: Partial<AppSettings>) {
+    const next = await api.updateSettings(p)
+    setSettings(next)
+    onSettingsChanged?.(next)
+  }
+
+  if (settings === null) return null
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="settings-window" onClick={e => e.stopPropagation()}>
+        <nav className="settings-nav">
+          <div className="settings-nav-title">Settings</div>
+          {SECTIONS.map(s => (
+            <button key={s.id} type="button"
+              className={s.id === section ? 'settings-nav-item active' : 'settings-nav-item'}
+              onClick={() => setSection(s.id)}>{s.label}</button>
+          ))}
+          <button type="button" className="settings-close" onClick={onClose}>Done</button>
+        </nav>
+        <div className="settings-body">
+          {section === 'startup' && (
+            <Group title="Startup & System">
+              {!IS_WINDOWS && <p className="settings-note">Startup and admin options are Windows-only.</p>}
+              {IS_WINDOWS && <>
+                <Toggle label="Start with Windows" value={settings.startWithWindows} on={v => patch({ startWithWindows: v })} />
+                <Toggle label="Start minimised to tray" hint="When ClaudeCord starts with Windows." value={settings.startMinimized} on={v => patch({ startMinimized: v })} />
+                <Toggle label="Start with Admin Rights" hint="Relaunches elevated (UAC prompt). With ‘Start with Windows’, uses a scheduled task."
+                  value={settings.startWithAdmin} on={v => patch({ startWithAdmin: v })} />
+                <Toggle label="Close button minimises to tray" hint="Keeps ClaudeCord running (and notifying) in the tray. Quit from the tray icon."
+                  value={settings.closeToTray} on={v => patch({ closeToTray: v })} />
+                <Toggle label="Show tray icon" hint="Always shown while “minimise to tray” is on." value={settings.showTrayIcon} on={v => patch({ showTrayIcon: v })} />
+              </>}
+            </Group>
+          )}
+          {section === 'defaults' && (
+            <Group title="New chat defaults">
+              <TextField label="Default working directory" hint="Used when no project is open." value={settings.defaultCwd ?? ''} placeholder="(none)" on={v => patch({ defaultCwd: v.trim() === '' ? null : v })} />
+              <Select label="Model" value={settings.defaultModel ?? ''}
+                options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.model ?? 'default'})` }, ...MODELS.map(m => ({ value: m.value, label: m.label }))]}
+                on={v => patch({ defaultModel: v === '' ? null : v })} />
+              <Select label="Effort" value={settings.defaultEffort ?? ''}
+                options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.effort ?? 'default'})` }, ...EFFORTS.map(e => ({ value: e, label: e }))]}
+                on={v => patch({ defaultEffort: v === '' ? null : v })} />
+              <p className="settings-note">To change Claude Code’s own defaults (for the terminal too), use Settings → Claude Code.</p>
+              <Toggle label="Skip permissions by default" hint="Runs new chats with --dangerously-skip-permissions." value={settings.defaultSkipPermissions} on={v => patch({ defaultSkipPermissions: v })} />
+              <Toggle label="Confirm before creating a chat that skips permissions" value={settings.confirmBeforeBypass} on={v => patch({ confirmBeforeBypass: v })} />
+              <NumberField label="Spending cap per chat (USD)" hint="Claude stops once a chat has spent this much since ClaudeCord last started it. Empty = no cap."
+                value={settings.defaultBudgetUsd} on={v => patch({ defaultBudgetUsd: v })} />
+            </Group>
+          )}
+          {section === 'notifications' && (
+            <Group title="Notifications">
+              <p className="settings-note">Desktop notifications for chats that need you while ClaudeCord isn’t the window in front. Click one to open the chat.</p>
+              <Toggle label="Turn complete" value={settings.notifyTurnComplete} on={v => patch({ notifyTurnComplete: v })} />
+              <Toggle label="Input needed" value={settings.notifyInputNeeded} on={v => patch({ notifyInputNeeded: v })} />
+              <Toggle label="Permission requested" value={settings.notifyPermission} on={v => patch({ notifyPermission: v })} />
+              <Toggle label="Error" value={settings.notifyError} on={v => patch({ notifyError: v })} />
+              <Toggle label="Do not disturb" value={settings.doNotDisturb} on={v => patch({ doNotDisturb: v })} />
+              <TextField label="Quiet hours start (HH:MM)" value={settings.quietHoursStart ?? ''} on={v => patch({ quietHoursStart: v.trim() === '' ? null : v })} />
+              <TextField label="Quiet hours end (HH:MM)" value={settings.quietHoursEnd ?? ''} on={v => patch({ quietHoursEnd: v.trim() === '' ? null : v })} />
+            </Group>
+          )}
+          {section === 'appearance' && (
+            <Group title="Appearance">
+              <Select label="Theme" value={settings.theme}
+                options={[{ value: 'discord', label: 'Discord (default)' }, { value: 'terminal', label: 'Terminal (Claude Code)' }, { value: 'midnight', label: 'Midnight (darker)' }]}
+                on={v => patch({ theme: v as AppSettings['theme'] })} />
+              {settings.theme === 'terminal' && (
+                <Select label="Apply theme to" value={settings.themeScope}
+                  options={[{ value: 'chat', label: 'Chat window only' }, { value: 'app', label: 'Sidebar + chat (whole app)' }]}
+                  on={v => patch({ themeScope: v as AppSettings['themeScope'] })} />
+              )}
+              <Select label="Density" value={settings.density} options={['comfortable', 'compact']} on={v => patch({ density: v as AppSettings['density'] })} />
+              <div className="settings-row">
+                <div className="settings-row-label">Claude avatar
+                  <span className="settings-hint">The avatar shown on Claude’s messages (emoji / color / image / AI).</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <ClaudeAvatar icon={settings.claudeIcon} size={28} />
+                  <button type="button" className="btn-secondary" onClick={() => setClaudeIconEdit(true)}>Change…</button>
+                </div>
+              </div>
+              <Select label="Tool calls" hint={PER_PROJECT_HINT} value={settings.toolDisplay}
+                options={[{ value: 'grouped', label: 'Grouped into one line' }, { value: 'all', label: 'Show all' }, { value: 'hidden', label: 'Hide' }, { value: 'perProject', label: 'Choose per project' }]}
+                on={v => patch({ toolDisplay: v as AppSettings['toolDisplay'] })} />
+              <Select label="Prompt suggestions" hint={`Claude predicts your next message as a chip above the box. Each one uses a small amount of your plan or API budget. ${PER_PROJECT_HINT}`} value={settings.promptSuggestions}
+                options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }, { value: 'perProject', label: 'Choose per project' }]}
+                on={v => patch({ promptSuggestions: v as AppSettings['promptSuggestions'] })} />
+              <Toggle label="Show session blade" hint="Add a separate per-session picker column for channels with more than one session." value={settings.showBlade} on={v => patch({ showBlade: v })} />
+              <Toggle label="Show context rail" hint="The right-hand Files / Context / Usage panel." value={settings.showContextRail} on={v => patch({ showContextRail: v })} />
+              <Toggle label="Expand thinking by default" value={settings.thinkingExpanded} on={v => patch({ thinkingExpanded: v })} />
+              <Toggle label="Expand tool cards by default" value={settings.toolCardsExpanded} on={v => patch({ toolCardsExpanded: v })} />
+            </Group>
+          )}
+          {section === 'mcp' && (
+            <Group title="MCP servers">
+              <McpSettings projectCwd={projectCwd} ignored={settings.mcpWarnIgnore} onIgnoredChange={next => void patch({ mcpWarnIgnore: next })} />
+            </Group>
+          )}
+          {section === 'skills' && (
+            <Group title="Skills & commands">
+              <SkillsSettings projectCwd={projectCwd} />
+            </Group>
+          )}
+          {section === 'openrouter' && (
+            <Group title="OpenRouter">
+              <p className="settings-note">Powers AI avatars and the Files “Create Image” tool. Get a key at <code>openrouter.ai/keys</code>. You pick the image model at generation time.</p>
+              <TextField label="API key" value={settings.openRouterKey} placeholder="sk-or-v1-…" password
+                on={v => patch({ openRouterKey: v.trim() })} />
+              <div className="or-usage">
+                <div className="or-usage-title">Account</div>
+                {usage === 'loading' ? <p className="settings-note">Loading…</p>
+                  : usage === null ? <p className="settings-note">{settings.openRouterKey.trim().length === 0 ? 'Add a key to see your spend and balance.' : 'Couldn’t read usage — check the key.'}</p>
+                  : <div className="or-usage-tiles">
+                      <div className="crail-tile"><div className="crail-tile-k">spent</div><div className="crail-tile-v">${usage.usage.toFixed(2)}</div></div>
+                      <div className="crail-tile"><div className="crail-tile-k">balance</div><div className="crail-tile-v">{usage.remaining === null ? '—' : `$${usage.remaining.toFixed(2)}`}</div></div>
+                    </div>}
+              </div>
+            </Group>
+          )}
+          {section === 'engine' && (
+            <Group title="Engine">
+              <TextField label="Path to the claude binary" value={settings.claudeBin} on={v => patch({ claudeBin: v })} />
+              <NumberField label="Idle process reap (minutes)" value={settings.idleReapMin} on={v => patch({ idleReapMin: v ?? 30 })} />
+              <NumberField label="Max concurrent chats" value={settings.maxConcurrent} on={v => patch({ maxConcurrent: v ?? 4 })} />
+              <Select label="Claude in Chrome" value={settings.chromeIntegration}
+                options={[{ value: 'auto', label: 'Automatic (follow Claude Code)' }, { value: 'on', label: 'Always on' }, { value: 'off', label: 'Off' }]}
+                on={v => patch({ chromeIntegration: v as AppSettings['chromeIntegration'] })} />
+              <TextField label="Extra CLI flags (space-separated)" hint="Added to every Claude process ClaudeCord starts, e.g. --add-dir D:\shared. Flags ClaudeCord manages itself are ignored."
+                value={settings.extraFlags.join(' ')} on={v => patch({ extraFlags: v.split(/\s+/).filter(Boolean) })} />
+            </Group>
+          )}
+          {section === 'updates' && (
+            <Group title="Updates">
+              <UpdatesPanel />
+              <Toggle label="Check for updates automatically" hint="On launch and every few hours."
+                value={settings.autoCheckUpdates} on={v => patch({ autoCheckUpdates: v })} />
+            </Group>
+          )}
+          {section === 'claude' && (
+            <Group title="Claude Code">
+              <ClaudeCodeSettings projects={projects} initialCwd={projectCwd} />
+            </Group>
+          )}
+          {section === 'history' && (
+            <Group title="Chat history">
+              <ChatHistorySettings settings={settings} patch={patch} projects={projects} />
+            </Group>
+          )}
+        </div>
+      </div>
+      {claudeIconEdit && (
+        <IconPicker
+          current={settings.claudeIcon}
+          onApply={icon => { void patch({ claudeIcon: icon }); setClaudeIconEdit(false) }}
+          onCancel={() => setClaudeIconEdit(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="settings-group"><h2>{title}</h2>{children}</section>
+}
+
+function Toggle({ label, hint, value, on }: { label: string; hint?: string; value: boolean; on: (v: boolean) => void }) {
+  return (
+    <label className="settings-row">
+      <div className="settings-row-label">{label}{hint && <span className="settings-hint">{hint}</span>}</div>
+      <input type="checkbox" checked={value} onChange={e => on(e.target.checked)} />
+    </label>
+  )
+}
+function TextField({ label, hint, value, placeholder, on, password }: { label: string; hint?: string; value: string; placeholder?: string; on: (v: string) => void; password?: boolean }) {
+  return (
+    <label className="settings-row">
+      <div className="settings-row-label">{label}{hint && <span className="settings-hint">{hint}</span>}</div>
+      <input type={password ? 'password' : 'text'} value={value} placeholder={placeholder} onChange={e => on(e.target.value)} />
+    </label>
+  )
+}
+function NumberField({ label, hint, value, on }: { label: string; hint?: string; value: number | null; on: (v: number | null) => void }) {
+  return (
+    <label className="settings-row">
+      <div className="settings-row-label">{label}{hint && <span className="settings-hint">{hint}</span>}</div>
+      <input type="number" value={value ?? ''} placeholder="(none)"
+        onChange={e => on(e.target.value === '' ? null : Number(e.target.value))} />
+    </label>
+  )
+}
+function Select({ label, hint, value, options, on }: {
+  label: string; hint?: string; value: string; options: (string | { value: string; label: string })[]; on: (v: string) => void
+}) {
+  const norm = options.map(o => (typeof o === 'string' ? { value: o, label: o === '' ? '(default)' : o } : o))
+  return (
+    <label className="settings-row">
+      <div className="settings-row-label">{label}{hint !== undefined && <span className="settings-hint">{hint}</span>}</div>
+      <select value={value} onChange={e => on(e.target.value)}>
+        {norm.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  )
+}
