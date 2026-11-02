@@ -117,6 +117,32 @@ describe('SessionPool — lazy spawn + reuse', () => {
   })
 })
 
+describe('SessionPool — turnInfo', () => {
+  it('reports the running turn, keeps it across messages, and starts over on the next turn', () => {
+    const { factory, transports } = makeFactory()
+    let now = 1000
+    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 100000, transportFactory: factory, now: () => now })
+    expect(pool.turnInfo('s1')).toBeNull()
+
+    pool.send('s1', spec(), { n: 1 })
+    now = 2000
+    transports[0]!.emit({ kind: 'usage', outputTokens: 40 })
+    transports[0]!.emit({ kind: 'usage', outputTokens: 2 })
+    expect(pool.turnInfo('s1')).toEqual({ startedAt: 1000, tokens: 42, lastActivity: 2000 })
+
+    now = 2500
+    pool.send('s1', spec(), { n: 2 }) // joins the same turn
+    expect(pool.turnInfo('s1')?.startedAt).toBe(1000)
+
+    transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: 'done' })
+    expect(pool.turnInfo('s1')).toBeNull()
+
+    now = 3000
+    pool.send('s1', spec(), { n: 3 })
+    expect(pool.turnInfo('s1')).toEqual({ startedAt: 3000, tokens: 0, lastActivity: 3000 })
+  })
+})
+
 describe('SessionPool — isTurnRunning (busy vs idle-but-pooled)', () => {
   it('is true while a turn streams and false once its result lands (but stays isLive)', () => {
     const { factory, transports } = makeFactory()

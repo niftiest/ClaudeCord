@@ -22,7 +22,7 @@ import type { LiveEvent, PermissionRequest } from '../shared/engine-types'
 import type { StreamedRow } from '../main/jsonl/stream'
 import { isDisplayRow } from '../main/jsonl/parse'
 import { CLEAR_COMMANDS, TERMINAL_ONLY_COMMANDS, type ClaudeCommand, type CommandSource, type McpServerStatus } from '../shared/claude-info-types'
-import { buildRenderItems } from '../main/jsonl/render'
+import { buildRenderItems, collectToolResults } from '../main/jsonl/render'
 
 export type { NewProjectOptions }
 
@@ -707,16 +707,69 @@ export function suppressSealedPreview(prev: LivePreview | null, hasDurableAssist
  *  (file-history-snapshot, summary, attachment, ...) are filtered out first,
  *  matching loadTranscript's own isMessageRow filter.
  *
- *  ACCEPTED LIMITATION: buildRenderItems only pairs a tool_result with a
- *  tool_use when both are in the SAME `rows` array. A tool_use delivered in
- *  one onRows batch and its tool_result in the next therefore renders live
- *  with `result: null` until the session is reopened -- reopening re-renders
- *  from the durable file as one contiguous read, where the pairing is always
- *  correct. Not fixed here: diffing/patching an already-rendered tool item
- *  in place would need to hunt through `items` by toolUseId on every batch,
- *  for a cosmetic gap that self-heals on the next open. */
+ *  buildRenderItems only pairs a tool_result with a tool_use when both are in
+ *  the SAME `rows` array. A result normally lands in a later batch than its
+ *  call: applyStreamedToolResults fills those in. */
 export function renderItemsFromStreamedRows(rows: StreamedRow[]): RenderItem[] {
   return buildRenderItems(rows.map(r => r.row).filter(isDisplayRow))
+}
+
+/** Fills in results that arrived after their tool call was already showing.
+ *  Returns the same array when there's nothing to change. */
+export function applyStreamedToolResults(items: RenderItem[], rows: StreamedRow[]): RenderItem[] {
+  const results = collectToolResults(rows.map(r => r.row).filter(isDisplayRow))
+  if (results.size === 0) return items
+  let changed = false
+  const next = items.map(item => {
+    if (item.kind !== 'tool' || item.result !== null) return item
+    const result = results.get(item.toolUseId)
+    if (result === undefined) return item
+    changed = true
+    return { ...item, result }
+  })
+  return changed ? next : items
+}
+
+export type PendingTool = { toolUseId: string; name: string; ts: string | null }
+
+/** The current turn's tool calls still waiting for a result, oldest first. Only
+ *  looks back to the last thing the user said: an older call with no result
+ *  belongs to a turn that was interrupted, not to anything still running. */
+export function pendingTools(items: RenderItem[], running: boolean): PendingTool[] {
+  if (!running) return []
+  const pending: PendingTool[] = []
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!
+    if (item.kind === 'text' && item.role === 'user') break
+    if (item.kind === 'tool' && item.result === null && item.toolUseId.length > 0) {
+      pending.unshift({ toolUseId: item.toolUseId, name: item.name, ts: item.ts ?? null })
+    }
+  }
+  return pending
+}
+
+/** After this long without a word from Claude Code, the working line says so. */
+export const SILENCE_NOTICE_MS = 120_000
+
+/** The bracketed details on the working line. The step timer covers a running
+ *  tool, so "no output" only appears while no tool is running: it's the case
+ *  (a stalled reply) nothing else on the line would reveal. */
+export function workingDetails(d: {
+  now: number; startedAt: number; tokens: number; pending: PendingTool[]; lastActivity: number; quiet: boolean
+}): string[] {
+  const out: string[] = []
+  const oldest = d.pending[0]
+  if (!d.quiet && oldest !== undefined) {
+    const others = d.pending.length > 1 ? ` +${d.pending.length - 1}` : ''
+    const since = oldest.ts !== null ? Date.parse(oldest.ts) : NaN
+    out.push(`${oldest.name}${others} running${Number.isNaN(since) ? '' : ` ${elapsedLabel(d.now - since)}`}`)
+  }
+  out.push(`turn ${elapsedLabel(d.now - d.startedAt)}`)
+  if (d.tokens > 0) out.push(`↓ ${tokenLabel(d.tokens)} tokens`)
+  if (!d.quiet && oldest === undefined && d.now - d.lastActivity >= SILENCE_NOTICE_MS) {
+    out.push(`no output for ${elapsedLabel(d.now - d.lastActivity)}`)
+  }
+  return out
 }
 
 /** Live-turn state for the LiveIndicator badge: 'idle' when no turn is

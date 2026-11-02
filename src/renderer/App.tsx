@@ -37,7 +37,7 @@ import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
   resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems,
-  renderItemsFromStreamedRows, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview,
+  renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
 } from './lib'
@@ -68,6 +68,7 @@ export function App() {
   const [memoryChannel, setMemoryChannel] = useState<ChannelRow | null>(null)
   const [turnStartedAt, setTurnStartedAt] = useState(0)
   const [turnTokens, setTurnTokens] = useState(0)
+  const [lastEventAt, setLastEventAt] = useState(0)
   const [suggestion, setSuggestion] = useState<string | null>(null)
   const [liveModel, setLiveModel] = useState<string | null>(null)
   const [context, setContext] = useState<ContextUsage | null>(null)
@@ -138,6 +139,8 @@ export function App() {
   // chat list, session list and chat header. App-wide, pushed by main.
   const [remote, setRemote] = useState<RemoteSession[]>([])
   const remoteProjects = useMemo(() => new Set(remote.map(r => r.projectId)), [remote])
+  const pending = useMemo(() => pendingTools(items, running), [items, running])
+  const pendingToolIds = useMemo(() => new Set(pending.map(p => p.toolUseId)), [pending])
   const remoteSessions = useMemo(() => new Set(remote.map(r => r.sessionPk)), [remote])
   useEffect(() => {
     void api.listRemote().then(setRemote).catch(() => { /* engine not ready: stays empty */ })
@@ -560,6 +563,7 @@ export function App() {
     const sid = session.id
     const off = api.onEvent((sessionPk, ev) => {
       if (sessionPk !== sid) return
+      setLastEventAt(Date.now())
       setLivePreview(prev => reduceLivePreview(prev, ev))
       if (ev.kind === 'init' && ev.mcpServers !== undefined) setMcpServers(ev.mcpServers)
       if (ev.kind === 'exit') setMcpServers(null)
@@ -604,10 +608,22 @@ export function App() {
   }, [sessionPk])
   useEffect(() => {
     if (!running) { setLiveStatus(null); return }
-    setTurnStartedAt(Date.now())
+    const now = Date.now()
+    setTurnStartedAt(now)
     setTurnTokens(0)
+    setLastEventAt(now)
     setSuggestion(null)
-  }, [running])
+    if (sessionPk === null) return
+    // Coming back to a chat mid-turn: the engine pool knows the real figures.
+    let alive = true
+    void api.turnInfo(sessionPk).then(turn => {
+      if (!alive || turn === null) return
+      setTurnStartedAt(turn.startedAt)
+      setTurnTokens(turn.tokens)
+      setLastEventAt(turn.lastActivity)
+    })
+    return () => { alive = false }
+  }, [running, sessionPk])
   // What belongs to one chat starts fresh when another opens.
   useEffect(() => {
     setSuggestion(null)
@@ -664,8 +680,9 @@ export function App() {
     const off = api.onRows((sessionPk, rows) => {
       if (sessionPk !== sid) return
       const newItems = renderItemsFromStreamedRows(rows)
+      // A row carrying only a tool's result adds no item but completes an earlier one.
+      setItems(prev => appendRowsToItems(applyStreamedToolResults(prev, rows), newItems))
       if (newItems.length === 0) return
-      setItems(prev => appendRowsToItems(prev, newItems))
       // Task 10 review Fix 5: once a durable assistant row for the current
       // turn has landed here, it's authoritative -- suppress the SEALED
       // livePreview bubble for that same (now-completed) message so a
@@ -1110,6 +1127,7 @@ export function App() {
               claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
               thinkingExpanded={settings?.thinkingExpanded ?? false}
               toolCardsExpanded={settings?.toolCardsExpanded ?? false}
+              pendingToolIds={pendingToolIds}
               onAtBottomChange={v => { atBottomRef.current = v }}
               scrollToBottomSignal={scrollToBottomTick}
               permissionRequests={permissionsByPk.get(session.id) ?? []}
@@ -1135,9 +1153,8 @@ export function App() {
           </div>
         )}
         {session !== null && running && (
-          <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus}
-            waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0}
-            tool={[...items].reverse().find(i => i.kind === 'tool')?.kind === 'tool' ? ([...items].reverse().find(i => i.kind === 'tool') as { name: string }).name : null} />
+          <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus} pending={pending} lastActivity={lastEventAt}
+            waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0} />
         )}
         {session !== null && <ShellRuns runs={shellRuns} />}
         {session !== null && (

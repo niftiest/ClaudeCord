@@ -51,7 +51,7 @@ export type RenderItem =
   | { kind: 'text'; uuid: string; role: 'user' | 'assistant'; ts: string | null; model: string | null; text: string; literal?: boolean }
   | { kind: 'thinking'; uuid: string; ts: string | null; text: string }
   | { kind: 'notice'; uuid: string; ts: string | null; text: string; label?: string }
-  | { kind: 'tool'; uuid: string; toolUseId: string; name: string; input: unknown; result: ToolResult | null; subagentToolUseId: string | null }
+  | { kind: 'tool'; uuid: string; toolUseId: string; ts?: string | null; name: string; input: unknown; result: ToolResult | null; subagentToolUseId: string | null }
   | { kind: 'image'; uuid: string; role: 'user' | 'assistant'; source: unknown }
 
 export type TranscriptPage = {

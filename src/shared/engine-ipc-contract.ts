@@ -3,7 +3,7 @@ import type { FolderTrust, ShellRun } from './shell-run-types'
 import type { MemoryFile, MemoryFileContent, MemorySaveResult } from './project-memory-types'
 import type { ProjectSettings, ContextUsage } from './project-options'
 import type { ClaudeInfoResult, McpCheckResult, McpServerStatus } from './claude-info-types'
-import type { LiveEvent, PermissionRequest, PermissionDecision, EngineSnapshot, ExternalLock, RemoteSession } from './engine-types'
+import type { LiveEvent, PermissionRequest, PermissionDecision, EngineSnapshot, ExternalLock, RemoteSession, TurnInfo } from './engine-types'
 export type { EngineSnapshot, ExternalLock, RemoteSession } from './engine-types'
 // Type-only import: StreamedRow's home module reads real files (node:fs), but
 // importing just its *type* here is erased at compile time -- the same
@@ -32,6 +32,7 @@ export const ENGINE_IPC = {
   permission: 'engine:permission',
   indexed: 'engine:indexed',
   isSessionLive: 'engine:isSessionLive',
+  turnInfo: 'engine:turnInfo',
   /** invoke: the chat's current external lock (a terminal holding it), or null. */
   getLock: 'engine:getLock',
   /** invoke: open the chat in a real Claude Code terminal (claude --resume). */
@@ -183,6 +184,8 @@ export type EngineApi = {
    *  App can re-derive `running` when switching back to a streaming chat
    *  (Plan 2 review Finding #6 / Plan 3 Task 8). */
   isSessionLive(sessionPk: number): Promise<boolean>
+  /** The open chat's running turn, or null when none is running. */
+  turnInfo(sessionPk: number): Promise<TurnInfo | null>
   /** Returns an unsubscribe function, matching Plan 1's onIndexProgress. */
   onEvent(cb: (sessionPk: number, e: LiveEvent) => void): () => void
   onRows(cb: (sessionPk: number, rows: StreamedRow[]) => void): () => void

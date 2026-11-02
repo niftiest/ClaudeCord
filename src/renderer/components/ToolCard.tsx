@@ -2,7 +2,7 @@ import type { RenderItem } from '../../shared/types'
 
 type ToolItem = Extract<RenderItem, { kind: 'tool' }>
 
-export function ToolCard({ item, defaultOpen = false }: { item: ToolItem; defaultOpen?: boolean }) {
+export function ToolCard({ item, defaultOpen = false, pending = false }: { item: ToolItem; defaultOpen?: boolean; pending?: boolean }) {
   const isError = item.result?.isError === true
   const summary = typeof item.input === 'object' && item.input !== null
     ? Object.entries(item.input as Record<string, unknown>)
@@ -20,7 +20,7 @@ export function ToolCard({ item, defaultOpen = false }: { item: ToolItem; defaul
         <span className="caret" aria-hidden="true">▸</span>
         <span className="nm">{item.name}</span>
         <span className="tool-args">{summary}</span>
-        <span className="meta">{item.result === null ? 'no result' : isError ? 'error' : `${item.result.text.length} chars`}</span>
+        <span className="meta">{item.result === null ? (pending ? 'running…' : 'no result') : isError ? 'error' : `${item.result.text.length} chars`}</span>
       </summary>
       <pre>{inputJson.slice(0, 8000)}</pre>
       {item.result !== null && <pre>{item.result.text.slice(0, 8000)}</pre>}

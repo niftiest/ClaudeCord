@@ -62,6 +62,7 @@ const api: ClaudeCordApi & EngineApi = {
   killEngine: (pid: number) => ipcRenderer.invoke(ENGINE_IPC.killEngine, pid),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(ENGINE_IPC.pickDirectory),
   isSessionLive: (sessionPk: number): Promise<boolean> => ipcRenderer.invoke(ENGINE_IPC.isSessionLive, sessionPk),
+  turnInfo: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.turnInfo, sessionPk),
   onEvent: cb => {
     const listener = (_e: IpcRendererEvent, sessionPk: number, ev: LiveEvent) => cb(sessionPk, ev)
     ipcRenderer.on(ENGINE_IPC.event, listener)

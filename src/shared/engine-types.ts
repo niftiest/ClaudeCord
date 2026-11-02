@@ -60,6 +60,9 @@ export type PermissionDecision = { behavior: 'allow'; updatedInput?: unknown } |
  *  best-effort from recency + the renderer's own permission state:
  *  'spawning' (no pid yet), 'streaming' (recent activity), 'idle' (quiet). The
  *  renderer promotes a session with a pending permission request to 'blocked'. */
+/** The running turn as the engine pool sees it. */
+export type TurnInfo = { startedAt: number; tokens: number; lastActivity: number }
+
 export type EngineSnapshot = {
   sessionKey: string
   pid: number | null

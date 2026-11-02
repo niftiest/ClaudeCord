@@ -564,6 +564,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     // turn already finished no longer wedges the composer into queue mode.
     return info !== null && pool.isTurnRunning(info.filePath)
   })
+  ipcMain.handle(ENGINE_IPC.turnInfo, (_e, sessionPk: number) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    return info === null ? null : pool.turnInfo(info.filePath)
+  })
   ipcMain.handle(ENGINE_IPC.listEngines, () => pool.snapshot())
   ipcMain.handle(ENGINE_IPC.killEngine, (_e, pid: number) => pool.killByPid(pid))
 
@@ -664,6 +668,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.githubPrepare)
       ipcMain.removeHandler(ENGINE_IPC.pickDirectory)
       ipcMain.removeHandler(ENGINE_IPC.isSessionLive)
+      ipcMain.removeHandler(ENGINE_IPC.turnInfo)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)
       ipcMain.removeHandler(ENGINE_IPC.listRemote)

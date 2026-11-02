@@ -12,7 +12,7 @@ import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldSc
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
-export function Transcript({ groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false }: {
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -50,6 +50,8 @@ export function Transcript({ groupToolCalls = true, items: allItems, hasMore, lo
   /** Thinking blocks / tool cards start open (Settings → Appearance). */
   thinkingExpanded?: boolean
   toolCardsExpanded?: boolean
+  /** Tool calls in the running turn still waiting for a result. */
+  pendingToolIds?: ReadonlySet<string>
 }) {
   const pending = permissionRequests ?? []
   const preview = livePreview ?? null
@@ -279,7 +281,7 @@ export function Transcript({ groupToolCalls = true, items: allItems, hasMore, lo
                         <div className="txt think-body">{it.text}</div>
                       </details>
                     )
-                    if (it.kind === 'tool') return <ToolCard key={k} item={it} defaultOpen={toolCardsExpanded} />
+                    if (it.kind === 'tool') return <ToolCard key={k} item={it} defaultOpen={toolCardsExpanded} pending={pendingToolIds?.has(it.toolUseId) ?? false} />
                     if (it.kind === 'image') return <ChatImage key={k} source={it.source} />
                     return null
                   }

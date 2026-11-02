@@ -1,5 +1,5 @@
 import type { SpawnSpec } from './transport'
-import type { LiveEvent, EngineSnapshot } from '../../shared/engine-types'
+import type { LiveEvent, EngineSnapshot, TurnInfo } from '../../shared/engine-types'
 
 /** Narrow surface of Transport the pool depends on -- lets tests inject a
  *  fake transport (no real child_process spawned) while the production
@@ -61,6 +61,10 @@ interface Entry {
    *  needs -- distinct from `isLive` (the process merely exists), which stays
    *  true for an idle pooled transport and must NOT be read as "still running".*/
   busy: boolean
+  /** When the current turn began, and the output tokens it has used so far. Kept
+   *  here so a chat reopened mid-turn shows the real figures. */
+  turnStartedAt: number
+  turnTokens: number
   /** Set the instant this entry is reaped/shut down. Captured by closures
    *  passed to `transport.on`/`onExit` at spawn time, so a transport's own
    *  late-firing callbacks (e.g. a delayed OS-level exit after we've already
@@ -166,6 +170,7 @@ export class SessionPool {
     }
     if (entry !== undefined) {
       entry.lastActivity = this.now()
+      if (!entry.busy) { entry.turnStartedAt = this.now(); entry.turnTokens = 0 }
       entry.busy = true // a new turn is starting on this reused transport
       entry.transport.send(msg)
       return
@@ -219,6 +224,13 @@ export class SessionPool {
   isTurnRunning(sessionKey: string): boolean {
     const entry = this.live.get(sessionKey)
     return entry !== undefined && !entry.disposed && entry.busy
+  }
+
+  /** The running turn's start, tokens and last sign of life, or null when no turn is running. */
+  turnInfo(sessionKey: string): TurnInfo | null {
+    const entry = this.live.get(sessionKey)
+    if (entry === undefined || entry.disposed || !entry.busy) return null
+    return { startedAt: entry.turnStartedAt, tokens: entry.turnTokens, lastActivity: entry.lastActivity }
   }
 
   /** A snapshot of every live engine for the pool HUD (engine:list). */
@@ -358,7 +370,7 @@ export class SessionPool {
   private spawn(sessionKey: string, spec: SpawnSpec, msg: object): void {
     const transport = this.transportFactory(spec)
     const now = this.now()
-    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: true, disposed: false }
+    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: true, turnStartedAt: now, turnTokens: 0, disposed: false }
     this.live.set(sessionKey, entry)
 
     transport.on((e) => {
@@ -371,6 +383,7 @@ export class SessionPool {
       // pooled (isLive true) but is no longer running a turn (isTurnRunning
       // false), so the UI stops showing it as streaming.
       if (e.kind === 'result') entry.busy = false
+      if (e.kind === 'usage') entry.turnTokens += e.outputTokens
       this.emitTo(sessionKey, e)
     })
 

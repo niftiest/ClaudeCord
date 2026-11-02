@@ -67,9 +67,8 @@ function localCommandItems(row: LocalCommandRow): RenderItem[] {
 /** `rows` may include local-command `system` rows, which have no entry in the
  *  message catalog: when paging with `emitFor` they belong to the page holding
  *  the message right before them. */
-export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emitFor?: ReadonlySet<string>): RenderItem[] {
-  // First pass: collect every tool_result — including from lookahead rows that
-  // will not themselves render — so a tool card at a page boundary is complete.
+/** Every tool_result in these rows, by the id of the tool call it answers. */
+export function collectToolResults(rows: Array<MessageRow | LocalCommandRow>): Map<string, ToolResult> {
   const results = new Map<string, ToolResult>()
   for (const row of rows) {
     if (row.type === 'system') continue
@@ -83,6 +82,13 @@ export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emit
       })
     }
   }
+  return results
+}
+
+export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emitFor?: ReadonlySet<string>): RenderItem[] {
+  // First pass: collect every tool_result — including from lookahead rows that
+  // will not themselves render — so a tool card at a page boundary is complete.
+  const results = collectToolResults(rows)
 
   const items: RenderItem[] = []
   let previousMessageEmitted = false
@@ -138,6 +144,7 @@ export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emit
             kind: 'tool',
             uuid: row.uuid,
             toolUseId: id ?? '',
+            ts,
             name,
             input: (block as { input?: unknown }).input,
             result: id !== null ? (results.get(id) ?? null) : null,
