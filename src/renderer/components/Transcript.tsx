@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, useState } from 'react'
 import type { RenderItem } from '../../shared/types'
 import type { PermissionRequest } from '../../shared/engine-types'
 import type { ChannelIcon } from '../../shared/shell-types'
@@ -8,12 +8,17 @@ import { ChatImage } from './ChatImage'
 import { Markdown } from './Markdown'
 import { PermissionCard } from './PermissionCard'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldScrollToBottom, isPlanApproval, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
+import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldScrollToBottom, followAfterScroll, isPlanApproval, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
 /** How long the view stays on a message it just went to, unless the reader moves it. */
 const JUMP_HOLD_MS = 1200
+
+/** How long after clicking a card's header a change of height is put down to that card. */
+const CARD_OPEN_MS = 400
+/** How far above the end the reader has to be before the jump button shows. */
+const JUMP_BUTTON_GAP = 200
 
 export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
@@ -99,63 +104,79 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // exactly what a chat wants; a virtualizer boxed each message into its own
   // scroll region). This component is remounted (key={session.id} in App) on
   // every session switch, so neither ref carries stale geometry across sessions.
-  // "Following at the bottom" (within this margin) vs "reading history". Larger
-  // than the loadOlder trigger so a small nudge up doesn't flip us out of
-  // follow mode mid-stream.
+  // Following the end of the chat, or reading further up. Only scrolling changes this:
+  // content growing below doesn't, however far it grows, so a message taller than the
+  // gap can't make the chat look as if the reader left.
   const BOTTOM_MARGIN = 80
+  const following = useRef(true)
+  const lastScrollTop = useRef(0)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const openedCardAt = useRef(0)
+  const [showJump, setShowJump] = useState(false)
+  const gapBelow = (el: HTMLElement): number => el.scrollHeight - el.scrollTop - el.clientHeight
   const reportAtBottom = (): void => {
+    onAtBottomChange?.(following.current)
     const el = parentRef.current
-    if (el === null || onAtBottomChange === undefined) return
-    onAtBottomChange(el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_MARGIN)
+    setShowJump(el !== null && !following.current && gapBelow(el) > JUMP_BUTTON_GAP)
+  }
+  const jumpToEnd = (): void => {
+    const el = parentRef.current
+    if (el === null) return
+    releaseJump()
+    following.current = true
+    el.scrollTop = el.scrollHeight
+    reportAtBottom()
   }
 
   const prevHeight = useRef(0)
+  const prevFirstKey = useRef<string | null>(null)
   const scrolledToBottom = useRef(false)
-  // rAF handle for the post-open "settle" re-pin (below). Cancelled on unmount
-  // so a pending frame never touches a torn-down element.
-  const pinRaf = useRef(0)
-
-  // Re-assert the bottom across the next several frames. The one-shot
-  // scrollTop=scrollHeight in a layout effect lands before some content
-  // finalizes its height (wrapped text reflow, the day divider, late font
-  // metrics), which grows scrollHeight a hair AFTER commit and leaves the view
-  // a few px above the true bottom -- the "have to nudge down on open" glitch.
-  // Each frame only closes a SMALL residual gap; once the gap is large (a
-  // deliberate scroll-up, or live streaming outpacing us) it stops, so it never
-  // fights the reader or the streaming-follow effect.
-  const settlePinToBottom = (): void => {
-    cancelAnimationFrame(pinRaf.current)
-    let ticks = 0
-    const step = (): void => {
-      const el = parentRef.current
-      if (el === null) return
-      const gap = el.scrollHeight - el.scrollTop - el.clientHeight
-      if (gap >= BOTTOM_MARGIN) return // scrolled away / streaming: leave it be
-      if (gap > 0) el.scrollTop = el.scrollHeight
-      if (++ticks < 8) pinRaf.current = requestAnimationFrame(step)
-    }
-    pinRaf.current = requestAnimationFrame(step)
-  }
-  useEffect(() => () => cancelAnimationFrame(pinRaf.current), [])
 
   useLayoutEffect(() => {
     const el = parentRef.current
     if (el === null) return
+    const firstKey = itemKeys[0] ?? null
     if (shouldScrollToBottom(scrolledToBottom.current, items.length)) {
-      // First non-empty render of this session: land on the newest message,
-      // then keep it pinned for a few frames while variable-height content
-      // settles so we reliably end up exactly at the bottom.
+      // First non-empty render of this session: land on the newest message.
       el.scrollTop = el.scrollHeight
       scrolledToBottom.current = true
-      settlePinToBottom()
-    } else if (prevHeight.current > 0 && el.scrollHeight > prevHeight.current) {
-      // A later growth is a loadOlder prepend: keep the reading position by
-      // pushing scrollTop down by exactly the height the prepend added.
+      following.current = true
+    } else if (following.current) {
+      if (!holdingJump()) el.scrollTop = el.scrollHeight
+    } else if (prevFirstKey.current !== null && firstKey !== prevFirstKey.current && el.scrollHeight > prevHeight.current) {
+      // An older page arrived above: stay on the same message. Anything added below
+      // leaves the reading position alone without help.
       el.scrollTop += el.scrollHeight - prevHeight.current
     }
     prevHeight.current = el.scrollHeight
+    prevFirstKey.current = firstKey
     reportAtBottom()
   }, [items])
+
+  // The height a message ends up with often isn't known when it's added: a picture
+  // has none until it decodes, and text reflows as fonts and highlighting land. So
+  // follow the height itself, as well as the chat's own box getting shorter when the
+  // composer grows. This runs before the frame is painted, so nothing shows cut off.
+  const hasStream = items.length > 0 || pending.length > 0 || preview !== null
+  useEffect(() => {
+    const el = parentRef.current
+    const content = contentRef.current
+    if (el === null || content === null) return
+    const observer = new ResizeObserver(() => {
+      if (el.clientHeight === 0) return
+      if (holdingJump() || !following.current) { reportAtBottom(); return }
+      // Opening a card to read it stays put, rather than scrolling its top out of view.
+      if (Date.now() - openedCardAt.current < CARD_OPEN_MS) {
+        following.current = gapBelow(el) < BOTTOM_MARGIN
+        reportAtBottom()
+        return
+      }
+      el.scrollTop = el.scrollHeight
+    })
+    observer.observe(el)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [hasStream])
 
   // If a page renders shorter than the viewport, the container never becomes
   // scrollable and the user can't scroll-to-top to pull the next page — so
@@ -167,18 +188,14 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   }, [items, hasMore, loadingOlder, onReachTop])
 
   function handleScroll() {
-    reportAtBottom()
     const el = parentRef.current
-    if (el === null || loadingOlder || !hasMore || holdingJump()) return
+    if (el === null) return
+    following.current = followAfterScroll(following.current, el.scrollTop, lastScrollTop.current, gapBelow(el), BOTTOM_MARGIN)
+    lastScrollTop.current = el.scrollTop
+    reportAtBottom()
+    if (loadingOlder || !hasMore || holdingJump()) return
     if (el.scrollTop < 240) onReachTop()
   }
-
-  // Follow the live preview to the bottom as it streams in.
-  useLayoutEffect(() => {
-    const el = parentRef.current
-    if (el === null || preview === null) return
-    el.scrollTop = el.scrollHeight
-  }, [preview])
 
   // Going to one message. Runs after the layout effects above, which keep the reading
   // position across a prepend, and stops them holding the view at the bottom. For a
@@ -197,7 +214,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
     onJumped?.()
     const first = find()
     if (first === null) return
-    cancelAnimationFrame(pinRaf.current)
+    following.current = false
     releaseJump()
     const center = (): void => { find()?.scrollIntoView({ block: 'center' }) }
     center()
@@ -224,6 +241,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
     if (!didMountScroll.current) { didMountScroll.current = true; return }
     const el = parentRef.current
     if (el === null) return
+    following.current = true
     el.scrollTop = el.scrollHeight
     reportAtBottom()
   }, [scrollToBottomSignal])
@@ -243,7 +261,9 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   }
 
   return (
-    <div className="stream" ref={parentRef} onScroll={handleScroll} onWheel={releaseJump} onMouseDown={releaseJump} onKeyDown={releaseJump}>
+    <div className="stream" ref={parentRef} onScroll={handleScroll} onWheel={releaseJump} onMouseDown={releaseJump} onKeyDown={releaseJump}
+      onClickCapture={e => { if ((e.target as Element).closest('summary') !== null) openedCardAt.current = Date.now() }}>
+      <div className="stream-content" ref={contentRef}>
       {hasMore && <div className="empty">{loadingOlder ? 'Loading earlier messages…' : 'Scroll up for earlier messages'}</div>}
       {turns.map((turn, ti) => {
         const keyAt = (li: number): string => itemKeys[turn.startIndex + li]!
@@ -365,6 +385,12 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                     onResolve={(id, decision, editedInput, denyMessage) => onResolvePermission?.(id, decision, editedInput, denyMessage)} />
             ))}
           </div>
+        </div>
+      )}
+      </div>
+      {showJump && (
+        <div className="jump-latest">
+          <button type="button" onClick={jumpToEnd}>↓ Jump to bottom</button>
         </div>
       )}
     </div>

@@ -90,7 +90,8 @@ function SearchGroup({ group, groupIndex, activePos, onPick }: {
       {group.hits.map((h, hi) => {
         const isActive = activePos?.group === groupIndex && activePos.hit === hi
         return (
-          <div key={`${h.sessionPk}:${h.seq}`} className={isActive ? 'search-hit active' : 'search-hit'}
+          // Not keyed by seq: a chat and its subagents each count their messages from 0.
+          <div key={hi} className={isActive ? 'search-hit active' : 'search-hit'}
             role="option" aria-selected={isActive} onClick={onPick}>
             <span className="search-snippet">
               {parseSnippet(h.snippet).map((seg, i) =>

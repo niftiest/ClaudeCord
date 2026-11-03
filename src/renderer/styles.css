@@ -366,6 +366,12 @@ body { margin:0; background:var(--bg); color:var(--tx);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .stream { flex:1; padding:10px 0; display:flex; flex-direction:column; gap:12px; }
+.stream-content { flex:none; display:flex; flex-direction:column; gap:inherit; }
+/* Stays at the foot of the visible chat, centred, right above the composer. No height of
+   its own, so showing it doesn't change the chat's length. */
+.jump-latest { position:sticky; bottom:12px; flex:none; height:0; display:flex; justify-content:center; align-items:flex-end; z-index:5; pointer-events:none; }
+.jump-latest button { pointer-events:auto; padding:6px 14px; border:1px solid var(--line); border-radius:999px; background:var(--s3); color:var(--tx); font-size:13px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.35); white-space:nowrap; }
+.jump-latest button:hover { background:var(--accent); color:#fff; }
 .row { padding:2px 18px; }
 
 /* ── Transcript turns (command-deck redesign) ── */

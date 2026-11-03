@@ -184,6 +184,9 @@ export function App() {
   // sync never yanks the reader's scroll position. Defaults true -- a freshly
   // opened session lands at the bottom.
   const atBottomRef = useRef(true)
+  // An update to the open chat that was held back while the reader was further up,
+  // applied once they're back at the end.
+  const heldReloadRef = useRef<(() => void) | null>(null)
   // Bumped whenever we want the transcript to jump to the absolute bottom
   // imperatively (e.g. right after the user sends a message). Transcript watches
   // it and scrolls; the value itself is meaningless, only that it changed.
@@ -408,6 +411,7 @@ export function App() {
   // Opening a session loads only the newest page; older pages arrive on scroll.
   async function openSession(next: SessionSummary) {
     const reqId = ++sessionReqId.current
+    heldReloadRef.current = null
     // Any loadOlder still in flight belonged to whatever session was open a
     // moment ago; it can no longer apply here. Clearing the flag up front
     // (rather than waiting for that stale call's own finally) means this
@@ -808,8 +812,10 @@ export function App() {
       // If they've scrolled up reading history (possibly with older pages
       // loaded), a wholesale reload to the newest page would collapse those
       // pages and jump them to the bottom -- so leave their view untouched.
-      if (!atBottomRef.current) return
-
+      if (!atBottomRef.current) { heldReloadRef.current = reload; return }
+      reload()
+    })
+    const reload = (): void => {
       const reqId = ++sessionReqId.current
       const gen = reloadGenRef.current
       loadingOlderRef.current = false
@@ -837,7 +843,7 @@ export function App() {
           console.error('Reload after catalog sync failed', err)
         }
       })()
-    })
+    }
     return off
   }, [session])
 
@@ -1239,7 +1245,11 @@ export function App() {
               pendingToolIds={pendingToolIds}
               jumpTo={jumpTarget !== null && jumpTarget.sessionPk === session.id && oldestSeq !== null && oldestSeq <= jumpTarget.seq ? jumpTarget.uuid : null}
               onJumped={() => setJumpTarget(null)}
-              onAtBottomChange={v => { atBottomRef.current = v }}
+              onAtBottomChange={v => {
+                atBottomRef.current = v
+                const held = heldReloadRef.current
+                if (v && held !== null) { heldReloadRef.current = null; held() }
+              }}
               scrollToBottomSignal={scrollToBottomTick}
               permissionRequests={permissionsByPk.get(session.id) ?? []}
               onResolvePermission={(id, decision, editedInput, denyMessage) =>

@@ -92,6 +92,25 @@ describe('repos', () => {
     expect(search(db, 'nonexistentword')).toEqual([])
   })
 
+  it('points a match in a subagent at the chat that ran it, which is the one that can open', () => {
+    const { db, p, s } = seed()
+    const agent = upsertSession(db, { projectId: p, sessionId: 'sess-1', kind: 'subagent', filePath: '/f/sess-1/agent-a.jsonl', fileSize: 3, fileMtimeMs: 3, agentId: 'agent-a', toolUseId: 'toolu_01' })
+    db.prepare("INSERT INTO messages (session_pk,uuid,seq,role,byte_offset,text) VALUES (?,?,?,?,?,?)")
+      .run(agent, 'sub1', 0, 'user', 0, 'the zebrafish report')
+    const hits = search(db, 'zebrafish')
+    expect(hits).toHaveLength(1)
+    expect(hits[0]!.sessionPk).toBe(s)
+    expect(listSessions(db, p).map(x => x.id)).toContain(hits[0]!.sessionPk)
+  })
+
+  it('leaves out a subagent match whose chat is gone, since nothing could open it', () => {
+    const { db, p } = seed()
+    const agent = upsertSession(db, { projectId: p, sessionId: 'gone', kind: 'subagent', filePath: '/f/gone/agent-b.jsonl', fileSize: 3, fileMtimeMs: 3, agentId: 'agent-b', toolUseId: 'toolu_02' })
+    db.prepare("INSERT INTO messages (session_pk,uuid,seq,role,byte_offset,text) VALUES (?,?,?,?,?,?)")
+      .run(agent, 'sub2', 0, 'user', 0, 'the orphaned walrus')
+    expect(search(db, 'walrus')).toEqual([])
+  })
+
   it('does not throw on FTS syntax the user might type', () => {
     const { db } = seed()
     expect(() => search(db, 'page "three')).not.toThrow()

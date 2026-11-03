@@ -378,6 +378,16 @@ export function shouldScrollToBottom(alreadyScrolledToBottom: boolean, itemCount
   return !alreadyScrolledToBottom && itemCount > 0
 }
 
+/** Whether a chat still follows its end after a scroll. Any move up, however small, is
+ *  the reader leaving, and is the only thing that does. A move down comes back once
+ *  it's near the end. At the very end it's always following, which also covers the
+ *  browser pulling the position up because the content got shorter. */
+export function followAfterScroll(following: boolean, top: number, lastTop: number, gap: number, margin: number): boolean {
+  if (gap <= 1) return true
+  if (top < lastTop) return false
+  return following || gap < margin
+}
+
 // ── New-chat dialog (Plan 2 Task 8) ─────────────────────────────────────────
 
 /** The New-Chat dialog's own last-used values, merged UNDER whatever the

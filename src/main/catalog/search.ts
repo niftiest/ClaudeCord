@@ -62,16 +62,19 @@ export function searchProject(db: Catalog, projectId: number, query: string, lim
   return { hits, total }
 }
 
+/** Ctrl+K: every indexed message, subagents' included. Only main chats can open, so each
+ *  hit names the chat it belongs to, not the subagent's own row. */
 export function search(db: Catalog, query: string, limit = 100): SearchHit[] {
   const match = toMatchExpression(query)
   if (match === '') return []
   return db.prepare(`
-    SELECT m.session_pk AS sessionPk, s.session_id AS sessionId, p.dir_name AS projectDir,
+    SELECT chat.id AS sessionPk, s.session_id AS sessionId, p.dir_name AS projectDir,
            m.seq, m.ts,
            snippet(messages_fts, 0, '<mark>', '</mark>', '…', 18) AS snippet
     FROM messages_fts
     JOIN messages m ON m.id = messages_fts.rowid
     JOIN sessions s ON s.id = m.session_pk
+    JOIN sessions chat ON chat.project_id = s.project_id AND chat.session_id = s.session_id AND chat.kind = 'main'
     JOIN projects p ON p.id = s.project_id
     WHERE messages_fts MATCH ?
     ORDER BY rank

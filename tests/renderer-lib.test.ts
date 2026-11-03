@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  channelName, isStaleResponse, stableItemKeys, shouldScrollToBottom, relativeTime, clamp,
+  channelName, isStaleResponse, stableItemKeys, shouldScrollToBottom, followAfterScroll, relativeTime, clamp,
   channelInitials, avatarColor, collapsePastedText, queueReducer, imageFromDataUrl, buildOutgoingText,
   resolveNewProjectOptions, summarizePermissionRequest, isPlanApproval, previewAllowAlwaysRule,
   planTextFromInput, parseEditedInput, reduceLivePreview, appendRowsToItems, renderItemsFromStreamedRows,
@@ -110,6 +110,25 @@ describe('stableItemKeys', () => {
     // but their keys (derived from uuid + position-within-uuid-run) must be
     // unchanged, since neither their uuid nor their run position changed.
     expect(afterKeys.slice(2)).toEqual(beforeKeys)
+  })
+})
+
+describe('followAfterScroll', () => {
+  const MARGIN = 80
+  it('stops following on any move up, even within the margin', () => {
+    expect(followAfterScroll(true, 990, 1000, 10, MARGIN)).toBe(false)
+  })
+  it('keeps following when the position holds and the content grew', () => {
+    expect(followAfterScroll(true, 1000, 1000, 500, MARGIN)).toBe(true)
+  })
+  it('stays out while scrolling down far from the end', () => {
+    expect(followAfterScroll(false, 500, 400, 600, MARGIN)).toBe(false)
+  })
+  it('comes back when scrolling down near the end', () => {
+    expect(followAfterScroll(false, 950, 900, 50, MARGIN)).toBe(true)
+  })
+  it('follows at the very end, even if the browser moved up because content shrank', () => {
+    expect(followAfterScroll(false, 800, 1000, 0, MARGIN)).toBe(true)
   })
 })
 
