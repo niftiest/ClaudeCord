@@ -1290,3 +1290,24 @@ td.mg-c-date { font-family:var(--mono); font-size:11.5px; }
 .settings-group > .settings-sub:first-of-type { margin-top:4px; }
 .cc-scope select, .cc-actions select, .cc-add input, .cc-table select, .cc-table input {
   background:var(--s1); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font:inherit; font-size:13px; }
+
+/* ── Project sync ── */
+.sync-card { background:var(--s2); border-radius:6px; padding:12px 14px; margin-bottom:14px; }
+.sync-card-title { font-weight:700; margin-bottom:6px; }
+.sync-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.sync-row { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+.sync-row > div:first-child { min-width:0; overflow-wrap:anywhere; }
+.sync-row .sync-actions { margin:0; flex-shrink:0; justify-content:flex-end; max-width:45%; }
+.sync-row.warn { border-left:3px solid #f0b232; padding-left:10px; }
+.sync-warn-text { color:#f0b232; font-size:12.5px; margin-top:4px; }
+.sync-key { display:block; font-size:16px; letter-spacing:.04em; padding:10px 12px; background:var(--rail); border-radius:4px; user-select:all; margin:8px 0; overflow-wrap:anywhere; }
+.sync-dialog { width:560px; }
+.sync-review { width:680px; }
+.sync-summary { background:var(--rail); border-radius:4px; padding:10px; font-size:12px; white-space:pre-wrap; max-height:220px; overflow:auto; margin:8px 0 14px; }
+.sync-findings { max-height:320px; overflow:auto; margin:8px 0 14px; }
+.sync-finding { padding:8px 0; border-bottom:1px solid var(--line); }
+.sync-finding-context { color:var(--mu); font-size:12px; font-family:var(--mono, monospace); overflow-wrap:anywhere; margin:4px 0 6px; }
+.sync-banner { padding:6px 16px; background:var(--s2); border-bottom:1px solid var(--line); font-size:12.5px; color:var(--mu); }
+.sync-banner-line { display:flex; align-items:center; gap:10px; padding:2px 0; }
+.sync-banner-line.warn { color:#f0b232; }
+.sync-banner-action { background:none; border:1px solid currentColor; color:inherit; border-radius:4px; padding:1px 8px; font:inherit; cursor:pointer; }

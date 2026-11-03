@@ -7,6 +7,7 @@ import { openCatalog } from './catalog/db'
 import { registerIpc } from './ipc'
 import { registerEngineIpc, type EngineIpcHandle } from './engine/engine-ipc'
 import { registerManageIpc } from './manage-ipc'
+import { registerSyncIpc, type SyncIpcHandle } from './sync-ipc'
 import { registerUpdater } from './updater'
 import { getSettings } from './catalog/settings'
 import { AUTOSTART_ARG } from './ipc'
@@ -20,6 +21,7 @@ import { isDeletablePrevious, launchExePath, previousFromArgv, removePrevious, U
 // review Fix 3), so it is safe for more than one of these overlapping events
 // to fire for the same teardown (e.g. the window closing AND before-quit).
 let engine: EngineIpcHandle | null = null
+let sync: SyncIpcHandle | null = null
 let mainWindow: BrowserWindow | null = null
 let splash: Splash | null = null
 let desktop: Desktop | null = null
@@ -107,10 +109,14 @@ function createWindow(): void {
     onSettingsChanged: () => desktop?.syncTray()
   })
   engine = registerEngineIpc(db, win, {
-    onEvent: (pk, e) => desktop?.onEvent(pk, e),
+    onEvent: (pk, e) => {
+      desktop?.onEvent(pk, e)
+      if (e.kind === 'result') sync?.turnEnded(pk)
+    },
     onPermission: (pk, req) => desktop?.onPermission(pk, req)
   })
-  const manage = registerManageIpc(db, engine)
+  sync = registerSyncIpc(db, win, engine)
+  const manage = registerManageIpc(db, engine, undefined, (from, to) => { void sync?.projectFolderRenamed(from, to) })
   const claudeSettings = registerClaudeSettingsIpc(db, win, engine)
   const updater = registerUpdater(win, {
     autoCheck: () => getSettings(db).autoCheckUpdates,
@@ -129,6 +135,7 @@ function createWindow(): void {
   win.on('closed', () => claudeSettings.dispose())
   win.on('closed', () => updater.dispose())
   win.on('closed', () => manage.dispose())
+  win.on('closed', () => { sync?.dispose(); sync = null })
   win.on('closed', () => engine?.dispose())
 
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)

@@ -9,8 +9,9 @@ import { ClaudeAvatar } from './ClaudeAvatar'
 import { UpdatesPanel } from './UpdatesPanel'
 import { ClaudeCodeSettings, type ProjectChoice } from './ClaudeCodeSettings'
 import { ChatHistorySettings } from './ChatHistorySettings'
+import { SyncSettings } from './SyncSettings'
 
-export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'mcp' | 'skills' | 'openrouter' | 'engine'
+export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'sync' | 'mcp' | 'skills' | 'openrouter' | 'engine'
 type Section = SettingsSection
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'startup', label: 'Startup & System' },
@@ -19,6 +20,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'claude', label: 'Claude Code' },
   { id: 'history', label: 'Chat history' },
+  { id: 'sync', label: 'Project sync' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'skills', label: 'Skills & commands' },
   { id: 'openrouter', label: 'OpenRouter' },
@@ -204,6 +206,11 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           {section === 'claude' && (
             <Group title="Claude Code">
               <ClaudeCodeSettings projects={projects} initialCwd={projectCwd} />
+            </Group>
+          )}
+          {section === 'sync' && (
+            <Group title="Project sync">
+              <SyncSettings />
             </Group>
           )}
           {section === 'history' && (

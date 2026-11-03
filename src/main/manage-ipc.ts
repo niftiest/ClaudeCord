@@ -64,7 +64,8 @@ async function saveZip(e: IpcMainInvokeEvent, title: string, defaultName: string
   return r.canceled || r.filePath === undefined || r.filePath === '' ? null : r.filePath
 }
 
-export function registerManageIpc(db: Catalog, engine: EngineIpcHandle, paths: ClaudePaths = defaultPaths()): { dispose(): void } {
+export function registerManageIpc(db: Catalog, engine: EngineIpcHandle, paths: ClaudePaths = defaultPaths(),
+  onProjectFolderRenamed?: (from: string, to: string) => void): { dispose(): void } {
   const drives = fixedDrives()
   let remover: FileRemover | null = null
 
@@ -83,7 +84,7 @@ export function registerManageIpc(db: Catalog, engine: EngineIpcHandle, paths: C
   controller = new ManageController(deps, {
     // Catalog follows the files: carry renamed channels over, then pick up
     // whatever changed on disk (new/renamed/restored transcripts).
-    projectFoldersRenamed: pairs => { for (const p of pairs) retireRenamedProject(db, p.from, p.to) },
+    projectFoldersRenamed: pairs => { for (const p of pairs) { retireRenamedProject(db, p.from, p.to); onProjectFolderRenamed?.(p.from, p.to) } },
     changed: () => engine.resync()
   })
   const ctl = controller

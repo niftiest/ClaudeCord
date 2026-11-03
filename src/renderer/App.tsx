@@ -20,6 +20,7 @@ import { ChatHeaderControls } from './components/ChatHeaderControls'
 import { SearchOverlay } from './components/SearchOverlay'
 import { SettingsWindow, type SettingsSection } from './components/SettingsWindow'
 import { BlockedBanner } from './components/BlockedBanner'
+import { SyncChatBanner, SyncConflictDialog, useSyncChat } from './components/SyncChat'
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
 import { UpdateBar } from './components/UpdatesPanel'
@@ -874,10 +875,36 @@ export function App() {
     []
   )
 
+  const syncChat = useSyncChat(session?.id ?? null)
+  const onSendRef = useRef<(text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void>(() => {})
+  const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
+
   const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => {
     // Composer is only mounted while a session is open, so this is a
     // defensive no-op, not a reachable path.
     if (session === null) return
+    // A synced chat: make sure this PC isn't behind before spending a turn. It only
+    // asks GitHub if the last check is a few minutes old, and a chat that isn't
+    // synced goes straight through.
+    if (syncChat.info.synced && !syncChat.bypass.current) {
+      void api.syncBeforeSend(session.id).then(info => {
+        syncChat.setInfo(info)
+        const resend = (): void => {
+          syncChat.bypass.current = true
+          onSendRef.current(text, images, pastedTexts, uuid)
+          syncChat.bypass.current = false
+        }
+        if (info.conflict !== null) {
+          syncChat.undismiss(info.conflict.sessionId)
+          setSyncHeld(() => resend)
+        } else resend()
+      }).catch(() => {
+        syncChat.bypass.current = true
+        onSendRef.current(text, images, pastedTexts, uuid)
+        syncChat.bypass.current = false
+      })
+      return
+    }
     setFindQuery('') // the reply is what to look at now
     const combined = buildOutgoingText(text, pastedTexts)
     // Guard: an empty send (whitespace-only, no images) is a no-op.
@@ -909,7 +936,8 @@ export function App() {
     // under this turn's own live rows.
     reloadGenRef.current++
     api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
-  }, [session])
+  }, [session, syncChat.info.synced])
+  onSendRef.current = onSend
 
   // "Open in terminal" (header button, or the prompt for terminal-only
   // commands): hands the chat to the interactive Claude Code; the lock monitor
@@ -1186,6 +1214,7 @@ export function App() {
           )}
           {session !== null && <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} />}
         </header>
+        {session !== null && <SyncChatBanner info={syncChat.info} onOpenSettings={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />}
         {session === null
           ? <div className="empty">Pick a channel to start reading.</div>
           // Keyed on the session id: forces a fresh Transcript instance (and
@@ -1319,6 +1348,12 @@ export function App() {
         />
       )}
       {memoryChannel !== null && <MemoryDialog projectId={memoryChannel.id} title={resolveChannelName(memoryChannel.meta, memoryChannel.cwd, memoryChannel.dirName)} onClose={() => setMemoryChannel(null)} />}
+      {syncChat.conflict !== null && (
+        <SyncConflictDialog key={syncChat.conflict.sessionId} conflict={syncChat.conflict} heldMessage={syncHeld !== null}
+          onLater={() => { syncChat.dismiss(syncChat.conflict!.sessionId); setSyncHeld(null) }}
+          onResolved={() => { syncChat.finish(); syncChat.refresh(); const held = syncHeld; setSyncHeld(null); held?.() }}
+          onOpenChat={(pk, dir) => openChatRef.current(pk, dir)} />
+      )}
       {settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} onSettingsChanged={setSettings}
         projectCwd={project?.cwd ?? null} initialSection={settingsSection}
         projects={channels.map(c => ({ dirName: c.dirName, cwd: c.cwd, name: resolveChannelName(c.meta, c.cwd, c.dirName) }))} />}

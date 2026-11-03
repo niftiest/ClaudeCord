@@ -136,6 +136,8 @@ export type EngineIpcHandle = {
   dispose(): void
   /** Chats with a turn or background task running: a restart now would cut them off. */
   activeWork(): number
+  /** Lower-cased session ids of chats with a turn or background task running. */
+  busySessionIds(): string[]
   /** OS pids of ClaudeCord's own pooled `claude` processes, by session id. */
   ownedProcesses(): Array<{ sessionId: string; pid: number | null }>
   /** Gracefully close ClaudeCord's own processes for these session ids (lets
@@ -667,6 +669,9 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     },
     activeWork() {
       return pool.snapshot().filter(e => e.busy || e.background > 0).length
+    },
+    busySessionIds() {
+      return pool.snapshot().filter(e => e.busy || e.background > 0).map(e => sessionIdOf(e.sessionKey).toLowerCase())
     },
     stopOwned(sessionIds) {
       const want = new Set(sessionIds.map(s => s.toLowerCase()))

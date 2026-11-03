@@ -22,7 +22,7 @@ function isRepoName(name: string): boolean {
 }
 
 /** Output can echo a remote URL, and a remote URL can hold a token. */
-function cleanOutput(text: string): string {
+export function cleanOutput(text: string): string {
   return text
     .replace(/\/\/[^/\s@]+@/g, '//')
     .replace(/\bgh[opusr]_[A-Za-z0-9_]+/g, '[token]')
@@ -32,7 +32,7 @@ function cleanOutput(text: string): string {
 }
 
 /** Windows installs can leave gh off the PATH an already-running app inherited. */
-function ghPath(): string {
+export function ghPath(): string {
   if (process.platform === 'win32') {
     const installed = join(process.env.ProgramFiles ?? 'C:\\Program Files', 'GitHub CLI', 'gh.exe')
     if (existsSync(installed)) return installed

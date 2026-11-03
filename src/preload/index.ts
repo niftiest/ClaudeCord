@@ -8,6 +8,7 @@ import type { StreamedRow } from '../main/jsonl/stream'
 import { MANAGE_IPC, type ContentSearchEvent, type ManageApi } from '../shared/manage-types'
 import { UPDATE_IPC, type UpdateApi, type UpdateStatus } from '../shared/update-types'
 import { CLAUDE_SETTINGS_IPC, type AutoCleanResult, type ClaudeSettingsApi } from '../shared/claude-settings-types'
+import { SYNC_IPC, type ScanProgress, type SyncApi, type SyncStatus } from '../shared/sync-types'
 
 const api: ClaudeCordApi & EngineApi = {
   listProjects: () => ipcRenderer.invoke(IPC.listProjects),
@@ -203,4 +204,36 @@ const claudeSettings: ClaudeSettingsApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('claudecord', { ...api, ...manage, ...update, ...claudeSettings })
+const sync: SyncApi = {
+  syncStatus: () => ipcRenderer.invoke(SYNC_IPC.status),
+  onSyncChanged: cb => {
+    const listener = (_e: IpcRendererEvent, s: SyncStatus) => cb(s)
+    ipcRenderer.on(SYNC_IPC.changed, listener)
+    return () => { ipcRenderer.off(SYNC_IPC.changed, listener) }
+  },
+  syncFindRepo: name => ipcRenderer.invoke(SYNC_IPC.findRepo, name),
+  syncSetupNew: options => ipcRenderer.invoke(SYNC_IPC.setupNew, options),
+  syncSetupExisting: options => ipcRenderer.invoke(SYNC_IPC.setupExisting, options),
+  syncSetDeviceName: name => ipcRenderer.invoke(SYNC_IPC.setDeviceName, name),
+  syncSetAuto: on => ipcRenderer.invoke(SYNC_IPC.setAuto, on),
+  syncScanProject: dir => ipcRenderer.invoke(SYNC_IPC.scanProject, dir),
+  onSyncScanProgress: cb => {
+    const listener = (_e: IpcRendererEvent, p: ScanProgress) => cb(p)
+    ipcRenderer.on(SYNC_IPC.scanProgress, listener)
+    return () => { ipcRenderer.off(SYNC_IPC.scanProgress, listener) }
+  },
+  syncEnableProject: (dir, decisions) => ipcRenderer.invoke(SYNC_IPC.enableProject, dir, decisions),
+  syncDisableProject: id => ipcRenderer.invoke(SYNC_IPC.disableProject, id),
+  syncLinkProject: (id, folder) => ipcRenderer.invoke(SYNC_IPC.linkProject, id, folder),
+  syncNow: () => ipcRenderer.invoke(SYNC_IPC.syncNow),
+  syncDecideFindings: (id, decisions) => ipcRenderer.invoke(SYNC_IPC.decideFindings, id, decisions),
+  syncResolveConflict: id => ipcRenderer.invoke(SYNC_IPC.resolveConflict, id),
+  syncChatInfo: pk => ipcRenderer.invoke(SYNC_IPC.chatInfo, pk),
+  syncBeforeSend: pk => ipcRenderer.invoke(SYNC_IPC.beforeSend, pk),
+  syncChatOpened: pk => ipcRenderer.send(SYNC_IPC.chatOpened, pk),
+  syncRemoveFromGithub: id => ipcRenderer.invoke(SYNC_IPC.removeFromGithub, id),
+  syncStartFresh: () => ipcRenderer.invoke(SYNC_IPC.startFresh),
+  syncDisconnect: () => ipcRenderer.invoke(SYNC_IPC.disconnect)
+}
+
+contextBridge.exposeInMainWorld('claudecord', { ...api, ...manage, ...update, ...claudeSettings, ...sync })
