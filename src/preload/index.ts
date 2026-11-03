@@ -1,3 +1,4 @@
+import type { PlanUsage } from '../shared/plan-usage'
 import type { ShellRun } from '../shared/shell-run-types'
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC, type ClaudeCordApi, type IndexProgress } from '../shared/ipc'
@@ -50,7 +51,8 @@ const api: ClaudeCordApi & EngineApi = {
   updateSettings: patch => ipcRenderer.invoke(IPC.updateSettings, patch),
   isElevated: () => ipcRenderer.invoke(IPC.isElevated),
 
-  send: (sessionPk, text, images) => { ipcRenderer.send(ENGINE_IPC.send, sessionPk, text, images) },
+  send: (sessionPk, text, images, uuid) => { ipcRenderer.send(ENGINE_IPC.send, sessionPk, text, images, uuid) },
+  withdrawQueued: (sessionPk, uuid) => ipcRenderer.invoke(ENGINE_IPC.withdrawQueued, sessionPk, uuid),
   interrupt: sessionPk => { ipcRenderer.send(ENGINE_IPC.interrupt, sessionPk) },
   resolvePermission: (id, decision, editedInput, denyMessage) => {
     ipcRenderer.send(ENGINE_IPC.resolvePermission, id, decision, editedInput, denyMessage)
@@ -60,11 +62,18 @@ const api: ClaudeCordApi & EngineApi = {
   },
   newChat: (options: NewProjectOptions): Promise<NewChatOutcome> => ipcRenderer.invoke(ENGINE_IPC.newChat, options),
   listEngines: () => ipcRenderer.invoke(ENGINE_IPC.listEngines),
+  planUsage: () => ipcRenderer.invoke(ENGINE_IPC.planUsage),
+  onPlanUsageChanged: cb => {
+    const listener = (_e: unknown, usage: PlanUsage): void => cb(usage)
+    ipcRenderer.on(ENGINE_IPC.planUsageChanged, listener)
+    return () => { ipcRenderer.off(ENGINE_IPC.planUsageChanged, listener) }
+  },
   killEngine: (pid: number) => ipcRenderer.invoke(ENGINE_IPC.killEngine, pid),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(ENGINE_IPC.pickDirectory),
   isSessionLive: (sessionPk: number): Promise<boolean> => ipcRenderer.invoke(ENGINE_IPC.isSessionLive, sessionPk),
   turnInfo: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.turnInfo, sessionPk),
   backgroundTasks: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.backgroundTasks, sessionPk),
+  stopTask: (sessionPk, taskId) => ipcRenderer.invoke(ENGINE_IPC.stopTask, sessionPk, taskId),
   onEvent: cb => {
     const listener = (_e: IpcRendererEvent, sessionPk: number, ev: LiveEvent) => cb(sessionPk, ev)
     ipcRenderer.on(ENGINE_IPC.event, listener)

@@ -83,7 +83,7 @@ const spec = (cwd = 'C:\\work'): SpawnSpec => ({ cwd, skipPermissions: false })
 describe('SessionPool — lazy spawn + reuse', () => {
   it('spawns via the factory on first send, starts it, and sends the message', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { type: 'user', message: { role: 'user', content: 'hi' } })
 
@@ -95,7 +95,7 @@ describe('SessionPool — lazy spawn + reuse', () => {
 
   it('reuses the same transport for a second send to a live key (no re-spawn)', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     pool.send('s1', spec(), { n: 2 })
@@ -106,7 +106,7 @@ describe('SessionPool — lazy spawn + reuse', () => {
 
   it('spawns independent transports for independent keys', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     pool.send('s2', spec(), { n: 2 })
@@ -121,7 +121,7 @@ describe('SessionPool — turnInfo', () => {
   it('reports the running turn, keeps it across messages, and starts over on the next turn', () => {
     const { factory, transports } = makeFactory()
     let now = 1000
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 100000, transportFactory: factory, now: () => now })
+    const pool = new SessionPool({ idleReapMs: 100000, transportFactory: factory, now: () => now })
     expect(pool.turnInfo('s1')).toBeNull()
 
     pool.send('s1', spec(), { n: 1 })
@@ -146,7 +146,7 @@ describe('SessionPool — turnInfo', () => {
 describe('SessionPool — isTurnRunning (busy vs idle-but-pooled)', () => {
   it('is true while a turn streams and false once its result lands (but stays isLive)', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     expect(pool.isTurnRunning('s1')).toBe(true)
@@ -162,7 +162,7 @@ describe('SessionPool — isTurnRunning (busy vs idle-but-pooled)', () => {
 
   it('goes busy again on a reused-transport send (the next turn)', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: 'a' })
@@ -175,90 +175,127 @@ describe('SessionPool — isTurnRunning (busy vs idle-but-pooled)', () => {
 
   it('is false for a key that was never sent', () => {
     const { factory } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
     expect(pool.isTurnRunning('nope')).toBe(false)
   })
 })
 
-describe('SessionPool — concurrency cap + queue + drain', () => {
-  it('queues a send beyond the cap and drains it once a running transport exits', () => {
+describe('SessionPool — no limit on chats', () => {
+  it('starts every chat straight away, however many are running', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
-    pool.send('s1', spec(), { n: 1 })
-    pool.send('s2', spec(), { n: 2 })
-    pool.send('s3', spec(), { n: 3 }) // over cap -> queued, not spawned
+    for (let n = 0; n < 40; n++) pool.send(`s${n}`, spec(), { n })
 
-    expect(transports).toHaveLength(2)
-    expect(pool.isLive('s3')).toBe(false)
-
-    // s1 finishes on its own (clean exit) -> frees a slot, drains s3.
-    transports[0]!.fireExit(0)
-
-    expect(transports).toHaveLength(3)
-    expect(pool.isLive('s1')).toBe(false)
-    expect(pool.isLive('s3')).toBe(true)
-    expect(transports[2]!.sent).toEqual([{ n: 3 }])
-  })
-
-  it('drains multiple queued sends for the same key into one spawn, in order, without a second spawn', () => {
-    const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 1000, transportFactory: factory })
-
-    pool.send('s1', spec(), { n: 0 }) // spawns immediately, fills the cap
-    pool.send('s2', spec(), { n: 1 }) // queued
-    pool.send('s2', spec(), { n: 2 }) // queued, same key
-
-    expect(transports).toHaveLength(1)
-
-    transports[0]!.fireExit(0)
-
-    // Exactly one new transport spawned for s2, receiving both queued
-    // messages in order.
-    expect(transports).toHaveLength(2)
-    expect(transports[1]!.sent).toEqual([{ n: 1 }, { n: 2 }])
-  })
-
-  it('a transport that crashes mid-turn (non-zero/abnormal exit) frees its slot and drains the queue', () => {
-    const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 1000, transportFactory: factory })
-
-    pool.send('s1', spec(), { n: 1 })
-    pool.send('s2', spec(), { n: 2 }) // queued -- at cap
-
-    expect(pool.isLive('s2')).toBe(false)
-
-    transports[0]!.fireExit(1) // crash, not a clean exit
-
-    expect(pool.isLive('s1')).toBe(false)
-    expect(pool.isLive('s2')).toBe(true)
-    expect(transports[1]!.sent).toEqual([{ n: 2 }])
+    expect(transports).toHaveLength(40)
+    expect(transports.every(t => t.sent.length === 1)).toBe(true)
+    expect(pool.snapshot()).toHaveLength(40)
   })
 })
 
 describe('SessionPool — idle reap', () => {
-  it('reapIdle closes+frees a transport idle longer than idleReapMs, and drains a queued send', () => {
+  const done: LiveEvent = { kind: 'result', isError: false, costUsd: 0, text: '' }
+
+  it('gracefully closes a process with nothing running once it has been idle too long', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     pool.send('s1', spec(), { n: 1 })
-    pool.send('s2', spec(), { n: 2 }) // queued -- at cap
+    transports[0]!.emit(done)
 
-    clock.advance(150) // idle longer than idleReapMs since s1's lastActivity
+    clock.advance(150)
     pool.reapIdle(clock.now())
 
     expect(transports[0]!.closeCalls).toBe(1)      // graceful close, not a hard interrupt
     expect(transports[0]!.interruptCalls).toBe(0)
     expect(pool.isLive('s1')).toBe(false)
-    expect(pool.isLive('s2')).toBe(true)
-    expect(transports[1]!.sent).toEqual([{ n: 2 }])
+  })
+
+  it('never closes a chat mid-turn, however long it has been silent', () => {
+    const clock = makeClock(0)
+    const { factory, transports } = makeFactory()
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
+
+    pool.send('s1', spec(), { n: 1 }) // a long command, or waiting on a permission answer
+    clock.advance(1_000_000)
+    pool.reapIdle(clock.now())
+
+    expect(transports[0]!.closeCalls).toBe(0)
+    expect(pool.isLive('s1')).toBe(true)
+
+    transports[0]!.emit(done)
+    clock.advance(150)
+    pool.reapIdle(clock.now())
+    expect(pool.isLive('s1')).toBe(false)
+  })
+
+  it('uses the idle limit as it stands now, so changing the setting needs no restart', () => {
+    const clock = makeClock(0)
+    const { factory, transports } = makeFactory()
+    let limit = 1000
+    const pool = new SessionPool({ idleReapMs: () => limit, transportFactory: factory, now: clock.now })
+
+    pool.send('s1', spec(), { n: 1 })
+    transports[0]!.emit(done)
+    clock.advance(500)
+    pool.reapIdle(clock.now())
+    expect(pool.isLive('s1')).toBe(true)
+
+    limit = 100
+    pool.reapIdle(clock.now())
+    expect(pool.isLive('s1')).toBe(false)
+  })
+
+  it('counts idle time from when the turn ended', () => {
+    const clock = makeClock(0)
+    const { factory, transports } = makeFactory()
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
+
+    pool.send('s1', spec(), { n: 1 })
+    clock.advance(500)
+    transports[0]!.emit(done)
+    clock.advance(50)
+    pool.reapIdle(clock.now())
+
+    expect(pool.isLive('s1')).toBe(true)
+  })
+
+  it('a message sent while the process is closing waits for it to exit, then resumes', () => {
+    const clock = makeClock(0)
+    const { factory, transports } = makeFactory()
+    let oldLockStands = true
+    const refused: LiveEvent[] = []
+    const pool = new SessionPool({
+      idleReapMs: 100, transportFactory: factory, now: clock.now,
+      isExternallyLive: () => transports.length > 0 && oldLockStands
+    })
+    oldLockStands = false
+    pool.on('s1', e => { if (e.kind === 'other') refused.push(e) })
+
+    pool.send('s1', spec(), { n: 1 })
+    transports[0]!.emit(done)
+    clock.advance(150)
+    pool.reapIdle(clock.now())
+
+    oldLockStands = true // the old process hasn't exited, so its session lock is still there
+    pool.send('s1', spec(), { n: 2 })
+    pool.send('s1', spec(), { n: 3 })
+    expect(transports).toHaveLength(1)
+    expect(refused).toEqual([])
+
+    oldLockStands = false
+    transports[0]!.fireExit(0)
+
+    expect(transports).toHaveLength(2)
+    expect(transports[1]!.sent).toEqual([{ n: 2 }, { n: 3 }])
+    expect(refused).toEqual([])
   })
 
   it('does not reap a transport within the idle window', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     pool.send('s1', spec(), { n: 1 })
     clock.advance(50)
@@ -271,7 +308,7 @@ describe('SessionPool — idle reap', () => {
   it('activity from an event resets the idle clock, so a busy transport is not reaped', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     pool.send('s1', spec(), { n: 1 })
     clock.advance(80)
@@ -284,10 +321,10 @@ describe('SessionPool — idle reap', () => {
     expect(pool.isLive('s1')).toBe(true)
   })
 
-  it('reapIdle is a no-op when nothing is idle and the queue stays untouched', () => {
+  it('reapIdle is a no-op when nothing is idle', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 5, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     pool.send('s1', spec(), { n: 1 })
     pool.reapIdle(clock.now())
@@ -301,7 +338,6 @@ describe('SessionPool — external-live refusal', () => {
   it('refuses to spawn and emits a refused-external-live event instead', () => {
     const { factory, transports } = makeFactory()
     const pool = new SessionPool({
-      maxConcurrent: 2,
       idleReapMs: 1000,
       transportFactory: factory,
       isExternallyLive: (key) => key === 's1'
@@ -317,35 +353,10 @@ describe('SessionPool — external-live refusal', () => {
     expect(events).toEqual([{ kind: 'other', type: 'refused-external-live' }])
   })
 
-  it('re-checks externally-live at drain time: a queued send is refused if the session became externally live while waiting', () => {
-    const { factory, transports } = makeFactory()
-    let external = false
-    const pool = new SessionPool({
-      maxConcurrent: 1,
-      idleReapMs: 1000,
-      transportFactory: factory,
-      isExternallyLive: () => external
-    })
-
-    const events: LiveEvent[] = []
-    pool.on('s2', (e) => events.push(e))
-
-    pool.send('s1', spec(), { n: 1 }) // fills the cap
-    pool.send('s2', spec(), { n: 2 }) // queued while s2 is not yet externally live
-
-    external = true // a terminal attaches to s2's session before it drains
-    transports[0]!.fireExit(0) // frees the slot, triggers a drain attempt on s2
-
-    expect(transports).toHaveLength(1) // s2 never spawned
-    expect(pool.isLive('s2')).toBe(false)
-    expect(events).toEqual([{ kind: 'other', type: 'refused-external-live' }])
-  })
-
   it('does not refuse a key that is already live under the pool (only gates new spawns)', () => {
     const { factory, transports } = makeFactory()
     let external = false
     const pool = new SessionPool({
-      maxConcurrent: 2,
       idleReapMs: 1000,
       transportFactory: factory,
       isExternallyLive: () => external
@@ -366,7 +377,7 @@ describe('SessionPool — external-live refusal', () => {
 describe('SessionPool — interrupt()', () => {
   it('forwards interrupt to a live transport', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     pool.interrupt('s1')
@@ -376,43 +387,15 @@ describe('SessionPool — interrupt()', () => {
 
   it('is a no-op for a key that is not live', () => {
     const { transports, factory } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     expect(() => pool.interrupt('nope')).not.toThrow()
     expect(transports).toHaveLength(0)
   })
 
-  it('is a no-op for a key that is only queued (not yet spawned)', () => {
+  it('interrupt reaches only the chat it was meant for', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 1000, transportFactory: factory })
-
-    pool.send('s1', spec(), { n: 1 }) // fills cap
-    pool.send('s2', spec(), { n: 2 }) // queued
-
-    expect(() => pool.interrupt('s2')).not.toThrow()
-    expect(transports).toHaveLength(1)
-    expect(transports[0]!.interruptCalls).toBe(0)
-  })
-
-  it('dequeues a queued-not-yet-spawned key so it does not spawn once a slot frees up', () => {
-    const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 1000, transportFactory: factory })
-
-    pool.send('s1', spec(), { n: 1 }) // fills cap
-    pool.send('x', spec(), { n: 2 }) // queued, not yet spawned
-
-    pool.interrupt('x') // cancel the queued send before it drains
-
-    // Free a slot -- x's queued send must NOT drain, since it was cancelled.
-    transports[0]!.fireExit(0)
-
-    expect(transports).toHaveLength(1) // no transport spawned for x
-    expect(pool.isLive('x')).toBe(false)
-  })
-
-  it('interrupt on a live key still forwards to the transport even though it also checks the queue', () => {
-    const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
     pool.send('s2', spec(), { n: 2 }) // separate live key, unrelated
@@ -428,7 +411,7 @@ describe('SessionPool — interrupt()', () => {
 describe('SessionPool — event fan-out', () => {
   it('delivers events to all subscribers of a key', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     const a: LiveEvent[] = []
     const b: LiveEvent[] = []
@@ -444,7 +427,7 @@ describe('SessionPool — event fan-out', () => {
 
   it('a subscriber registered before the first spawn still receives events once it spawns', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e)) // no transport exists yet
@@ -458,16 +441,17 @@ describe('SessionPool — event fan-out', () => {
   it('a stale (reaped) transport emitting late does not leak into a fresh spawn under the same key', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e))
 
     pool.send('s1', spec(), { n: 1 })
-    pool.send('s2', spec(), { n: 2 }) // queued, waiting for s1's slot
+    transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: '' })
+    events.length = 0
 
     clock.advance(150)
-    pool.reapIdle(clock.now()) // reaps s1 (graceful close), freeing the slot s2 then drains into
+    pool.reapIdle(clock.now()) // reaps s1 (graceful close)
 
     // s1's OLD transport fires a delayed event after being reaped/disposed.
     transports[0]!.emit({ kind: 'other', type: 'late-noise' })
@@ -479,7 +463,7 @@ describe('SessionPool — event fan-out', () => {
   it('a same-key respawn: the OLD disposed transport late-firing an event and onExit must not touch the NEW transport', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e))
@@ -488,33 +472,34 @@ describe('SessionPool — event fan-out', () => {
     pool.send('s1', spec(), { n: 1 })
     expect(transports).toHaveLength(1)
     const transportA = transports[0]!
+    transportA.emit({ kind: 'result', isError: false, costUsd: 0, text: '' })
+    events.length = 0
 
-    // Reap A past the idle window -- disposes it and frees the slot.
+    // Reap A past the idle window -- disposes it.
     clock.advance(150)
     pool.reapIdle(clock.now())
     expect(transportA.closeCalls).toBe(1)
     expect(pool.isLive('s1')).toBe(false)
 
-    // Send to s1 AGAIN -- spawns a distinct transport B under the same key.
+    // Send to s1 AGAIN -- once A has gone, spawns a distinct transport B under the same key.
     pool.send('s1', spec(), { n: 2 })
+    expect(transports).toHaveLength(1)
+    transportA.fireExit(0)
     expect(transports).toHaveLength(2)
     const transportB = transports[1]!
     expect(transportB).not.toBe(transportA)
     expect(pool.isLive('s1')).toBe(true)
     expect(transportB.sent).toEqual([{ n: 2 }])
 
-    // The OLD transport A fires a late event AND a late onExit after B has
-    // been spawned under the same key.
+    // The OLD transport A fires a late event after B has been spawned under the same key.
     transportA.emit({ kind: 'other', type: 'late-noise' })
-    transportA.fireExit(0)
 
     // No stale event from A reached s1's subscribers.
     expect(events).toEqual([])
     // B is untouched: still live, unaffected by A's late exit.
     expect(pool.isLive('s1')).toBe(true)
-    // The slot count wasn't double-decremented and no spurious drain
-    // occurred -- B is still the sole live entry, still exactly the
-    // transport instance spawned for the second send.
+    // B is still the sole live entry, still exactly the transport instance
+    // spawned for the second send.
     expect(transports).toHaveLength(2)
 
     // B still receives its own events normally.
@@ -526,7 +511,7 @@ describe('SessionPool — event fan-out', () => {
 describe('SessionPool — exit event (Task 10 review Fix 1)', () => {
   it('fans out a {kind: exit, code} event to subscribers when a transport exits WITHOUT ever emitting a result', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e))
@@ -542,7 +527,7 @@ describe('SessionPool — exit event (Task 10 review Fix 1)', () => {
 
   it('still fans out exit even after a normal result event, with the exit code preserved', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e))
@@ -560,12 +545,14 @@ describe('SessionPool — exit event (Task 10 review Fix 1)', () => {
   it('a disposed (reaped) entry never fires a late exit event -- disposed-flag guard still applies', () => {
     const clock = makeClock(0)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 100, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: clock.now })
 
     const events: LiveEvent[] = []
     pool.on('s1', (e) => events.push(e))
 
     pool.send('s1', spec(), { n: 1 })
+    transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: '' })
+    events.length = 0
     clock.advance(150)
     pool.reapIdle(clock.now()) // disposes s1 via close(), not onExit
 
@@ -580,7 +567,7 @@ describe('SessionPool — snapshot() + killByPid()', () => {
   it('snapshot lists live engines with their spec model/effort and pid', () => {
     const clock = makeClock(1000)
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 4, idleReapMs: 1000, transportFactory: factory, now: clock.now })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory, now: clock.now })
 
     pool.send('s1', { cwd: 'C:\\a', skipPermissions: false, model: 'opus', effort: 'high' }, { n: 1 })
     transports[0]!.pid = 4242
@@ -592,7 +579,7 @@ describe('SessionPool — snapshot() + killByPid()', () => {
 
   it('snapshot says whether a turn is running, not just whether the process is loaded', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 4, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
     pool.send('s1', spec(), { n: 1 })
     expect(pool.snapshot()[0]!.busy).toBe(true)
     transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: 'done' })
@@ -602,7 +589,7 @@ describe('SessionPool — snapshot() + killByPid()', () => {
 
   it('killByPid disposes the matching engine (graceful close) and frees its slot', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 4, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
     pool.send('s1', spec(), { n: 1 })
     transports[0]!.pid = 999
 
@@ -614,29 +601,27 @@ describe('SessionPool — snapshot() + killByPid()', () => {
 })
 
 describe('SessionPool — shutdown()', () => {
-  it('closes every live transport and clears the queue', () => {
+  it('closes every live transport, and nothing starts up again afterwards', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 1, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
-    pool.send('s2', spec(), { n: 2 }) // queued
+    pool.send('s2', spec(), { n: 2 })
 
     pool.shutdown()
 
     expect(transports[0]!.closeCalls).toBe(1)
+    expect(transports[1]!.closeCalls).toBe(1)
     expect(pool.isLive('s1')).toBe(false)
     expect(pool.isLive('s2')).toBe(false)
 
-    // The queued s2 send must not resurrect after shutdown -- s1's exit
-    // (even if it arrives late) must not drain a cleared queue.
     transports[0]!.fireExit(0)
-    expect(transports).toHaveLength(1)
-    expect(pool.isLive('s2')).toBe(false)
+    expect(transports).toHaveLength(2)
   })
 
   it('is idempotent: calling shutdown() twice does not throw or double-close', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.send('s1', spec(), { n: 1 })
 
@@ -647,7 +632,7 @@ describe('SessionPool — shutdown()', () => {
 
   it('use after shutdown: send() is a safe no-op and spawns nothing', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.shutdown()
 
@@ -658,7 +643,7 @@ describe('SessionPool — shutdown()', () => {
 
   it('use after shutdown: interrupt() and reapIdle() are also safe no-ops', () => {
     const { factory } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 1000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 1000, transportFactory: factory })
 
     pool.shutdown()
 
@@ -672,7 +657,7 @@ describe('SessionPool.releaseIdle (terminal takeover)', () => {
 
   it('closes an idle pooled transport so the next send respawns fresh', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 60_000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 60_000, transportFactory: factory })
     pool.send('k', spec, { n: 1 })
     transports[0]!.emit({ kind: 'result', isError: false, costUsd: 0, text: 'done' }) // turn finished -> idle
     expect(pool.releaseIdle('k')).toBe(true)
@@ -684,7 +669,7 @@ describe('SessionPool.releaseIdle (terminal takeover)', () => {
 
   it('leaves a mid-turn transport alone', () => {
     const { factory, transports } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 60_000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 60_000, transportFactory: factory })
     pool.send('k', spec, { n: 1 })
     expect(pool.releaseIdle('k')).toBe(false)
     expect(transports[0]!.closeCalls).toBe(0)
@@ -693,7 +678,7 @@ describe('SessionPool.releaseIdle (terminal takeover)', () => {
 
   it('is a no-op for an unknown key', () => {
     const { factory } = makeFactory()
-    const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 60_000, transportFactory: factory })
+    const pool = new SessionPool({ idleReapMs: 60_000, transportFactory: factory })
     expect(pool.releaseIdle('nope')).toBe(false)
   })
 })

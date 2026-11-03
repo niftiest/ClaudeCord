@@ -34,9 +34,9 @@ describe.skipIf(!RUN_E2E)('Transport — real CLI smoke (CLAUDECORD_E2E=1)', () 
           transport.on((e) => {
             events.push(e)
             if (e.kind === 'result') {
-              // Ask the process to stop once we have what we need -- the
+              // Ask the process to exit once we have what we need -- the
               // smoke test only needs one turn's worth of events.
-              transport.interrupt()
+              transport.close()
             }
           })
           transport.onExit((code) => {

@@ -14,7 +14,24 @@ export function parseLine(line: string): RawRow | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const row = value as Record<string, unknown>
   if (typeof row.type !== 'string') return null
-  return row as RawRow
+  return queuedPromptAsUserRow(row) ?? (row as RawRow)
+}
+
+const NOT_THE_PERSON = new Set(['peer', 'channel', 'observer', 'coordinator'])
+
+/** A message sent while Claude was working is stored as an attachment on the turn
+ *  that took it in, not as a user row. To everything reading a transcript it's what
+ *  the person said, like any other message. Background-task pings arrive the same way
+ *  (commandMode 'task-notification') and aren't: they stay as they are. */
+function queuedPromptAsUserRow(row: Record<string, unknown>): RawRow | null {
+  if (row.type !== 'attachment' || typeof row.uuid !== 'string') return null
+  const a = row.attachment as { type?: unknown; commandMode?: unknown; prompt?: unknown; isMeta?: unknown; origin?: { kind?: unknown } } | null | undefined
+  if (a?.type !== 'queued_command' || a.commandMode !== 'prompt' || a.isMeta === true) return null
+  // Other sessions and agents can queue messages too; those weren't typed here.
+  if (typeof a.origin?.kind === 'string' && NOT_THE_PERSON.has(a.origin.kind)) return null
+  if (typeof a.prompt !== 'string' && !Array.isArray(a.prompt)) return null
+  const parentUuid = typeof row.parentUuid === 'string' ? row.parentUuid : null
+  return { ...row, type: 'user', parentUuid, message: { role: 'user', content: a.prompt } } as RawRow
 }
 
 export function isMessageRow(row: RawRow): row is MessageRow {

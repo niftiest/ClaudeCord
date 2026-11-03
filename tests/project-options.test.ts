@@ -145,7 +145,7 @@ describe('changing a project\'s settings while a chat\'s process is loaded', () 
   function pool() {
     const made: Array<{ spec: SpawnSpec; closed: number; sent: object[]; emit: (e: LiveEvent) => void; exit: () => void }> = []
     const p = new SessionPool({
-      maxConcurrent: 4, idleReapMs: 100000,
+      idleReapMs: 100000,
       transportFactory: spec => {
         let cb: (e: LiveEvent) => void = () => {}
         const exits: Array<(code: number | null) => void> = []

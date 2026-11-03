@@ -39,6 +39,14 @@ const IMAGE_COORD_META = /^\[Image:[^\]]*map to original image\.?\]$/i
 // only the exact wrapper so an ordinary message mentioning the tag isn't caught.
 const TASK_NOTIFICATION = /^<task-notification>[\s\S]*<\/task-notification>$/
 
+// Claude Code's own record of a stopped turn, stored as if the user had typed it.
+const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/
+
+// Not something Claude said: Claude Code writes this reply itself when a chat is
+// resumed after its process died mid-turn, to keep the transcript well-formed.
+const SYNTHETIC_MODEL = '<synthetic>'
+const NO_RESPONSE_REQUESTED = 'No response requested.'
+
 /** A compaction's own "Compacted" receipt: its summary card already says so. */
 function isCompactReceipt(output: string): boolean {
   return /^compacted\b/i.test(output)
@@ -114,6 +122,12 @@ export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emit
         case 'text': {
           const text = String((block as { text?: unknown }).text ?? '').trim()
           if (text.length === 0 || IMAGE_COORD_META.test(text)) break
+          if (role === 'assistant' && model === SYNTHETIC_MODEL && text === NO_RESPONSE_REQUESTED) break
+          // Anything else Claude Code writes in Claude's place: a failed API call, a limit.
+          if (role === 'assistant' && (model === SYNTHETIC_MODEL || row.isApiErrorMessage === true)) {
+            items.push({ kind: 'notice', uuid: row.uuid, ts, text, label: text.split('\n')[0]!.slice(0, 160) })
+            break
+          }
           const command = role === 'user' ? commandItem(row.uuid, ts, text) : null
           if (command !== null) {
             // The CLI stores a compaction's summary before the /compact that asked
@@ -126,6 +140,8 @@ export function buildRenderItems(rows: Array<MessageRow | LocalCommandRow>, emit
             }
           } else if (role === 'user' && row.isCompactSummary === true) {
             items.push({ kind: 'notice', uuid: row.uuid, ts, text, label: COMPACT_LABEL })
+          } else if (role === 'user' && INTERRUPTED.test(text)) {
+            items.push({ kind: 'notice', uuid: row.uuid, ts, text, label: 'Interrupted' })
           } else if (role === 'user' && TASK_NOTIFICATION.test(text)) {
             items.push({ kind: 'notice', uuid: row.uuid, ts, text })
           } else {

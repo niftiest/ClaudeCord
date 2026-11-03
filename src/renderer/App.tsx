@@ -4,7 +4,8 @@ import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
 import type { BackgroundTask, PermissionRequest, ExternalLock, RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
-import { Nav } from './components/Nav'
+import { Nav, SHOW_NAV_STATUS } from './components/Nav'
+import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
 import { IconRail } from './components/IconRail'
 import { ContextRail, ContextRailStrip } from './components/ContextRail'
 import { CreateImageDialog } from './components/CreateImageDialog'
@@ -95,6 +96,7 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
   const [poolOpen, setPoolOpen] = useState(false)
   const [activeChats, setActiveChats] = useState(0)
+  const [planUsage, setPlanUsage] = useState<PlanUsage>(NO_PLAN_USAGE)
   // App-wide settings, loaded once and kept live via SettingsWindow's
   // onSettingsChanged. Null until the first load resolves; the few things that
   // read it (e.g. showToolCalls in the transcript) fall back to sensible
@@ -203,6 +205,12 @@ export function App() {
     return () => { cancelled = true }
   }, [project?.cwd])
 
+  // Plan usage for the chat-list footer.
+  useEffect(() => {
+    void api.planUsage().then(setPlanUsage).catch(() => {})
+    return api.onPlanUsageChanged(setPlanUsage)
+  }, [])
+
   // Footer "Chat elevation level" line (Windows).
   useEffect(() => { void api.isElevated().then(setElevated) }, [])
 
@@ -228,6 +236,7 @@ export function App() {
   // Poll the engine pool for the chat-list footer count (the pool HUD polls
   // its own detail while open). Cheap and bounded to a handful of engines.
   useEffect(() => {
+    if (!SHOW_NAV_STATUS) return
     let alive = true
     const tick = (): void => { void api.listEngines().then(e => { if (alive) setActiveChats(e.filter(x => x.busy).length) }).catch(() => {}) }
     tick()
@@ -599,6 +608,8 @@ export function App() {
       if (ev.kind === 'background') setBackgroundTasks(ev.tasks)
       if (ev.kind === 'exit') setBackgroundTasks([])
       if (ev.kind === 'result') void api.contextUsage(sid).then(c => { if (c !== null) setContext(c) })
+      // A failed turn writes nothing to the chat, so without this it just stops.
+      if (ev.kind === 'result' && ev.isError) setTerminalNotice(ev.text)
       if (ev.kind === 'status') setLiveStatus(ev.status === 'compacting' ? ev.status : null)
       else if (clearsRunning(ev)) setLiveStatus(null)
       // Task 10 review Fix 1: previously only a `result` event cleared
@@ -863,7 +874,7 @@ export function App() {
     []
   )
 
-  const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[]) => {
+  const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => {
     // Composer is only mounted while a session is open, so this is a
     // defensive no-op, not a reachable path.
     if (session === null) return
@@ -897,7 +908,7 @@ export function App() {
     // as stale and bail rather than wholesale-replacing `items` out from
     // under this turn's own live rows.
     reloadGenRef.current++
-    api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })))
+    api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
   }, [session])
 
   // "Open in terminal" (header button, or the prompt for terminal-only
@@ -1098,7 +1109,7 @@ export function App() {
             onManageMemory={setMemoryChannel}
             onOpenManage={() => setManageOpen(true)} onOpenSettings={() => { setSettingsSection(undefined); setSettingsOpen(true) }}
             onCollapse={() => setSidebarExpanded(false)} channels={channels} groups={groups} selectedId={project?.id ?? null} width={navWidth}
-            unread={unread} remote={remoteProjects} showRepos={githubReady} totalCost={totalCost} elevated={elevated} activeChats={activeChats}
+            unread={unread} remote={remoteProjects} showRepos={githubReady} totalCost={totalCost} elevated={elevated} activeChats={activeChats} planUsage={planUsage} session={session}
             onSelect={p => void openProject(p)} onNewChat={() => setNewChatOpen(true)}
             onOpenSearch={() => setSearchOpen(true)} onOpenPool={() => setPoolOpen(true)}
             onRename={onRenameChannel} onToggleStar={onToggleStar} onMoveToGroup={onMoveToGroup}
@@ -1240,14 +1251,14 @@ export function App() {
           <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus} pending={pending} lastActivity={lastEventAt}
             waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0} />
         )}
-        {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} />}
+        {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} />}
         {session !== null && <ShellRuns runs={shellRuns} />}
         {session !== null && (
           // Keyed on the session id (same reasoning as Transcript above): a
           // fresh Composer instance per session, so an in-progress queue/
           // chips/text never bleeds from one session into another. Only the
           // plain draft string survives the switch, via draftsRef.
-          <Composer key={`composer-${session.id}`} running={running} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
+          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
             onShellCommand={command => { void api.shellRun(session.id, command) }}
             onHijack={async () => {
               const r = await api.hijackChat(session.id)

@@ -68,7 +68,7 @@ describe('restarting a chat after its memory changed', () => {
   function pool() {
     const made: Array<{ closed: number; emit: (e: LiveEvent) => void; exit: () => void }> = []
     const p = new SessionPool({
-      maxConcurrent: 4, idleReapMs: 100000,
+      idleReapMs: 100000,
       transportFactory: () => {
         let cb: (e: LiveEvent) => void = () => {}
         const exits: Array<(c: number | null) => void> = []

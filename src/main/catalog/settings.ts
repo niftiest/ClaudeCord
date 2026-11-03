@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', thinkingExpanded: false, toolCardsExpanded: false,
   toolDisplay: 'grouped', promptSuggestions: 'off', showBlade: false, showContextRail: true,
   openRouterKey: '', avatarModel: 'openai/gpt-image-1', claudeIcon: { kind: 'initials' },
-  claudeBin: 'claude', idleReapMin: 30, maxConcurrent: 4, extraFlags: [],
+  claudeBin: 'claude', idleReapMin: 10, extraFlags: [],
   confirmBeforeBypass: false,
   autoCleanDays: null, autoCleanProjects: {}, retentionNoticeDismissed: false,
   mcpWarnIgnore: [], trustedFolders: []
@@ -57,7 +57,6 @@ function coerce<K extends keyof AppSettings>(key: K, value: unknown): AppSetting
   if (key === 'density') return (typeof value === 'string' && DENSITIES.has(value) ? value : undefined) as AppSettings[K] | undefined
   // Bounded numbers
   if (key === 'idleReapMin') return (typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : undefined) as AppSettings[K] | undefined
-  if (key === 'maxConcurrent') return (typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 32 ? Math.floor(value) : undefined) as AppSettings[K] | undefined
   // Nullable non-negative money
   if (key === 'defaultBudgetUsd') {
     if (value === null) return null as AppSettings[K]

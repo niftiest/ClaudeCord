@@ -37,6 +37,9 @@ export function sortModels<T extends { label: string }>(models: readonly T[]): T
 }
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+/** What settings.json's effortLevel accepts. Claude Code silently drops 'max' there: it
+ *  can only be chosen for a chat (--effort). */
+export const SAVED_EFFORTS = EFFORTS.filter(e => e !== 'max')
 export type Effort = (typeof EFFORTS)[number]
 
 /** Wraps a user's plain subject description ("cute elk standing near a tree",

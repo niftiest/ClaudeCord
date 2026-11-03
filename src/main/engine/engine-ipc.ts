@@ -1,3 +1,4 @@
+import { PlanUsageTracker } from './plan-usage'
 import { app, dialog, ipcMain, type BrowserWindow, shell } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -146,25 +147,20 @@ export type EngineIpcHandle = {
   resync(): Promise<void>
 }
 
-/** How often `pool.reapIdle()` is ticked in production (Plan 2 review Fix
- *  2). `reapIdle` was previously never called outside tests, so an idle
- *  `claude` process lingered for the app's entire life and -- once
- *  `maxConcurrent` sessions were simultaneously live -- a further session's
- *  queued send would wait forever for a slot nothing ever freed. 60s is
- *  comfortably smaller than the pool's own 5-minute `idleReapMs` (so a
- *  genuinely idle transport is reaped within a bounded, human-noticeable
- *  window rather than years), and comfortably larger than any realistic
- *  polling cost (a `Map` sweep over at most a handful of live sessions). */
+/** How often to look for idle processes. A process closes within this long of the
+ *  idle limit, which is close enough. */
 const REAP_INTERVAL_MS = 60 * 1000
 
 /** Claude waits up to 30s for a server to connect, so give it longer than that. */
 const MCP_RECONNECT_TIMEOUT_MS = 40_000
 
+const PLAN_CHECK_DELAY_MS = 3000
+
 
 export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: EngineHooks = {}): EngineIpcHandle {
-  // Read persisted settings once at startup for pool sizing + the engine
+  // Read persisted settings once at startup for the engine
   // binary (Plan 3 Task 4/5). Per-new-chat defaults (model/effort/skip) are
-  // read below into the coordinator's `defaults`; changing pool size or the
+  // read below into the coordinator's `defaults`; changing the
   // binary takes effect on next app launch, which is fine.
   const s = getSettings(db)
   const claudeBin = s.claudeBin
@@ -198,8 +194,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   }
 
   const pool = new SessionPool({
-    maxConcurrent: s.maxConcurrent,
-    idleReapMs: s.idleReapMin * 60 * 1000,
+    idleReapMs: () => getSettings(db).idleReapMin * 60 * 1000,
     transportFactory: (spec) => new Transport(spec, { claudeBin }),
     isExternallyLive: isSessionExternallyLive
   })
@@ -317,8 +312,8 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     return lockMonitor.get(sessionPk)
   })
 
-  const onSend = (_e: unknown, sessionPk: number, text: string, images?: EngineImageInput[]): void => {
-    coordinator.send(sessionPk, text, images)
+  const onSend = (_e: unknown, sessionPk: number, text: string, images?: EngineImageInput[], uuid?: string): void => {
+    coordinator.send(sessionPk, text, images, uuid)
   }
   const onInterrupt = (_e: unknown, sessionPk: number): void => {
     coordinator.interrupt(sessionPk)
@@ -512,6 +507,14 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   })
   const chromeOn = (): boolean => chromeEnabledFor(getSettings(db).chromeIntegration, () => claudeChromeDefault())
   const claudeInfo = new ClaudeInfoService({ claudeBin, chromeEnabled: chromeOn })
+  const planUsage = new PlanUsageTracker(join(app.getPath('userData'), 'plan-usage.json'))
+  planUsage.onChange(u => { if (!window.isDestroyed()) window.webContents.send(ENGINE_IPC.planUsageChanged, u) })
+  ipcMain.handle(ENGINE_IPC.planUsage, () => planUsage.get())
+  // Left until the app has settled: nothing depends on it, and it starts a process.
+  const planCheck = setTimeout(() => {
+    claudeInfo.planUsage(homedir()).then(a => planUsage.applyAnswer(a)).catch(err => console.warn('[engine] plan usage check failed', err))
+  }, PLAN_CHECK_DELAY_MS)
+  planCheck.unref?.()
   const folderOrHome = (cwd: string | null): string => cwd !== null && cwd.length > 0 && existsSync(cwd) ? cwd : homedir()
   const errorText = (err: unknown): string => err instanceof Error ? err.message : String(err)
   const chatMcpStatus = async (sessionPk: number): Promise<McpServerStatus[] | null> => {
@@ -570,6 +573,14 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? null : pool.turnInfo(info.filePath)
   })
+  ipcMain.handle(ENGINE_IPC.stopTask, (_e, sessionPk: number, taskId: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info !== null) pool.stopTask(info.filePath, taskId)
+  })
+  ipcMain.handle(ENGINE_IPC.withdrawQueued, (_e, sessionPk: number, uuid: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    return info === null ? true : pool.withdraw(info.filePath, uuid)
+  })
   ipcMain.handle(ENGINE_IPC.backgroundTasks, (_e, sessionPk: number) => {
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? [] : pool.backgroundTasks(info.filePath)
@@ -626,6 +637,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   coordinator.onEvent((sessionPk, e) => {
     if (!window.isDestroyed()) window.webContents.send(ENGINE_IPC.event, sessionPk, e)
     if (e.kind === 'result') indexDebouncer.now(sessionPk)
+    if (e.kind === 'rate_limit' && e.reading !== undefined) planUsage.applyReading(e.reading)
     try { hooks.onEvent?.(sessionPk, e) } catch (err) { console.error('[engine] event hook failed', err) }
   })
   coordinator.onRows((sessionPk, rows) => {
@@ -679,11 +691,15 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.isSessionLive)
       ipcMain.removeHandler(ENGINE_IPC.turnInfo)
       ipcMain.removeHandler(ENGINE_IPC.backgroundTasks)
+      ipcMain.removeHandler(ENGINE_IPC.withdrawQueued)
+      ipcMain.removeHandler(ENGINE_IPC.stopTask)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)
       ipcMain.removeHandler(ENGINE_IPC.listRemote)
       lockMonitor.dispose()
       ipcMain.removeHandler(ENGINE_IPC.listEngines)
+      ipcMain.removeHandler(ENGINE_IPC.planUsage)
+      clearTimeout(planCheck)
       ipcMain.removeHandler(ENGINE_IPC.clearChat)
       ipcMain.removeHandler(ENGINE_IPC.claudeInfo)
       ipcMain.removeHandler(ENGINE_IPC.mcpStatus)

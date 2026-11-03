@@ -24,8 +24,10 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .nav-list::-webkit-scrollbar-thumb, .blade::-webkit-scrollbar-thumb, .stream::-webkit-scrollbar-thumb {
   background:transparent; border-radius:8px; border:2px solid transparent; background-clip:padding-box;
   transition:background .2s ease; }
+/* Mixed from the text colour so it shows on every theme: --rail is the sidebar's own
+   background on some. */
 .nav-list:hover::-webkit-scrollbar-thumb, .blade:hover::-webkit-scrollbar-thumb,
-.stream:hover::-webkit-scrollbar-thumb { background:var(--rail); background-clip:padding-box; }
+.stream:hover::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--txt) 25%, transparent); background-clip:padding-box; }
 
 /* Resize handle between panels: transparent until hover/drag, then a thin bar. */
 .resizer { width:5px; flex:none; cursor:col-resize; background:transparent; z-index:5;
@@ -97,7 +99,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .iconrail-collapse:hover { background:var(--s2); }
 .iconrail-collapse:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
-/* Chat-list footer: what is running, and with what rights. */
+/* Chat-list footer: plan usage, or this chat's tokens and cost on an API key. */
 .nav-foot { flex:none; display:flex; align-items:center; gap:9px; padding:8px 12px; background:var(--sunk);
   border-top:1px solid var(--line); border-left:0; border-right:0; border-bottom:0; width:100%;
   text-align:left; cursor:pointer; font:inherit; color:inherit; }
@@ -106,6 +108,17 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .nav-foot-main { flex:1; min-width:0; line-height:1.25; }
 .nav-foot-sub { font-size:10.5px; color:var(--mu); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .elevation-admin { color:var(--amber); font-weight:600; }
+.usage-head { font-size:10.5px; font-weight:600; color:var(--txt); margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.usage-extra { font-weight:400; color:var(--amber); }
+.usage-window + .usage-window { margin-top:4px; }
+.usage-window-text { display:flex; justify-content:space-between; gap:8px; font-size:10.5px; color:var(--mu); white-space:nowrap; }
+.usage-window-reset { overflow:hidden; text-overflow:ellipsis; }
+.usage-bar { height:3px; margin-top:2px; border-radius:2px; background:color-mix(in srgb, var(--txt) 14%, transparent); overflow:hidden; }
+.usage-bar-fill { height:100%; border-radius:2px; background:var(--accent); }
+.usage-window.warn .usage-bar-fill { background:var(--amber); }
+.usage-window.warn .usage-window-pct { color:var(--amber); }
+.usage-window.full .usage-bar-fill { background:#e5484d; }
+.usage-window.full .usage-window-pct { color:#e5484d; }
 
 /* Search pill under the chat-list header. */
 .nav-search { margin:8px 10px 4px; display:flex; align-items:center; gap:8px; background:var(--rail);
@@ -599,7 +612,8 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .working-details { color:var(--mu); }
 .background-tasks { flex:none; padding-bottom:8px; }
 .background-tasks-head { padding-bottom:2px; }
-.background-task { padding:0 18px 0 32px; font-size:12px; color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.background-task { display:flex; align-items:center; gap:6px; padding:0 18px 0 32px; font-size:12px; color:var(--txt); }
+.background-task-text { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .working-star { display:inline-block; animation:working-spin 3s linear infinite; }
 @keyframes working-spin { to { transform:rotate(360deg); } }
 .tool-run { margin:4px 0; }
@@ -822,7 +836,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
   font-variant-numeric:tabular-nums; white-space:nowrap; }
 .settings-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; padding:11px 0; border-bottom:1px solid var(--line); }
 .settings-row-label { flex:1 1 240px; min-width:0; display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--tx); }
-.settings-hint { font-size:11.5px; color:var(--mu); font-weight:400; max-width:360px; }
+.settings-hint { font-size:11.5px; color:var(--mu); font-weight:400; }
 .settings-row input[type=text], .settings-row input[type=number], .settings-row input[type=password], .settings-row select {
   background:var(--s1); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:13px; min-width:200px; }
 .settings-row input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); cursor:pointer; }

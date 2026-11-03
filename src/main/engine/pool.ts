@@ -51,8 +51,6 @@ function mergeBackgroundTasks(known: BackgroundTask[], incoming: BackgroundTask[
   })
 }
 
-type QueueItem = { key: string; spec: SpawnSpec; msg: object }
-
 interface Entry {
   transport: TransportLike
   /** The spec this transport was spawned with (model/effort for the HUD). */
@@ -87,31 +85,22 @@ interface Entry {
 
 /**
  * Owns the lifecycle of Transport instances, keyed by session key: lazy
- * spawn on first send, reuse a live transport, cap concurrency (queueing the
- * rest), reap idle transports, fan out events to subscribers, and refuse to
- * spawn a second writer against a session a terminal already holds.
+ * spawn on first send, reuse a live transport, reap idle transports, fan out
+ * events to subscribers, and refuse to spawn a second writer against a session
+ * a terminal already holds.
  *
- * "Actively running" model (deliberately the simplest defensible one): a
- * transport counts against `maxConcurrent` from the moment it is spawned
- * (factory() + start()) until its `onExit` fires or it is reaped -- there is
- * no separate "mid-turn vs idle-but-alive" distinction for the cap. A live
- * transport whose turn has finished still holds its slot; `send()` to it
- * reuses it in place and does NOT consume an additional slot (there is
- * nothing new to admit against the cap). The only thing that force-frees a
- * slot held by an idle transport is `reapIdle` -- driven by `lastActivity`,
- * bumped on every `send()` and every event the transport emits, so a
- * long-running turn is never mistaken for idleness.
+ * There's no limit on how many run at once, so a message never waits for another
+ * chat. What keeps the count down is `reapIdle`: a process with nothing running
+ * closes after `idleReapMs`, and the chat resumes where it was on its next message.
  */
 export class SessionPool {
-  private readonly maxConcurrent: number
-  private readonly idleReapMs: number
+  private readonly idleReapMs: () => number
   private readonly transportFactory: TransportFactory
   private readonly isExternallyLive: (sessionKey: string) => boolean
   private readonly now: () => number
 
   private readonly live = new Map<string, Entry>()
   private readonly subscribers = new Map<string, Array<(e: LiveEvent) => void>>()
-  private readonly queue: QueueItem[] = []
 
   /** Set true by `shutdown()`. Terminal: a pool is single-use (shutdown is
    *  meant for app-quit), so once set, `send()`/`interrupt()`/`reapIdle()`
@@ -126,11 +115,10 @@ export class SessionPool {
   private readonly waitingForExit = new Map<string, Array<() => void>>()
 
   constructor(opts: {
-    maxConcurrent: number
-    idleReapMs: number
+    /** A function when the limit can change while the app runs. */
+    idleReapMs: number | (() => number)
     transportFactory: TransportFactory
-    /** Predicate the pool consults before every spawn attempt (initial and
-     *  at drain time) -- return true when a terminal (or anything outside
+    /** Predicate the pool consults before every spawn attempt -- return true when a terminal (or anything outside
      *  the pool) already holds this session's file. Defaults to "never". */
     isExternallyLive?: (sessionKey: string) => boolean
     /** Injectable clock so idle-tracking is deterministic under test (a
@@ -139,17 +127,16 @@ export class SessionPool {
      *  on each event" without depending on wall-clock timing. */
     now?: () => number
   }) {
-    this.maxConcurrent = opts.maxConcurrent
-    this.idleReapMs = opts.idleReapMs
+    const idleReapMs = opts.idleReapMs
+    this.idleReapMs = typeof idleReapMs === 'function' ? idleReapMs : () => idleReapMs
     this.transportFactory = opts.transportFactory
     this.isExternallyLive = opts.isExternallyLive ?? (() => false)
     this.now = opts.now ?? Date.now
   }
 
   /** Lazy-spawns on first send for a key that isn't live; reuses a live
-   *  transport's process for subsequent sends; queues the send when the key
-   *  isn't live and the pool is already at `maxConcurrent`; refuses (with a
-   *  `refused-external-live` event) instead of either when the session is
+   *  transport's process for subsequent sends; refuses (with a
+   *  `refused-external-live` event) instead of spawning when the session is
    *  externally live. */
   send(sessionKey: string, spec: SpawnSpec, msg: object): void {
     if (this.stopped) {
@@ -172,13 +159,7 @@ export class SessionPool {
     // Not while it has background work: replacing it would kill that work, so this
     // message goes to the process as it is.
     if (entry !== undefined && !entry.busy && !entry.disposed && entry.backgroundTasks.length === 0 && (entry.reload === true || settingsKey(entry.spec) !== settingsKey(spec))) {
-      const after: Array<() => void> = [() => this.send(sessionKey, spec, msg)]
-      this.waitingForExit.set(sessionKey, after)
-      entry.transport.onExit(() => {
-        this.waitingForExit.delete(sessionKey)
-        for (const next of after) next()
-      })
-      this.releaseIdle(sessionKey)
+      this.closeAndHold(sessionKey, entry).push(() => this.send(sessionKey, spec, msg))
       return
     }
     if (entry !== undefined) {
@@ -194,34 +175,32 @@ export class SessionPool {
       return
     }
 
-    if (this.live.size >= this.maxConcurrent) {
-      this.queue.push({ key: sessionKey, spec, msg })
-      return
-    }
-
     this.spawn(sessionKey, spec, msg)
   }
 
-  /** Forwards to the live transport for a key that is live. Also cancels any
-   *  queued-but-not-yet-spawned send(s) for that key, so an interrupt issued
-   *  before a queued send has drained actually prevents it from firing
-   *  later instead of silently letting it through once a slot frees up. A
-   *  key that is neither live nor queued is a no-op. */
+  /** Stops the running turn. Between turns there's nothing to stop. */
   interrupt(sessionKey: string): void {
     if (this.stopped) {
       this.warnUseAfterShutdown()
       return
     }
 
-    this.live.get(sessionKey)?.transport.interrupt()
+    const entry = this.live.get(sessionKey)
+    if (entry?.busy === true) entry.transport.interrupt()
+  }
 
-    if (this.queue.length > 0) {
-      const remaining = this.queue.filter((item) => item.key !== sessionKey)
-      if (remaining.length !== this.queue.length) {
-        this.queue.length = 0
-        this.queue.push(...remaining)
-      }
-    }
+  /** Stops one background task, leaving the chat and any others running. */
+  stopTask(sessionKey: string, taskId: string): void {
+    this.request(sessionKey, 'stop_task', { task_id: taskId })?.catch(() => { /* it had finished */ })
+  }
+
+  /** Takes back a message that hasn't reached Claude yet. False once it has. */
+  async withdraw(sessionKey: string, uuid: string): Promise<boolean> {
+    const answer = this.request(sessionKey, 'cancel_async_message', { message_uuid: uuid })
+    // No process holds it, so there's nothing it could still reach.
+    if (answer === null) return true
+    const response = await answer.catch(() => null) as { cancelled?: unknown } | null
+    return response?.cancelled === true
   }
 
   isLive(sessionKey: string): boolean {
@@ -230,7 +209,7 @@ export class SessionPool {
 
   /** Whether a turn is CURRENTLY streaming for this key -- a live entry whose
    *  `busy` flag hasn't been cleared by a terminal `result` yet. Distinct from
-   *  `isLive`: an idle-but-pooled transport is live (owns its slot, blocks a
+   *  `isLive`: an idle-but-pooled transport is live (blocks a
    *  second external writer) but NOT running a turn. The UI's running-state
    *  re-derivation reads THIS, so reopening a chat with an idle pooled process
    *  no longer wrongly wedges the composer into "streaming/queue" mode. */
@@ -270,13 +249,12 @@ export class SessionPool {
     return out
   }
 
-  /** Gracefully close+dispose the engine with this pid (HUD kill button), then
-   *  drain the queue. Returns true if one was found. */
+  /** Gracefully close+dispose the engine with this pid (HUD kill button).
+   *  Returns true if one was found. */
   killByPid(pid: number): boolean {
     for (const [key, entry] of this.live) {
       if (!entry.disposed && entry.transport.pid === pid) {
         this.dispose(key, entry)
-        this.drainQueue()
         return true
       }
     }
@@ -284,7 +262,7 @@ export class SessionPool {
   }
 
   /** Gracefully close+dispose this session's transport if it is pooled but
-   *  IDLE (no turn in flight), then drain the queue. Used when another process
+   *  IDLE (no turn in flight). Used when another process
    *  (a terminal) takes the chat over: our idle process's in-memory
    *  conversation is now stale, and reusing it on the next send would fork the
    *  transcript -- releasing it means the next send respawns with a fresh
@@ -295,7 +273,6 @@ export class SessionPool {
     const entry = this.live.get(sessionKey)
     if (entry === undefined || entry.disposed || entry.busy || entry.backgroundTasks.length > 0) return false
     this.dispose(sessionKey, entry)
-    this.drainQueue()
     return true
   }
 
@@ -326,42 +303,27 @@ export class SessionPool {
     else this.subscribers.set(sessionKey, [cb])
   }
 
-  /** Caller-ticked (no internal timer): gracefully closes+disposes any
-   *  transport idle longer than `idleReapMs`, freeing its slot, then drains the
-   *  queue. Losing a reaped transport loses nothing -- all durable state is
-   *  in the JSONL the CLI writes; the pool only holds the in-flight process.
+  /** Caller-ticked (no internal timer): gracefully closes any process that has had
+   *  nothing to do for longer than `idleReapMs`. That loses nothing: all durable
+   *  state is in the JSONL the CLI writes.
    *
-   *  Tuning note: idleness here is measured purely by the ABSENCE of
-   *  activity (a `send()` or an emitted event) for `idleReapMs`, not by
-   *  whether the turn is actually finished. A turn that is genuinely
-   *  in-flight but quiet for a stretch -- e.g. a long-running tool call
-   *  that emits no events while it works -- looks identical to a truly idle
-   *  transport from here. Whoever tunes `idleReapMs` MUST set it larger
-   *  than the longest expected silent gap within a turn, or a live,
-   *  in-progress response can be reaped mid-turn. */
+   *  Idle means nothing is running. A turn can be silent for a long time, on a long
+   *  command or waiting for a permission answer, so silence alone isn't idleness. */
   reapIdle(nowMs: number): void {
     if (this.stopped) {
       this.warnUseAfterShutdown()
       return
     }
 
-    // Snapshot before iterating: disposing entries can synchronously spawn
-    // new ones via drainQueue, and a Map iterator observes keys inserted
-    // during iteration. A snapshot keeps this pass over exactly the entries
-    // that existed when reapIdle was called.
-    const snapshot = [...this.live.entries()]
-    for (const [key, entry] of snapshot) {
-      if (entry.disposed || entry.backgroundTasks.length > 0) continue
-      if (nowMs - entry.lastActivity > this.idleReapMs) {
-        this.dispose(key, entry)
-      }
+    const limit = this.idleReapMs()
+    for (const [key, entry] of [...this.live.entries()]) {
+      if (entry.disposed || entry.busy || entry.backgroundTasks.length > 0) continue
+      if (nowMs - entry.lastActivity > limit) this.closeAndHold(key, entry)
     }
-    this.drainQueue()
   }
 
-  /** Gracefully closes+disposes every live transport and clears the queue.
-   *  Idempotent: a second call finds nothing live and an empty queue, so it
-   *  is a safe no-op.
+  /** Gracefully closes+disposes every live transport.
+   *  Idempotent: a second call finds nothing live, so it is a safe no-op.
    *
    *  Terminal: a `SessionPool` is single-use. `shutdown()` is meant for app
    *  quit -- once called, the pool never spawns again. `send()`,
@@ -372,7 +334,6 @@ export class SessionPool {
   shutdown(): void {
     const snapshot = [...this.live.entries()]
     for (const [key, entry] of snapshot) this.dispose(key, entry)
-    this.queue.length = 0
     this.stopped = true
   }
 
@@ -423,9 +384,6 @@ export class SessionPool {
     })
 
     transport.onExit((code) => {
-      // A transport that exits on its own (clean finish OR a mid-turn
-      // crash) frees its slot and drains the queue exactly like a reap
-      // does -- from the pool's perspective those are the same event.
       if (entry.disposed) return
       entry.disposed = true
       // Fan out a terminal `exit` LiveEvent BEFORE removing the entry, so
@@ -437,10 +395,12 @@ export class SessionPool {
       // (already handled by `dispose()`) never double-fires this.
       this.emitTo(sessionKey, { kind: 'exit', code })
       this.live.delete(sessionKey)
-      this.drainQueue()
     })
 
     transport.start()
+    // Declares the per-task stop button (background-tasks row). Without this an interrupt
+    // kills background agents, which Esc in the terminal never does.
+    transport.request?.('initialize', { perTaskStopAffordance: true })?.catch(() => { /* an older CLI; the turn still runs */ })
     transport.send(msg)
   }
 
@@ -455,40 +415,18 @@ export class SessionPool {
     entry.transport.close()
   }
 
-  private drainQueue(): void {
-    // Single pass, front-to-back, re-checking `this.live` fresh on every
-    // item (not just once up front): a reused item spawned earlier in THIS
-    // SAME pass must be visible to a later item for the same key, so two
-    // queued sends for one not-yet-live key resolve to one spawn plus one
-    // reuse, both landing in this call -- not one spawn now and the second
-    // stuck waiting for a slot that reuse never needed in the first place.
-    const remaining: QueueItem[] = []
-    for (const item of this.queue) {
-      const existing = this.live.get(item.key)
-      if (existing !== undefined) {
-        // Already live (spawned earlier in this pass, or otherwise) --
-        // reusing a slot it already holds, so the cap never applies here.
-        existing.lastActivity = this.now()
-        existing.transport.send(item.msg)
-        continue
-      }
-
-      // Re-check at drain time, not just at enqueue time: the session may
-      // have become externally live while this send was waiting in queue.
-      if (this.isExternallyLive(item.key)) {
-        this.emitTo(item.key, refusedExternalLive())
-        continue
-      }
-
-      if (this.live.size < this.maxConcurrent) {
-        this.spawn(item.key, item.spec, item.msg)
-        continue
-      }
-
-      remaining.push(item)
-    }
-    this.queue.length = 0
-    this.queue.push(...remaining)
+  /** Closes a process and returns the list of what has to wait for it to exit. Until
+   *  it does, its session lock still stands, and a new process would read as another
+   *  program holding the chat. */
+  private closeAndHold(sessionKey: string, entry: Entry): Array<() => void> {
+    const after: Array<() => void> = []
+    this.waitingForExit.set(sessionKey, after)
+    entry.transport.onExit(() => {
+      this.waitingForExit.delete(sessionKey)
+      for (const next of after) next()
+    })
+    this.dispose(sessionKey, entry)
+    return after
   }
 
   private emitTo(sessionKey: string, e: LiveEvent): void {

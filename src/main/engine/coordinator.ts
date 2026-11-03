@@ -129,9 +129,10 @@ function unknownSessionEvent(): LiveEvent {
  *  Text-only content stays a bare string (matches §2's simplest input
  *  shape); any images promote it to the block-array form with the text
  *  block first, mirroring the plan's recorded example verbatim. */
-function buildUserMessage(text: string, images?: ImageBlockInput[], before: ContentBlock[] = []): object {
+function buildUserMessage(text: string, images?: ImageBlockInput[], before: ContentBlock[] = [], uuid?: string): object {
+  const id = uuid === undefined ? {} : { uuid }
   if ((images === undefined || images.length === 0) && before.length === 0) {
-    return { type: 'user', message: { role: 'user', content: text } }
+    return { type: 'user', ...id, message: { role: 'user', content: text } }
   }
   const blocks: ContentBlock[] = [
     ...before,
@@ -141,7 +142,7 @@ function buildUserMessage(text: string, images?: ImageBlockInput[], before: Cont
       source: { type: 'base64', media_type: img.mediaType, data: img.dataBase64 }
     }))
   ]
-  return { type: 'user', message: { role: 'user', content: blocks } }
+  return { type: 'user', ...id, message: { role: 'user', content: blocks } }
 }
 
 /** Builds the SpawnSpec for one turn against an already-resolved session.
@@ -247,7 +248,8 @@ export class EngineCoordinator {
    *  reference, race with a prune) surfaces as an `unknown-session` event
    *  instead of throwing -- a bad IPC call from the renderer must never crash
    *  the main process. */
-  send(sessionPk: number, text: string, images?: ImageBlockInput[]): void {
+  /** `uuid` names the message, so it can be followed in the queue and withdrawn. */
+  send(sessionPk: number, text: string, images?: ImageBlockInput[], uuid?: string): void {
     const info = this.deps.lookupSession(sessionPk)
     if (info === null) {
       this.emitEvent(sessionPk, unknownSessionEvent())
@@ -267,7 +269,7 @@ export class EngineCoordinator {
       this.deps.permissionRelay, this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
     // A slash command has to be the whole message, or Claude reads it as text.
     const before = text.trimStart().startsWith('/') ? [] : this.deps.contextForMessage?.(sessionPk) ?? []
-    const userMessage = buildUserMessage(text, images, before)
+    const userMessage = buildUserMessage(text, images, before, uuid)
     this.deps.pool.send(info.sessionKey, spec, userMessage)
   }
 

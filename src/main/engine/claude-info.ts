@@ -16,6 +16,10 @@ export const INFO_ARGS = [...BASE_ARGS, '--strict-mcp-config']
 /** For MCP status: starts them, which is the point. */
 export const MCP_CHECK_ARGS = BASE_ARGS
 
+/** For plan usage, asked at every launch: only the answer is wanted, so the user's
+ *  startup hooks stay out of it. */
+export const PLAN_USAGE_ARGS = [...INFO_ARGS, '--settings', '{"disableAllHooks":true}']
+
 const TIMEOUT_MS = 20_000
 /** Long enough that opening several chats in one folder asks only once, short
  *  enough that a newly installed skill turns up without restarting. */
@@ -118,7 +122,7 @@ class ControlSession {
     this.child.on('exit', code => this.fail(new Error(`Claude Code exited early (code ${String(code)}).`)))
   }
 
-  request(subtype: string, timeoutMs = TIMEOUT_MS): Promise<unknown> {
+  request(subtype: string, extra: object = {}, timeoutMs = TIMEOUT_MS): Promise<unknown> {
     if (this.failure !== null) return Promise.reject(this.failure)
     const id = `claudecord-${++this.nextId}`
     return new Promise((resolve, reject) => {
@@ -131,7 +135,7 @@ class ControlSession {
         resolve: v => { clearTimeout(timer); resolve(v) },
         reject: e => { clearTimeout(timer); reject(e) }
       })
-      this.child.stdin.write(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype } }) + '\n')
+      this.child.stdin.write(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype, ...extra } }) + '\n')
     })
   }
 
@@ -207,6 +211,16 @@ export class ClaudeInfoService {
         version: typeof a.claude_code_version === 'string' ? a.claude_code_version : null,
         fetchedAt: this.now()
       }
+    } finally {
+      session.close()
+    }
+  }
+
+  /** The account's plan and limits. No transcript scan: only the limits are wanted. */
+  async planUsage(cwd: string): Promise<unknown> {
+    const session = new ControlSession(this.spawnFn, this.claudeBin, PLAN_USAGE_ARGS, cwd)
+    try {
+      return await session.request('get_usage', { skip_behaviors: true })
     } finally {
       session.close()
     }

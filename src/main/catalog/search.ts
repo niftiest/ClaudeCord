@@ -47,6 +47,9 @@ export function searchProject(db: Catalog, projectId: number, query: string, lim
     FROM messages m JOIN sessions s ON s.id = m.session_pk
     WHERE s.project_id = ? AND s.kind = 'main' AND m.is_sidechain = 0 AND m.role IN ('user', 'assistant')
       AND m.text NOT LIKE '<task-notification>%'
+      AND m.text NOT LIKE '[Request interrupted by user%'
+      AND m.text <> 'No response requested.'
+      AND COALESCE(m.model, '') <> '<synthetic>'
       ${terms.map(() => `AND m.text LIKE ? ESCAPE '\\'`).join(' ')}`
   const patterns = terms.map(t => `%${t.replace(/[\\%_]/g, c => `\\${c}`)}%`)
   const { total } = db.prepare(`SELECT COUNT(*) AS total ${where}`).get(projectId, ...patterns) as { total: number }

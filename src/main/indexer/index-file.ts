@@ -8,7 +8,16 @@ import type { DiscoveredFile } from './discover'
 export type IndexFileResult = { sessionPk: number; added: number; skipped: boolean }
 
 type SessionState = {
-  indexed_offset: number; indexed_seq: number; file_size: number; file_mtime_ms: number
+  indexed_offset: number; indexed_seq: number; file_size: number; file_mtime_ms: number; last_usage: string | null
+}
+
+type UsageCounts = [input: number, output: number, cacheRead: number, cacheWrite: number]
+/** The last API message seen, as a message can continue into the next indexing pass. */
+type LastUsage = { id: string; counts: UsageCounts }
+
+function parseLastUsage(json: string | null): LastUsage | null {
+  if (json === null) return null
+  try { return JSON.parse(json) as LastUsage } catch { return null }
 }
 
 function toolNamesOf(row: MessageRow): string | null {
@@ -38,7 +47,7 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
   })
 
   const state = db.prepare(
-    'SELECT indexed_offset, indexed_seq, file_size, file_mtime_ms FROM sessions WHERE id = ?'
+    'SELECT indexed_offset, indexed_seq, file_size, file_mtime_ms, last_usage FROM sessions WHERE id = ?'
   ).get(sessionPk) as SessionState
 
   // upsertSession has already written the new size/mtime for this pass, so the
@@ -79,6 +88,11 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
   let firstTs: string | null = null
   let lastTs: string | null = null
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
+  // Each content block of an API message is its own row, repeating the message's usage.
+  // Count the message once, at the figures its latest row reports.
+  const usageById = new Map<string, UsageCounts>()
+  let lastUsage = rewritten ? null : parseLastUsage(state.last_usage)
+  if (lastUsage !== null) usageById.set(lastUsage.id, lastUsage.counts)
 
   const write = db.transaction(() => {
     // Apply the rewritten-file reset atomically with the rebuild that follows:
@@ -94,7 +108,7 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
         UPDATE sessions SET
           indexed_offset = 0, indexed_seq = 0, message_count = 0,
           first_ts = NULL, last_ts = NULL, title = NULL, model = NULL, git_branch = NULL,
-          input_tokens = 0, output_tokens = 0, cache_read = 0, cache_write = 0
+          input_tokens = 0, output_tokens = 0, cache_read = 0, cache_write = 0, last_usage = NULL
         WHERE id = ?
       `).run(sessionPk)
     }
@@ -125,10 +139,17 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
       }
       const usage = row.message.usage
       if (usage !== undefined) {
-        inputTokens += usage.input_tokens ?? 0
-        outputTokens += usage.output_tokens ?? 0
-        cacheRead += usage.cache_read_input_tokens ?? 0
-        cacheWrite += usage.cache_creation_input_tokens ?? 0
+        const counts: UsageCounts = [usage.input_tokens ?? 0, usage.output_tokens ?? 0, usage.cache_read_input_tokens ?? 0, usage.cache_creation_input_tokens ?? 0]
+        const id = row.message.id
+        const counted = id === undefined ? undefined : usageById.get(id)
+        inputTokens += counts[0] - (counted?.[0] ?? 0)
+        outputTokens += counts[1] - (counted?.[1] ?? 0)
+        cacheRead += counts[2] - (counted?.[2] ?? 0)
+        cacheWrite += counts[3] - (counted?.[3] ?? 0)
+        if (id !== undefined) {
+          usageById.set(id, counts)
+          lastUsage = { id, counts }
+        }
       }
     }
 
@@ -139,10 +160,10 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
         first_ts = COALESCE(first_ts, ?), last_ts = COALESCE(?, last_ts),
         title = COALESCE(title, ?), model = COALESCE(?, model), git_branch = COALESCE(git_branch, ?),
         input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
-        cache_read = cache_read + ?, cache_write = cache_write + ?
+        cache_read = cache_read + ?, cache_write = cache_write + ?, last_usage = ?
       WHERE id = ?
     `).run(endOffset, seqEnd, sessionPk, firstTs, lastTs, title, model, gitBranch,
-           inputTokens, outputTokens, cacheRead, cacheWrite, sessionPk)
+           inputTokens, outputTokens, cacheRead, cacheWrite, lastUsage === null ? null : JSON.stringify(lastUsage), sessionPk)
 
     if (cwd !== null) setProjectCwd(db, projectId, cwd)
     db.prepare('UPDATE projects SET last_activity = MAX(COALESCE(last_activity, \'\'), ?) WHERE id = ?')

@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { atomicWriteText, uniqueStampedPath } from '../manage/safe-file'
-import { EFFORTS } from '../../shared/models'
+import { SAVED_EFFORTS } from '../../shared/models'
 import {
   CLAUDE_SETTING_KEYS, LIST_KEYS, PERMISSION_MODES, USER_ONLY_KEYS,
   type ClaudeSettingKey, type ClaudeSettingsPatch, type ClaudeSettingsTarget, type ClaudeSettingsView,
@@ -102,7 +102,7 @@ export function validateSetting(key: ClaudeSettingKey, value: unknown): { ok: tr
   }
   switch (key) {
     case 'effortLevel':
-      return typeof value === 'string' && (EFFORTS as readonly string[]).includes(value) ? { ok: true, value } : bad(`must be one of ${EFFORTS.join(', ')}`)
+      return typeof value === 'string' && (SAVED_EFFORTS as readonly string[]).includes(value) ? { ok: true, value } : bad(`must be one of ${SAVED_EFFORTS.join(', ')}`)
     case 'permissions.defaultMode':
       return typeof value === 'string' && (PERMISSION_MODES as readonly string[]).includes(value) ? { ok: true, value } : bad(`must be one of ${PERMISSION_MODES.join(', ')}`)
     case 'cleanupPeriodDays':

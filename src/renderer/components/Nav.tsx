@@ -1,13 +1,19 @@
 import { useMemo, useState } from 'react'
-import type { ChannelRow } from '../../shared/types'
+import type { ChannelRow, SessionSummary } from '../../shared/types'
+import type { PlanUsage } from '../../shared/plan-usage'
 import type { ChannelIcon, ChannelGroup } from '../../shared/shell-types'
 import { groupChannels } from '../lib'
 import { formatCostWhole } from '../../shared/models'
 import { GroupedNav } from './GroupedNav'
+import { UsageFooter } from './UsageFooter'
 import { ChannelContextMenu } from './ChannelContextMenu'
 
+/** Chats running and elevation level, which used to fill the footer. Hidden for now,
+ *  kept in case they're wanted later. */
+export const SHOW_NAV_STATUS: boolean = false
+
 export function Nav({
-  channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
+  channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, planUsage, session, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
   onRename, onToggleStar, onMoveToGroup, onCreateGroup, onDeleteGroup, onRenameGroup, onSetGroupIcon, onSetIcon,
   onToggleHidden, onDeleteChannel, onDeleteChat
 }: {
@@ -27,6 +33,9 @@ export function Nav({
   elevated: boolean
   /** Live engine count for the footer strip (opens the pool HUD). */
   activeChats: number
+  planUsage: PlanUsage
+  /** The open chat, whose tokens and cost the footer shows on an API key. */
+  session: SessionSummary | null
   onSelect: (channel: ChannelRow) => void
   /** Opens the New-Chat dialog (Plan 2 Task 8) -- the "+" in the list header. */
   onShowInExplorer: (channel: ChannelRow) => void
@@ -82,12 +91,15 @@ export function Nav({
         <GroupedNav sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}
           onContextMenu={(channel, x, y) => setContextMenu({ channel, x, y })} />
       </div>
-      <button type="button" className="nav-foot" onClick={onOpenPool} title="Engine pool">
+      <button type="button" className="nav-foot" onClick={onOpenPool} title="Open the list of running Claude processes">
         <div className="nav-foot-main">
-          <div className="nav-foot-sub">{activeChats === 0 ? 'No chats running actively' : `${activeChats} chat${activeChats === 1 ? '' : 's'} running actively`}</div>
-          <div className="nav-foot-sub" title={elevated ? 'ClaudeCord is running as Administrator, so its chats run with full admin rights' : 'ClaudeCord is not running as Administrator, so its chats run with normal rights'}>
-            Chat elevation level: <span className={elevated ? 'elevation-admin' : undefined}>{elevated ? 'Administrator' : 'Regular'}</span>
-          </div>
+          <UsageFooter usage={planUsage} session={session} />
+          {SHOW_NAV_STATUS && <div className="nav-foot-sub">{activeChats === 0 ? 'No chats running actively' : `${activeChats} chat${activeChats === 1 ? '' : 's'} running actively`}</div>}
+          {SHOW_NAV_STATUS && (
+            <div className="nav-foot-sub" title={elevated ? 'ClaudeCord is running as Administrator, so its chats run with full admin rights' : 'ClaudeCord is not running as Administrator, so its chats run with normal rights'}>
+              Chat elevation level: <span className={elevated ? 'elevation-admin' : undefined}>{elevated ? 'Administrator' : 'Regular'}</span>
+            </div>
+          )}
         </div>
       </button>
       <div className="nav-actions">

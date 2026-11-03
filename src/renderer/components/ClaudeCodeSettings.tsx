@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { MODELS, EFFORTS, sortModels } from '../../shared/models'
+import { MODELS, SAVED_EFFORTS, sortModels } from '../../shared/models'
 import {
   PERMISSION_MODES, type ClaudeSettingKey, type ClaudeSettingsPatch, type ClaudeSettingsTarget,
   type ClaudeSettingsView, type SettingSource
@@ -146,7 +146,7 @@ export function ClaudeCodeSettings({ projects, initialCwd }: { projects: Project
       {view !== null && <>
         <h3 className="settings-sub">Model and thinking — {scopeName}</h3>
         <ChoiceRow k="model" label="Model" options={sortModels(MODELS).map(m => ({ value: m.value, label: m.label }))} />
-        <ChoiceRow k="effortLevel" label="Effort" options={EFFORTS.map(v => ({ value: v, label: v }))} />
+        <ChoiceRow k="effortLevel" label="Effort" options={SAVED_EFFORTS.map(v => ({ value: v, label: v }))} />
         <ChoiceRow k="alwaysThinkingEnabled" label="Always think before answering" options={onOff} />
         <TextRow {...rowProps} hint={inheritHint('outputStyle')} k="outputStyle" label="Response style" placeholder="e.g. Explanatory" />
         <TextRow {...rowProps} hint={inheritHint('language')} k="language" label="Reply language" placeholder="e.g. English" />

@@ -22,7 +22,8 @@ describe('buildArgs — always-present flags', () => {
       '--output-format',
       'stream-json',
       '--include-partial-messages',
-      '--verbose'
+      '--verbose',
+      '--replay-user-messages'
     ])
   })
 })
@@ -125,7 +126,8 @@ describe('buildArgs — extraArgs', () => {
       '--output-format',
       'stream-json',
       '--include-partial-messages',
-      '--verbose'
+      '--verbose',
+      '--replay-user-messages'
     ])
   })
 })
@@ -150,6 +152,7 @@ describe('buildArgs — full combination', () => {
       'stream-json',
       '--include-partial-messages',
       '--verbose',
+      '--replay-user-messages',
       '--session-id',
       'sess-1',
       '--model',
@@ -350,11 +353,83 @@ describe('Transport — send()', () => {
 })
 
 describe('Transport — interrupt()', () => {
-  it('calls child.kill(SIGINT)', () => {
+  const stdoutLine = (child: FakeChild, o: object): void => { child.stdout.emit('data', Buffer.from(JSON.stringify(o) + '\n')) }
+  const stopped = { type: 'result', subtype: 'error_during_execution', is_error: true, result: '' }
+
+  it('asks the process to stop instead of killing it', () => {
     const { transport, child } = makeTransport()
     transport.start()
+    const written: string[] = []
+    child.stdin.on('data', (chunk: Buffer) => written.push(chunk.toString('utf8')))
     transport.interrupt()
-    expect(child.killCalls).toEqual(['SIGINT'])
+    const sent = JSON.parse(written.join('')) as { type: string; request: { subtype: string } }
+    expect(sent).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
+    expect(child.killCalls).toEqual([])
+  })
+
+  it("reports the stopped turn as interrupted, not as Claude Code's error", () => {
+    const { transport, child } = makeTransport()
+    transport.start()
+    const events: LiveEvent[] = []
+    transport.on(e => events.push(e))
+    transport.interrupt()
+    stdoutLine(child, stopped)
+    expect(events).toEqual([{ kind: 'result', isError: false, costUsd: 0, text: '', interrupted: true }])
+  })
+
+  it('leaves a real error alone when nothing was interrupted', () => {
+    const { transport, child } = makeTransport()
+    transport.start()
+    const events: LiveEvent[] = []
+    transport.on(e => events.push(e))
+    stdoutLine(child, stopped)
+    expect(events[0]).toMatchObject({ kind: 'result', isError: true })
+    expect(events[0]).not.toHaveProperty('interrupted')
+  })
+
+  it('only counts the next result: the turn after is back to normal', () => {
+    const { transport, child } = makeTransport()
+    transport.start()
+    const events: LiveEvent[] = []
+    transport.on(e => events.push(e))
+    transport.interrupt()
+    stdoutLine(child, stopped)
+    stdoutLine(child, stopped)
+    expect(events[1]).toMatchObject({ isError: true })
+  })
+
+  describe('a process that does not stop', () => {
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+
+    it('is killed after a few seconds', () => {
+      const { transport, child } = makeTransport()
+      transport.start()
+      transport.interrupt()
+      vi.advanceTimersByTime(4999)
+      expect(child.killCalls).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(child.killCalls).toHaveLength(1)
+    })
+
+    it('is left alone once the turn has stopped', () => {
+      const { transport, child } = makeTransport()
+      transport.start()
+      transport.interrupt()
+      stdoutLine(child, stopped)
+      vi.advanceTimersByTime(60_000)
+      expect(child.killCalls).toEqual([])
+    })
+
+    it('gets one deadline however many times Esc is pressed', () => {
+      const { transport, child } = makeTransport()
+      transport.start()
+      transport.interrupt()
+      vi.advanceTimersByTime(3000)
+      transport.interrupt()
+      vi.advanceTimersByTime(2000)
+      expect(child.killCalls).toHaveLength(1)
+    })
   })
 
   it('throws if interrupt() is called before start()', () => {

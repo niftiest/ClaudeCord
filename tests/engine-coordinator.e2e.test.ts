@@ -68,7 +68,6 @@ describe.skipIf(!RUN_E2E)('EngineCoordinator — real CLI round trip (CLAUDECORD
 
         let capturedTransport: Transport | null = null
         const pool = new SessionPool({
-          maxConcurrent: 4,
           idleReapMs: 5 * 60 * 1000,
           transportFactory: (spec) => {
             const t = new Transport(spec, { claudeBin: 'claude' })

@@ -35,6 +35,8 @@ export function shouldNotify(kind: NotifyKind, s: AppSettings, now: Date): boole
 
 /** A finished turn, or a process that died without finishing one. */
 export function classifyEvent(e: LiveEvent): NotifyKind | null {
+  // Nobody needs telling about a turn they just stopped themselves.
+  if (e.kind === 'result' && e.interrupted === true) return null
   if (e.kind === 'result') return e.isError ? 'error' : 'turnComplete'
   if (e.kind === 'exit' && e.code !== null && e.code !== 0) return 'error'
   return null

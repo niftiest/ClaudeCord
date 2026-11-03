@@ -60,6 +60,7 @@ describe('Claude Code settings files', () => {
     expect(validateSetting('cleanupPeriodDays', 0).ok).toBe(false)
     expect(validateSetting('cleanupPeriodDays', 3650).ok).toBe(true)
     expect(validateSetting('effortLevel', 'turbo').ok).toBe(false)
+    expect(validateSetting('effortLevel', 'max').ok).toBe(false) // Claude Code drops it from settings
     expect(validateSetting('permissions.allow', ['Read', ' Read ', '']).ok && validateSetting('permissions.allow', ['Read', ' Read ', '']))
       .toEqual({ ok: true, value: ['Read'] })
     expect(() => writeSettings(loc, { scope: 'user' }, { hooks: {} } as never)).toThrow(/not a setting/)

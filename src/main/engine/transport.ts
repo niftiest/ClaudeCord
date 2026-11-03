@@ -37,7 +37,9 @@ export function buildArgs(spec: SpawnSpec): string[] {
     '--output-format',
     'stream-json',
     '--include-partial-messages',
-    '--verbose'
+    '--verbose',
+    // Reports when a queued message is taken in, which the composer's queue shows.
+    '--replay-user-messages'
   ]
 
   if (spec.sessionId !== undefined) args.push('--session-id', spec.sessionId)
@@ -61,7 +63,7 @@ export function buildArgs(spec: SpawnSpec): string[] {
 /** Flags ClaudeCord itself controls: a user's "extra flags" may not repeat
  *  them (they would break the stream-json protocol or the session identity). */
 const RESERVED_FLAGS = new Set([
-  '-p', '--print', '--input-format', '--output-format', '--include-partial-messages',
+  '-p', '--print', '--input-format', '--output-format', '--include-partial-messages', '--replay-user-messages',
   '--session-id', '--resume', '-r', '--continue', '-c', '--fork-session',
   '--permission-prompt-tool', '--mcp-config', '--dangerously-skip-permissions', '--worktree', '-w'
 ])
@@ -137,6 +139,8 @@ export function defaultSpawn(bin: string, args: string[], cwd: string): ChildLik
  *  writes stream-json user turns to stdin, and forwards interrupt/exit.
  *  Node-only (child_process) -- must never import electron; the pool and
  *  IPC layer built on top of this are the electron-aware boundary. */
+const INTERRUPT_GRACE_MS = 5000
+
 export class Transport {
   private readonly spec: SpawnSpec
   private readonly claudeBin: string
@@ -145,6 +149,8 @@ export class Transport {
   private started = false
   private exited = false
   private forceKillTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set from asking a turn to stop until it has. */
+  private interruptTimer: ReturnType<typeof setTimeout> | null = null
 
   private pendingStdout: Buffer = Buffer.alloc(0)
   private stderrTail = ''
@@ -226,10 +232,19 @@ export class Transport {
     return this.child?.pid ?? null
   }
 
-  /** Requests the running turn stop, mirroring Ctrl-C in a terminal. */
+  /** Stops the running turn, as Esc does in a terminal: the process stays up, with the
+   *  conversation intact. Killing it instead (all SIGINT does on Windows) makes the next
+   *  message resume an interrupted transcript, which Claude Code patches over with a
+   *  made-up "No response requested." reply. A process too stuck to answer is killed. */
   interrupt(): void {
     if (this.child === null) throw new Error('Transport.interrupt() called before start()')
-    this.child.kill('SIGINT')
+    if (this.exited || this.interruptTimer !== null) return
+    this.interruptTimer = setTimeout(() => {
+      this.interruptTimer = null
+      if (!this.exited) try { this.child?.kill() } catch { /* already gone */ }
+    }, INTERRUPT_GRACE_MS)
+    this.interruptTimer.unref?.()
+    this.request('interrupt').catch(() => { /* the timer above covers no answer */ })
   }
 
   /** GRACEFUL shutdown of a pooled process (reap / app-quit) -- distinct from
@@ -282,7 +297,15 @@ export class Transport {
         continue
       }
       const event = parseEvent(line)
-      if (event !== null) this.emitEvent(event)
+      if (event === null) continue
+      if (event.kind === 'result' && this.interruptTimer !== null) {
+        // Claude Code reports a stopped turn as an error; here it's what was asked for.
+        clearTimeout(this.interruptTimer)
+        this.interruptTimer = null
+        this.emitEvent({ ...event, isError: false, text: '', interrupted: true })
+      } else {
+        this.emitEvent(event)
+      }
     }
     // Any bytes left in this.pendingStdout are an incomplete final line --
     // held until its newline arrives. If the process exits mid-line, those
@@ -305,6 +328,7 @@ export class Transport {
     for (const waiter of this.pendingRequests.values()) waiter.reject(new Error('The chat\'s process has stopped.'))
     this.pendingRequests.clear()
     if (this.forceKillTimer !== null) { clearTimeout(this.forceKillTimer); this.forceKillTimer = null }
+    if (this.interruptTimer !== null) { clearTimeout(this.interruptTimer); this.interruptTimer = null }
     for (const cb of this.exitListeners) cb(code)
   }
 }

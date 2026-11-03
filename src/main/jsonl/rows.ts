@@ -29,7 +29,10 @@ export type MessageRow = {
   isCompactSummary?: boolean
   permissionMode?: string
   todos?: unknown[]
-  message: { role: string; model?: string; content: string | ContentBlock[]; usage?: Usage }
+  /** Claude Code's own record of a failed API call, not something Claude said. */
+  isApiErrorMessage?: boolean
+  /** `id` is the API message. One spans several rows, each repeating its usage. */
+  message: { role: string; id?: string; model?: string; content: string | ContentBlock[]; usage?: Usage }
 }
 
 export type OtherRow = { type: string; [k: string]: unknown }

@@ -1,3 +1,4 @@
+import type { PlanUsage } from './plan-usage'
 import type { GithubRepoList, GithubStatus, PrepareRepoOutcome } from './github-types'
 import type { FolderTrust, ShellRun } from './shell-run-types'
 import type { MemoryFile, MemoryFileContent, MemorySaveResult } from './project-memory-types'
@@ -25,6 +26,10 @@ export const ENGINE_IPC = {
   setSessionOverrides: 'engine:setSessionOverrides',
   newChat: 'engine:newChat',
   listEngines: 'engine:list',
+  /** invoke: what's known of the account's plan and how much of it is used. */
+  planUsage: 'engine:planUsage',
+  /** push: the same, when it changes. */
+  planUsageChanged: 'engine:planUsageChanged',
   killEngine: 'engine:kill',
   pickDirectory: 'dialog:pickDirectory',
   event: 'engine:event',
@@ -34,6 +39,8 @@ export const ENGINE_IPC = {
   isSessionLive: 'engine:isSessionLive',
   turnInfo: 'engine:turnInfo',
   backgroundTasks: 'engine:backgroundTasks',
+  withdrawQueued: 'engine:withdrawQueued',
+  stopTask: 'engine:stopTask',
   /** invoke: the chat's current external lock (a terminal holding it), or null. */
   getLock: 'engine:getLock',
   /** invoke: open the chat in a real Claude Code terminal (claude --resume). */
@@ -156,7 +163,9 @@ export type EngineApi = {
   githubStatus(): Promise<GithubStatus>
   githubRepos(): Promise<GithubRepoList>
   githubPrepare(options: { repo: string; cwd: string }): Promise<PrepareRepoOutcome>
-  send(sessionPk: number, text: string, images?: EngineImageInput[]): void
+  send(sessionPk: number, text: string, images?: EngineImageInput[], uuid?: string): void
+  /** Takes back a queued message. False if Claude already has it. */
+  withdrawQueued(sessionPk: number, uuid: string): Promise<boolean>
   interrupt(sessionPk: number): void
   resolvePermission(
     id: string,
@@ -175,6 +184,8 @@ export type EngineApi = {
   newChat(options: NewProjectOptions): Promise<NewChatOutcome>
   /** Snapshot of every live engine process for the pool HUD. */
   listEngines(): Promise<EngineSnapshot[]>
+  planUsage(): Promise<PlanUsage>
+  onPlanUsageChanged(cb: (usage: PlanUsage) => void): () => void
   /** Gracefully stop the engine with this pid; resolves true if one was found. */
   killEngine(pid: number): Promise<boolean>
   /** Opens a native "choose a folder" dialog for the New-Chat working
@@ -188,6 +199,7 @@ export type EngineApi = {
   /** The open chat's running turn, or null when none is running. */
   turnInfo(sessionPk: number): Promise<TurnInfo | null>
   backgroundTasks(sessionPk: number): Promise<BackgroundTask[]>
+  stopTask(sessionPk: number, taskId: string): Promise<void>
   /** Returns an unsubscribe function, matching Plan 1's onIndexProgress. */
   onEvent(cb: (sessionPk: number, e: LiveEvent) => void): () => void
   onRows(cb: (sessionPk: number, rows: StreamedRow[]) => void): () => void

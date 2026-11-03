@@ -82,7 +82,7 @@ export type AppSettings = {
    *  default) keeps the classic ✳ accent circle; emoji/color/image override it. */
   claudeIcon: ChannelIcon
   // Engine
-  claudeBin: string; idleReapMin: number; maxConcurrent: number; extraFlags: string[]
+  claudeBin: string; idleReapMin: number; extraFlags: string[]
   // Safety
   /** Ask before creating a chat that skips permission prompts. */
   confirmBeforeBypass: boolean

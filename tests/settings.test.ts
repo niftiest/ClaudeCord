@@ -14,9 +14,9 @@ describe('settings store', () => {
 
   it('a partial update preserves the other fields', () => {
     const db = openCatalog(':memory:')
-    const next = updateSettings(db, { theme: 'terminal', maxConcurrent: 8 })
+    const next = updateSettings(db, { theme: 'terminal', idleReapMin: 8 })
     expect(next.theme).toBe('terminal')
-    expect(next.maxConcurrent).toBe(8)
+    expect(next.idleReapMin).toBe(8)
     expect(next.startWithAdmin).toBe(DEFAULT_SETTINGS.startWithAdmin) // untouched
     // persisted: reading fresh returns the same
     expect(getSettings(db).theme).toBe('terminal')
@@ -41,10 +41,9 @@ describe('settings store', () => {
   it('rejects invalid values, keeping the default', () => {
     const db = openCatalog(':memory:')
     // @ts-expect-error deliberately wrong types at the boundary
-    const next = updateSettings(db, { theme: 'neon', maxConcurrent: 0, idleReapMin: -5, extraFlags: [1, 2] })
+    const next = updateSettings(db, { theme: 'neon', idleReapMin: -5, extraFlags: [1, 2] })
     expect(next.theme).toBe('discord')        // 'neon' rejected
-    expect(next.maxConcurrent).toBe(4)         // 0 out of range, rejected
-    expect(next.idleReapMin).toBe(30)          // negative rejected
+    expect(next.idleReapMin).toBe(10)          // negative rejected
     expect(next.extraFlags).toEqual([])        // non-string array rejected
   })
 
@@ -68,19 +67,24 @@ describe('settings store', () => {
     expect(updateSettings(db, { theme: 'discord' }).theme).toBe('discord')
   })
 
-  it('clamps maxConcurrent to its bounds and floors non-integers', () => {
+  it('floors a non-integer idle limit', () => {
     const db = openCatalog(':memory:')
-    expect(updateSettings(db, { maxConcurrent: 40 }).maxConcurrent).toBe(4)  // >32 rejected -> default kept
     expect(updateSettings(db, { idleReapMin: 12.7 }).idleReapMin).toBe(12)   // floored
   })
 
   it('a malformed stored value falls back to the default on read', () => {
     const db = openCatalog(':memory:')
     db.prepare("INSERT INTO settings_kv (key, value) VALUES ('theme', 'not json')").run()
-    db.prepare("INSERT INTO settings_kv (key, value) VALUES ('maxConcurrent', '\"nope\"')").run()
+    db.prepare("INSERT INTO settings_kv (key, value) VALUES ('idleReapMin', '\"nope\"')").run()
     const s = getSettings(db)
     expect(s.theme).toBe('discord')
-    expect(s.maxConcurrent).toBe(4)
+    expect(s.idleReapMin).toBe(10)
+  })
+
+  it('ignores the old limit on concurrent chats if an earlier version saved one', () => {
+    const db = openCatalog(':memory:')
+    db.prepare("INSERT INTO settings_kv (key, value) VALUES ('maxConcurrent', '4')").run()
+    expect(getSettings(db)).not.toHaveProperty('maxConcurrent')
   })
 
   it('migration v3 creates settings_kv without disturbing existing data', () => {

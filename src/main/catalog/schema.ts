@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 8
 
 // The base (v1) schema. Applied unconditionally on every open (see db.ts) --
 // every statement here has been additive-safe (CREATE ... IF NOT EXISTS)
@@ -125,6 +125,14 @@ CREATE TABLE IF NOT EXISTS settings_kv (
 // being absent — keeping the step idempotent like the CREATE IF NOT EXISTS
 // migrations above, so re-running the runner from a lowered version can't throw
 // "duplicate column name".
+/** Token totals counted repeated rows many times over, so every chat is re-read: an
+ *  offset past the end of a file reads as rewritten, which rebuilds the totals. */
+function countUsagePerMessage(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]
+  if (!cols.some(c => c.name === 'last_usage')) db.exec('ALTER TABLE sessions ADD COLUMN last_usage TEXT')
+  db.exec('UPDATE sessions SET indexed_offset = 9007199254740991')
+}
+
 function addHiddenColumn(db: Database.Database): void {
   const cols = db.prepare('PRAGMA table_info(channel_meta)').all() as { name: string }[]
   if (!cols.some(c => c.name === 'hidden')) {
@@ -155,5 +163,9 @@ export const MIGRATIONS: Migration[] = [
   { toVersion: 3, apply: db => db.exec(MIGRATION_3_SETTINGS) },
   { toVersion: 4, apply: addHiddenColumn },
   { toVersion: 5, apply: addGroupIconColumn },
-  { toVersion: 6, apply: db => db.exec(MIGRATION_6_PROJECT_SETTINGS) }
+  { toVersion: 6, apply: db => db.exec(MIGRATION_6_PROJECT_SETTINGS) },
+  // Messages sent mid-turn weren't indexed. An offset past the end of a file reads as
+  // rewritten, so the next index pass rebuilds each chat cleanly, picking them up.
+  { toVersion: 7, apply: db => db.exec('UPDATE sessions SET indexed_offset = 9007199254740991') },
+  { toVersion: 8, apply: countUsagePerMessage }
 ]

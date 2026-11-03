@@ -1,3 +1,4 @@
+import type { PlanReading } from './plan-usage'
 import type { ContentBlock, Usage } from './types'
 import type { McpServerStatus } from './claude-info-types'
 
@@ -8,14 +9,18 @@ export type LiveEvent =
   | { kind: 'init'; sessionId: string; cwd: string; model: string; permissionMode: string; mcpServers?: McpServerStatus[] }
   | { kind: 'assistant'; uuid: string; blocks: ContentBlock[]; usage?: Usage }
   | { kind: 'delta'; text: string }
-  | { kind: 'result'; isError: boolean; costUsd: number; text: string }
-  | { kind: 'rate_limit'; status: string; resetsAt: number | null }
+  /** `interrupted`: the turn stopped because the user asked it to. */
+  | { kind: 'result'; isError: boolean; costUsd: number; text: string; interrupted?: boolean }
+  | { kind: 'rate_limit'; status: string; resetsAt: number | null; reading?: PlanReading }
   /** What the process is busy with outside a reply, e.g. 'compacting'; null when that ends. */
   | { kind: 'status'; status: string | null }
   /** Tokens one reply used, once it finishes. A turn can have several replies. */
   | { kind: 'usage'; outputTokens: number }
   /** Claude's prediction of what the user will say next. */
   | { kind: 'suggestion'; text: string }
+  /** What became of a message sent with a uuid: waiting in Claude Code's queue, taken
+   *  into a turn, finished with, or withdrawn. */
+  | { kind: 'commandLifecycle'; uuid: string; state: string }
   /** Everything running in the background now. The pool adds start times and the latest progress. */
   | { kind: 'background'; tasks: BackgroundTask[] }
   /** How one background agent is getting on. The pool folds this into `background`. */

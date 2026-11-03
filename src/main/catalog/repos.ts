@@ -58,6 +58,10 @@ export function listProjects(db: Catalog): ProjectSummary[] {
                -- Skip Claude Code's synthetic background-task pings (injected as
                -- user rows) so the nav preview never shows a raw <task-notification>.
                AND m.text NOT LIKE '<task-notification>%'
+               -- Claude Code's own notes about a stopped turn, not anyone's words.
+               AND m.text NOT LIKE '[Request interrupted by user%'
+               AND m.text <> 'No response requested.'
+               AND COALESCE(m.model, '') <> '<synthetic>'
                -- The CLI's own context notes, for chats indexed before these
                -- rows were recognised (see jsonl/synthetic.ts for newer ones).
                AND m.text NOT LIKE '<local-command%'

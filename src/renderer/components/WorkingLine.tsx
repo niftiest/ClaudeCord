@@ -19,7 +19,7 @@ const MAX_TASK_ROWS = 4
 
 /** Work still going after Claude's turn ended. Without this a chat waiting on it looks
  *  finished, until a reply turns up by itself. */
-export function BackgroundTasksLine({ tasks, running }: { tasks: BackgroundTask[]; running: boolean }) {
+export function BackgroundTasksLine({ tasks, running, onStop }: { tasks: BackgroundTask[]; running: boolean; onStop: (taskId: string) => void }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
@@ -36,9 +36,14 @@ export function BackgroundTasksLine({ tasks, running }: { tasks: BackgroundTask[
       )}
       {tasks.slice(0, MAX_TASK_ROWS).map(task => {
         const { title, details } = backgroundTaskLabel(task, now)
-        return <div className="background-task" key={task.id} title={title}>{title} <span className="working-details">({details.join(' · ')})</span></div>
+        return (
+          <div className="background-task" key={task.id}>
+            <span className="background-task-text" title={title}>{title} <span className="working-details">({details.join(' · ')})</span></span>
+            <button type="button" className="queue-btn queue-remove background-task-stop" title="Stop this task" aria-label={`Stop ${title}`} onClick={() => onStop(task.id)}>✕</button>
+          </div>
+        )
       })}
-      {tasks.length > MAX_TASK_ROWS && <div className="background-task working-details">and {tasks.length - MAX_TASK_ROWS} more</div>}
+      {tasks.length > MAX_TASK_ROWS && <div className="background-task"><span className="background-task-text working-details">and {tasks.length - MAX_TASK_ROWS} more</span></div>}
     </div>
   )
 }

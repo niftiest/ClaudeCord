@@ -183,8 +183,8 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           {section === 'engine' && (
             <Group title="Engine">
               <TextField label="Path to the claude binary" value={settings.claudeBin} on={v => patch({ claudeBin: v })} />
-              <NumberField label="Idle process reap (minutes)" value={settings.idleReapMin} on={v => patch({ idleReapMin: v ?? 30 })} />
-              <NumberField label="Max concurrent chats" value={settings.maxConcurrent} on={v => patch({ maxConcurrent: v ?? 4 })} />
+              <NumberField label="Close idle chats after (minutes)" hint="Closes a chat's Claude process once nothing has been running in it for this long. The chat picks up where it was on your next message."
+                value={settings.idleReapMin} on={v => patch({ idleReapMin: v ?? 10 })} />
               <Select label="Claude in Chrome" value={settings.chromeIntegration}
                 options={[{ value: 'auto', label: 'Automatic (follow Claude Code)' }, { value: 'on', label: 'Always on' }, { value: 'off', label: 'Off' }]}
                 on={v => patch({ chromeIntegration: v as AppSettings['chromeIntegration'] })} />

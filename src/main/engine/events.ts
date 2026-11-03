@@ -1,3 +1,4 @@
+import type { PlanReading, PlanWindow } from '../../shared/plan-usage'
 import type { Usage } from '../../shared/types'
 import type { BackgroundTask, LiveEvent } from '../../shared/engine-types'
 import { blocksFromContent } from '../jsonl/parse'
@@ -95,14 +96,57 @@ function parseRateLimit(row: Record<string, unknown>): LiveEvent {
   const status = info.status
   if (typeof status !== 'string') return other
   const resetsAt = typeof info.resetsAt === 'number' ? info.resetsAt : null
-  return { kind: 'rate_limit', status, resetsAt }
+  const reading = planReading(info)
+  return reading === null ? { kind: 'rate_limit', status, resetsAt } : { kind: 'rate_limit', status, resetsAt, reading }
+}
+
+/** A window in `rate_limit_info`'s form: a 0-1 fraction, reset time in epoch seconds. */
+function fractionWindow(utilization: unknown, resetsAt: unknown): PlanWindow | undefined {
+  if (typeof utilization !== 'number') return undefined
+  return { percent: Math.round(utilization * 100), resetsAt: typeof resetsAt === 'number' ? resetsAt * 1000 : null }
+}
+
+/** `unifiedWindows` carries both windows. It's marked internal, so if it ever goes,
+ *  the plain fields still report whichever window this event is about. */
+function planReading(info: Record<string, unknown>): PlanReading | null {
+  const reading: PlanReading = {}
+  const windows = info.unifiedWindows
+  if (isPlainObject(windows)) {
+    const five = windows.five_hour
+    const seven = windows.seven_day
+    if (isPlainObject(five)) { const w = fractionWindow(five.utilization, five.resetsAt); if (w !== undefined) reading.fiveHour = w }
+    if (isPlainObject(seven)) { const w = fractionWindow(seven.utilization, seven.resetsAt); if (w !== undefined) reading.sevenDay = w }
+  } else {
+    const w = fractionWindow(info.utilization, info.resetsAt)
+    if (w !== undefined && info.rateLimitType === 'five_hour') reading.fiveHour = w
+    if (w !== undefined && info.rateLimitType === 'seven_day') reading.sevenDay = w
+  }
+  if (typeof info.isUsingOverage === 'boolean') reading.usingExtra = info.isUsingOverage
+  return Object.keys(reading).length === 0 ? null : reading
+}
+
+const FAILURES: Record<string, string> = {
+  error_max_turns: 'Claude stopped: it reached the limit on turns.',
+  error_max_budget_usd: 'Claude stopped: it reached the budget limit for this chat.',
+  error_max_structured_output_retries: 'Claude stopped: it could not produce the required output format.'
+}
+
+/** Why a turn failed: failed turns carry `errors` instead of `result`. Claude Code's
+ *  `[ede_diagnostic]` entries are for its own developers. */
+function failureText(row: Record<string, unknown>): string {
+  const errors = Array.isArray(row.errors) ? row.errors.filter((e): e is string => typeof e === 'string' && !e.startsWith('[ede_diagnostic]')) : []
+  if (errors.length > 0) return errors.join('\n')
+  const known = typeof row.subtype === 'string' ? FAILURES[row.subtype] : undefined
+  if (known !== undefined) return known
+  const reason = typeof row.terminal_reason === 'string' ? ` (${row.terminal_reason.replace(/_/g, ' ')})` : ''
+  return `Claude stopped because of an error${reason}.`
 }
 
 function parseResult(row: Record<string, unknown>): LiveEvent {
   const isError = row.is_error === true
   const costUsd = typeof row.total_cost_usd === 'number' ? row.total_cost_usd : 0
   const text = typeof row.result === 'string' ? row.result : ''
-  return { kind: 'result', isError, costUsd, text }
+  return { kind: 'result', isError, costUsd, text: text.length === 0 && isError ? failureText(row) : text }
 }
 
 export type ControlResponse =
@@ -153,6 +197,10 @@ export function parseEvent(line: string): LiveEvent | null {
       return parseRateLimit(value)
     case 'result':
       return parseResult(value)
+    case 'command_lifecycle':
+      return typeof value.command_uuid === 'string' && typeof value.state === 'string'
+        ? { kind: 'commandLifecycle', uuid: value.command_uuid, state: value.state }
+        : { kind: 'other', type }
     case 'prompt_suggestion':
       return typeof value.suggestion === 'string' && value.suggestion.trim().length > 0
         ? { kind: 'suggestion', text: value.suggestion.trim() }

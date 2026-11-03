@@ -38,7 +38,7 @@ function setup() {
       on(cb) { emit = cb }, onExit() {}
     }
   }
-  const pool = new SessionPool({ maxConcurrent: 2, idleReapMs: 100, transportFactory: factory, now: () => time })
+  const pool = new SessionPool({ idleReapMs: 100, transportFactory: factory, now: () => time })
   const events: LiveEvent[] = []
   pool.on('k', e => events.push(e))
   const spec = { cwd: 'c' } as SpawnSpec

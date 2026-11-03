@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { api } from '../api'
 import {
   collapsePastedText, queueReducer, imageFromDataUrl, buildOutgoingText,
   applyCompletion, commandTokenLength, completionAt, fileMention, filterCommands, matchesCommandName, rankFiles,
@@ -68,7 +69,7 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ running, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
@@ -92,7 +93,7 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
    *  for a parent that wants the raw chips (e.g. richer optimistic
    *  rendering); it's empty for a drained queue entry, since that text was
    *  already combined once at enqueue time. */
-  onSend: (text: string, images: ComposerImage[], pastedTexts: PastedTextChip[]) => void
+  onSend: (text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void
   onInterrupt: () => void
   /** Fires whenever the queued-message count changes, so a parent (App.tsx)
    *  can drive a LiveIndicator badge without owning the queue itself (the
@@ -101,6 +102,7 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
    *  surfaced). Optional: a Composer with no listener works exactly as
    *  before. */
   onQueueLengthChange?: (count: number) => void
+  sessionPk: number
 }) {
   const [text, setText] = useState(initialDraft ?? '')
   const [pastedChips, setPastedChips] = useState<PastedTextChip[]>([])
@@ -192,19 +194,92 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`
   }, [text])
 
-  // Drain the queue when a turn ends: the transition from running=true to
-  // running=false (not merely "is false") is what fires the next send, so a
-  // component that mounts already idle with a (freshly reset, empty) queue
-  // doesn't spuriously fire on mount.
+  // Messages already in Claude Code's queue reach Claude by themselves. What's held
+  // here goes when a turn ends: the transition from running=true to running=false (not
+  // merely "is false") is what fires the next send, so a component that mounts already
+  // idle with a (freshly reset, empty) queue doesn't spuriously fire on mount.
   const prevRunning = useRef(running)
   useEffect(() => {
-    if (prevRunning.current && !running && queue.length > 0 && lock === null) {
-      const next = queue[0]!
+    const next = queue.find(m => !m.uuid)
+    if (prevRunning.current && !running && next !== undefined && lock === null) {
       dispatchQueue({ type: 'remove', id: next.id })
       onSend(next.text, next.images, [])
     }
     prevRunning.current = running
   }, [running, queue, onSend, lock])
+
+  // Follows the queue's messages through Claude Code.
+  const queueRef = useRef(queue)
+  queueRef.current = queue
+  const textRef = useRef(text)
+  textRef.current = text
+  const withdrawing = useRef(new Set<string>())
+  const [queueBusy, setQueueBusy] = useState(false)
+  const [queueNote, setQueueNote] = useState<string | null>(null)
+  useEffect(() => {
+    if (queueNote === null) return
+    const timer = setTimeout(() => setQueueNote(null), 4000)
+    return () => clearTimeout(timer)
+  }, [queueNote])
+  useEffect(() => api.onEvent((pk, ev) => {
+    if (pk !== sessionPk) return
+    if (ev.kind === 'exit') dispatchQueue({ type: 'holdAll' })
+    if (ev.kind !== 'commandLifecycle') return
+    if (ev.state === 'started' || ev.state === 'completed') dispatchQueue({ type: 'removeUuid', uuid: ev.uuid })
+    if (ev.state === 'cancelled' && !withdrawing.current.has(ev.uuid)) {
+      // Dropped by something other than this queue: it mustn't simply vanish.
+      const lost = queueRef.current.find(m => m.uuid === ev.uuid)
+      if (lost !== undefined) putInBox(lost)
+    }
+  }), [sessionPk])
+
+  /** Takes a message back from Claude Code. False if Claude has it by now. */
+  async function withdraw(m: QueuedMessage): Promise<boolean> {
+    if (!m.uuid) return true
+    withdrawing.current.add(m.uuid)
+    const ok = await api.withdrawQueued(sessionPk, m.uuid)
+    if (!ok) setQueueNote('Too late to change that one: Claude already has it.')
+    return ok
+  }
+
+  function putInBox(m: QueuedMessage) {
+    dispatchQueue({ type: 'remove', id: m.id })
+    updateText([m.text, textRef.current].map(s => s.trim()).filter(s => s.length > 0).join('\n'))
+    if (m.images.length > 0) setImageChips(prev => [...m.images, ...prev])
+    textareaRef.current?.focus()
+  }
+
+  async function editQueued(m: QueuedMessage) {
+    setQueueBusy(true)
+    if (await withdraw(m)) putInBox(m)
+    setQueueBusy(false)
+  }
+
+  async function removeQueued(m: QueuedMessage) {
+    setQueueBusy(true)
+    if (await withdraw(m)) dispatchQueue({ type: 'remove', id: m.id })
+    setQueueBusy(false)
+  }
+
+  /** Claude Code's queue runs in the order it was given, so from the first message that
+   *  moves onward they're all taken back and sent again in the new order. */
+  async function moveQueued(m: QueuedMessage, dir: 'up' | 'down') {
+    const before = queueRef.current
+    const after = queueReducer(before, { type: 'move', id: m.id, dir })
+    const from = after.findIndex((item, i) => item !== before[i])
+    if (from === -1) return
+    setQueueBusy(true)
+    const tail = after.slice(from)
+    const kept = await Promise.all(tail.map(withdraw))
+    const resent = tail.filter((_, i) => kept[i]).map(item => {
+      if (!item.uuid) return item
+      const uuid = crypto.randomUUID()
+      onSend(item.text, item.images, [], uuid)
+      return { ...item, uuid }
+    })
+    dispatchQueue({ type: 'set', items: [...after.slice(0, from), ...resent] })
+    setQueueBusy(false)
+  }
 
   function updateText(next: string) {
     setText(next)
@@ -277,7 +352,12 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
     if (running) {
       // QueuedMessage has a single `text` field with no separate pasted-chip
       // slot, so the combine has to happen now, at enqueue time.
-      dispatchQueue({ type: 'add', msg: { id: localId('queued'), text: wouldSend, images: imageChips } })
+      // It goes straight to Claude Code, which feeds it in at Claude's next step and
+      // shows it here until then, as in the terminal. A slash command has to run on its
+      // own, and some are handled here, so those wait for the turn to end.
+      const uuid = wouldSend.trimStart().startsWith('/') ? null : crypto.randomUUID()
+      dispatchQueue({ type: 'add', msg: { id: localId('queued'), text: wouldSend, images: imageChips, uuid } })
+      if (uuid !== null) onSend(wouldSend, imageChips, [], uuid)
     } else {
       // Not running: hand the parent the raw pieces and let it do the
       // combine (it calls buildOutgoingText(text, pastedTexts) itself before
@@ -286,20 +366,6 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
       onSend(text, imageChips, pastedChips)
     }
     clearCompose()
-  }
-
-  /** Pull the most-recently queued message back into the composer (text +
-   *  images), editable -- the "fast-track" first step (mirrors Claude Code's
-   *  Esc-to-edit). Merges with any text already typed so nothing is lost.
-   *  Returns true if something was dequeued. */
-  function pullNewestQueued(): boolean {
-    if (queue.length === 0) return false
-    const last = queue[queue.length - 1]!
-    dispatchQueue({ type: 'remove', id: last.id })
-    updateText([last.text, text].map(s => s.trim()).filter(s => s.length > 0).join('\n'))
-    if (last.images.length > 0) setImageChips(prev => [...last.images, ...prev])
-    textareaRef.current?.focus()
-    return true
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -322,14 +388,12 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
       return
     }
     if (e.key === 'Escape') {
-      // Fast-track flow (matches Claude Code):
-      //   1st Esc with a queued message -> pull it back into the box to edit
-      //     (so it won't auto-send behind the current turn),
-      //   Esc with nothing queued but a turn running -> interrupt that turn.
-      // After the interrupt lands (running flips false) Enter sends immediately
-      // instead of re-queueing.
-      if (queue.length > 0) { e.preventDefault(); pullNewestQueued(); return }
-      if (running) { e.preventDefault(); onInterrupt() }
+      // As in Claude Code: a running turn stops first, whatever is queued, and Claude
+      // Code then runs what's queued by itself. Only with nothing running does Esc
+      // pull a queued message back to edit.
+      if (running) { e.preventDefault(); onInterrupt(); return }
+      const last = queue[queue.length - 1]
+      if (last !== undefined) { e.preventDefault(); void editQueued(last) }
     }
   }
 
@@ -346,12 +410,14 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
             <li key={m.id} className="queue-item">
               <span className="queue-num">{i + 1}</span>
               <span className="queue-text">{m.text}</span>
-              <button type="button" className="queue-btn" title="Move up" disabled={i === 0}
-                onClick={() => dispatchQueue({ type: 'move', id: m.id, dir: 'up' })}>▲</button>
-              <button type="button" className="queue-btn" title="Move down" disabled={i === queue.length - 1}
-                onClick={() => dispatchQueue({ type: 'move', id: m.id, dir: 'down' })}>▼</button>
-              <button type="button" className="queue-btn queue-remove" title="Remove"
-                onClick={() => dispatchQueue({ type: 'remove', id: m.id })}>✕</button>
+              <button type="button" className="queue-btn queue-edit" title="Edit" aria-label="Edit" disabled={queueBusy}
+                onClick={() => void editQueued(m)}>✎</button>
+              <button type="button" className="queue-btn" title="Move up" aria-label="Move up" disabled={queueBusy || i === 0}
+                onClick={() => void moveQueued(m, 'up')}>▲</button>
+              <button type="button" className="queue-btn" title="Move down" aria-label="Move down" disabled={queueBusy || i === queue.length - 1}
+                onClick={() => void moveQueued(m, 'down')}>▼</button>
+              <button type="button" className="queue-btn queue-remove" title="Remove" aria-label="Remove" disabled={queueBusy}
+                onClick={() => void removeQueued(m)}>✕</button>
             </li>
           ))}
         </ul>
@@ -433,9 +499,9 @@ export function Composer({ running, lock = null, cwd = null, suggestion = null, 
       )}
       {running && (
         <div className="composer-hint" aria-hidden="true">
-          {queue.length > 0
-            ? 'Enter queues · Esc pulls the queued message back to edit'
-            : 'Enter queues · Esc interrupts to send now'}
+          {queueNote ?? (queue.length > 0
+            ? 'Claude reads queued messages at its next step · Esc stops now and sends them'
+            : 'Enter queues for Claude\'s next step · Esc stops')}
         </div>
       )}
     </div>

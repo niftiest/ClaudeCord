@@ -33,7 +33,8 @@ function build(claudeDir: string, claudeJson: string, tempClaudeDir: string): Cl
 export function defaultPaths(): ClaudePaths {
   const home = homedir()
   const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude')
-  return build(claudeDir, join(home, '.claude.json'), join(tmpdir(), 'claude'))
+  // With CLAUDE_CONFIG_DIR set, Claude Code keeps .claude.json inside it too.
+  return build(claudeDir, join(process.env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'), join(tmpdir(), 'claude'))
 }
 
 /** A fake profile rooted at `root` (tests). */

@@ -283,13 +283,21 @@ export type ComposerImage = { id: string; mediaType: string; dataBase64: string;
  *  until the turn ends. `text` is already the fully combined outgoing text
  *  (box text + any pasted chips folded in via buildOutgoingText at enqueue
  *  time) -- the queue itself has no notion of separate pasted chips. */
-export type QueuedMessage = { id: string; text: string; images: ComposerImage[] }
+/** `uuid` means it's already in Claude Code's queue under that name, to be taken in at
+ *  Claude's next step. Without one it's held here until the turn ends: slash commands,
+ *  which have to run on their own, and anything whose process died. */
+export type QueuedMessage = { id: string; text: string; images: ComposerImage[]; uuid?: string | null }
 
 export type QueueAction =
   | { type: 'add'; msg: QueuedMessage }
   | { type: 'remove'; id: string }
   | { type: 'move'; id: string; dir: 'up' | 'down' }
   | { type: 'clear' }
+  | { type: 'set'; items: QueuedMessage[] }
+  /** Claude Code took this one in. */
+  | { type: 'removeUuid'; uuid: string }
+  /** The process is gone, and what it held with it: all of it has to be sent again. */
+  | { type: 'holdAll' }
 
 /** Reducer for the composer's queued-message list. `move` swaps a message
  *  with its immediate neighbor; moving the top item up (or the bottom item
@@ -317,6 +325,12 @@ export function queueReducer(state: QueuedMessage[], action: QueueAction): Queue
     }
     case 'clear':
       return []
+    case 'set':
+      return action.items
+    case 'removeUuid':
+      return state.filter(m => m.uuid !== action.uuid)
+    case 'holdAll':
+      return state.map(m => ({ ...m, uuid: null }))
   }
 }
 
@@ -603,6 +617,7 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'suggestion':
     case 'background':
     case 'taskProgress':
+    case 'commandLifecycle':
     case 'other':
       return prev
   }

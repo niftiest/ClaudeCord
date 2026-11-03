@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isSamePath } from './manage/paths'
+import { dirname, join, parse } from 'node:path'
 
 /** Read-only views of the user's configured MCP servers and installed skills,
  *  for ClaudeCord's "MCP & Skills" panel -- the GUI stand-in for the CLI's
@@ -91,20 +92,35 @@ function serversFromMap(map: unknown, scope: 'user' | 'project'): McpServerInfo[
   return out
 }
 
+/** A folder and those above it, outermost first, stopping short of the drive root. */
+function foldersDownTo(folder: string): string[] {
+  const out: string[] = []
+  const root = parse(folder).root
+  for (let dir = folder; dir !== root && dir !== dirname(dir); dir = dirname(dir)) out.unshift(dir)
+  return out
+}
+
 export function listMcpServers(opts: { homeDir: string; projectCwd?: string | null }): McpServerInfo[] {
   let root: Record<string, unknown> = {}
-  try { root = JSON.parse(readFileSync(join(opts.homeDir, '.claude.json'), 'utf8')) as Record<string, unknown> } catch { /* none */ }
+  try { root = JSON.parse(readFileSync(join(process.env.CLAUDE_CONFIG_DIR ?? opts.homeDir, '.claude.json'), 'utf8')) as Record<string, unknown> } catch { /* none */ }
 
   const user = serversFromMap(root.mcpServers, 'user')
   const project: McpServerInfo[] = []
   if (opts.projectCwd) {
     const projects = isObj(root.projects) ? root.projects : {}
-    const entry = projects[opts.projectCwd]
+    // Claude Code writes these keys with forward slashes on Windows.
+    const key = Object.keys(projects).find(k => isSamePath(k, opts.projectCwd!))
+    const entry = key === undefined ? undefined : projects[key]
     if (isObj(entry)) project.push(...serversFromMap(entry.mcpServers, 'project'))
-    try {
-      const mcpJson = JSON.parse(readFileSync(join(opts.projectCwd, '.mcp.json'), 'utf8')) as Record<string, unknown>
-      project.push(...serversFromMap(mcpJson.mcpServers, 'project'))
-    } catch { /* no project .mcp.json */ }
+    // Like Claude Code: every folder above the project too, the nearest winning a name.
+    const fromFiles = new Map<string, McpServerInfo>()
+    for (const dir of foldersDownTo(opts.projectCwd)) {
+      try {
+        const mcpJson = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8')) as Record<string, unknown>
+        for (const server of serversFromMap(mcpJson.mcpServers, 'project')) fromFiles.set(server.name, server)
+      } catch { /* no .mcp.json here */ }
+    }
+    project.push(...fromFiles.values())
   }
   return [...user, ...project].sort((a, b) => a.name.localeCompare(b.name))
 }
