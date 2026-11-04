@@ -155,11 +155,22 @@ describe('loadTranscript', () => {
     expect(page.hasMore).toBe(false)
   })
 
-  it('flags fileMissing (not a throw) when the transcript file has been deleted', async () => {
+  it('shows the text the catalog saved when the transcript file has been deleted', async () => {
     const { db, id } = await seededSession()
     unlinkSync(sessionFile)
-    // The catalog still knows the messages, but the JSONL is gone (e.g. Claude
-    // Code's cleanupPeriodDays pruned it) -- degrade to an archived-file page.
+    // The JSONL is gone (moved, or Claude Code's cleanupPeriodDays pruned it), and the
+    // catalog may hold the only copy left of what was said.
+    const page = await loadTranscript(db, id)
+    expect(page.savedTextOnly).toBe(true)
+    expect(page.items.length).toBeGreaterThan(0)
+    expect(page.items.every(i => i.kind === 'text')).toBe(true)
+    expect(page.fileMissing).toBeUndefined()
+  })
+
+  it('flags fileMissing (not a throw) when the transcript has gone and no text was saved', async () => {
+    const { db, id } = await seededSession()
+    unlinkSync(sessionFile)
+    db.prepare('UPDATE messages SET text = NULL WHERE session_pk = ?').run(id)
     await expect(loadTranscript(db, id)).resolves.toEqual({ items: [], oldestSeq: null, hasMore: false, fileMissing: true })
   })
 

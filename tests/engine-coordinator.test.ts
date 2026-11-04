@@ -629,6 +629,21 @@ describe('EngineCoordinator.watchSession (read-only tailing while locked)', () =
   })
 })
 
+describe('EngineCoordinator -- a project folder that has gone', () => {
+  it('says so instead of trying to start Claude there', () => {
+    const pool = new FakePool()
+    const coordinator = new EngineCoordinator({
+      pool, makeWatcher: () => new FakeWatcher(), bridge: new FakeBridge(), lookupSession: makeLookup(SESSION),
+      rulesStore: new FakeRulesStore(), defaults: makeDefaults(), isExternallyLive: () => false, folderExists: () => false
+    })
+    const types: string[] = []
+    coordinator.onEvent((_pk, e) => { if (e.kind === 'other') types.push(e.type) })
+    coordinator.send(1, 'hello')
+    expect(pool.sent).toHaveLength(0)
+    expect(types).toEqual(['folder-missing'])
+  })
+})
+
 describe('EngineCoordinator -- ! output', () => {
   const OUTPUT: ContentBlock[] = [{ type: 'text', text: '<bash-input>ls</bash-input>' }, { type: 'text', text: '<bash-stdout>a</bash-stdout>' }]
   /** Hands the output over once, as the shell runner does. */

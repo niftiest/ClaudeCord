@@ -1,7 +1,9 @@
 import { ipcMain, app, shell, type BrowserWindow } from 'electron'
 import { applyStartupSettings, relaunchElevated, isElevated } from './elevation'
 import type { Catalog } from './catalog/db'
-import { listProjects, listSessions, listSubagents, sumTotalCostUsd } from './catalog/repos'
+import { listProjects, listSubagents, sumTotalCostUsd } from './catalog/repos'
+import { backupCatalogOnce, chatsToShow, folderGone, isConversationText, moveCustomisations } from './catalog/archive'
+import { displayText } from './jsonl/synthetic'
 import { readOriginRepo } from './engine/github'
 import { search, searchProject } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
@@ -18,14 +20,14 @@ import { generateAvatar, fetchImageModels, fetchUsage } from './openrouter'
 import { saveImage } from './save-image'
 import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { runIndex } from './indexer/indexer'
 import { syncSessionIfStale } from './engine/external-sync'
 import { streamRange } from './jsonl/stream'
 import { isDisplayRow, type LocalCommandRow } from './jsonl/parse'
 import { buildRenderItems } from './jsonl/render'
 import type { MessageRow } from './jsonl/rows'
-import type { TranscriptPage, ChannelRow, IndexProgress } from '../shared/types'
+import type { TranscriptPage, ChannelRow, IndexProgress, RenderItem } from '../shared/types'
 import type { ChannelIcon } from '../shared/shell-types'
 import { IPC } from '../shared/ipc'
 import { launchExePath } from './portable-update'
@@ -37,6 +39,24 @@ const LOOKAHEAD_ROWS = 5
 const JUMP_CONTEXT_ROWS = 10
 
 type NodeRow = { uuid: string; seq: number }
+
+/** A chat whose transcript has gone, from the text the catalog saved of it. Tool calls and
+ *  their output weren't saved. Null when there's no text to show. */
+function savedTextPage(db: Catalog, sessionPk: number, window: string[], oldestSeq: number, hasMore: boolean): TranscriptPage | null {
+  const wanted = new Set(window)
+  const rows = db.prepare(
+    'SELECT uuid, role, ts, model, text FROM messages WHERE session_pk = ? AND is_sidechain = 0 AND seq >= ? ORDER BY seq'
+  ).all(sessionPk, oldestSeq) as Array<{ uuid: string; role: string; ts: string | null; model: string | null; text: string | null }>
+  const items: RenderItem[] = []
+  for (const row of rows) {
+    if (!wanted.has(row.uuid) || !isConversationText(row.text) || (row.role !== 'user' && row.role !== 'assistant')) continue
+    const text = displayText({}, row.text)
+    if (text.length > 0) items.push({ kind: 'text', uuid: row.uuid, role: row.role, ts: row.ts, model: row.model, text })
+  }
+  // Older pages may still have some, even if this one is all tool calls.
+  if (items.length === 0 && !hasMore) return null
+  return { items, oldestSeq, hasMore, savedTextOnly: true }
+}
 
 export async function loadTranscript(
   db: Catalog,
@@ -134,7 +154,7 @@ export async function loadTranscript(
     // gone -- almost always Claude Code's cleanupPeriodDays pruning an old chat.
     // Flag it so the UI shows an "archived / removed from disk" state rather
     // than an empty "no messages" one.
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return { ...empty, fileMissing: true }
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return savedTextPage(db, sessionPk, window, firstSeq, eligible.length > window.length) ?? { ...empty, fileMissing: true }
     throw err
   }
 
@@ -153,11 +173,14 @@ export async function loadTranscript(
  *  defaults for a channel with no metadata row yet, so every project always
  *  gets a `meta`, never undefined. */
 export function listChannels(db: Catalog): ChannelRow[] {
-  return listProjects(db).map(p => ({
-    ...p,
-    meta: getChannelMeta(db, p.dirName),
-    repo: p.cwd !== null && p.cwd.length > 0 ? readOriginRepo(p.cwd) : null
-  }))
+  return listProjects(db).flatMap((p): ChannelRow[] => {
+    const meta = getChannelMeta(db, p.dirName)
+    if (!folderGone(p.cwd)) return [{ ...p, meta, repo: p.cwd !== null && p.cwd.length > 0 ? readOriginRepo(p.cwd) : null }]
+    // Every chat here moved with the project, so this row has nothing of its own to show.
+    const chats = chatsToShow(db, p.id).length
+    if (p.sessionCount > 0 && chats === 0) return []
+    return [{ ...p, sessionCount: chats, meta, repo: null, archived: true }]
+  })
 }
 
 /** One-time seed of secrets from a git-ignored `local-secrets.json` at the
@@ -188,7 +211,7 @@ export const AUTOSTART_ARG = '--autostart'
 export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks = {}): void {
   seedLocalSecrets(db)
   ipcMain.handle(IPC.listProjects, () => listProjects(db))
-  ipcMain.handle(IPC.listSessions, (_e, projectId: number) => listSessions(db, projectId))
+  ipcMain.handle(IPC.listSessions, (_e, projectId: number) => chatsToShow(db, projectId))
   ipcMain.handle(IPC.loadTranscript, (_e, sessionPk: number, opts?: { before?: number; limit?: number; fromSeq?: number }) =>
     loadTranscript(db, sessionPk, opts))
   ipcMain.handle(IPC.syncSessionIfStale, (_e, sessionPk: number) => syncSessionIfStale(db, sessionPk))
@@ -204,7 +227,17 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
     })
   })
 
-  ipcMain.handle(IPC.listChannels, () => listChannels(db))
+  ipcMain.handle(IPC.listChannels, () => {
+    if (db.name !== ':memory:') {
+      try {
+        moveCustomisations(db, () => backupCatalogOnce(db, join(dirname(db.name), 'catalog-before-archive.db')))
+      } catch (err) {
+        // Without its backup nothing moves. The nav still has to load.
+        console.warn('[archive] could not move a project\'s star and name', err)
+      }
+    }
+    return listChannels(db)
+  })
   ipcMain.handle(IPC.totalCost, () => sumTotalCostUsd(db))
   ipcMain.handle(IPC.listGroups, () => listGroups(db))
   ipcMain.handle(IPC.setFriendlyName, (_e, dirName: string, name: string | null) => setFriendlyName(db, dirName, name))

@@ -2,7 +2,7 @@ import { safeExtraFlags, type SpawnSpec } from './transport'
 import { allowAlwaysRule } from './permission-bridge'
 import type { StreamedRow } from '../jsonl/stream'
 import type { ContentBlock } from '../../shared/types'
-import { SHELL_OUTPUT_SENT, type LiveEvent, type PermissionRequest, type PermissionDecision } from '../../shared/engine-types'
+import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type LiveEvent, type PermissionRequest, type PermissionDecision } from '../../shared/engine-types'
 
 /** Engine core: ties the primitives built in Tasks 1-5 (pool, watcher,
  *  permission bridge, transport) into the one thing the IPC boundary
@@ -104,6 +104,8 @@ export type EngineCoordinatorDeps = {
   /** Spending cap and extra CLI flags from the app settings, read at spawn
    *  time so a change applies to the next process. */
   spawnExtras?: () => { maxBudgetUsd: number | null; extraFlags: string[] }
+  /** Whether a project's folder is there, since Claude can't start without it. */
+  folderExists?: (cwd: string) => boolean
   /** What should reach Claude ahead of the chat's next message (`!` output). */
   contextForMessage?: (sessionPk: number) => ContentBlock[]
   /** Whether this chat's next process should ask for prompt suggestions. */
@@ -263,6 +265,11 @@ export class EngineCoordinator {
 
     if (this.deps.isExternallyLive(info.sessionKey)) {
       this.emitEvent(sessionPk, refusedExternalLive())
+      return
+    }
+
+    if (info.cwd.length > 0 && this.deps.folderExists?.(info.cwd) === false) {
+      this.emitEvent(sessionPk, { kind: 'other', type: FOLDER_MISSING })
       return
     }
 

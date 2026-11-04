@@ -7,6 +7,8 @@ import type { McpServerStatus } from './claude-info-types'
  *  must stay electron-free: it is imported by both main and renderer. */
 /** `other` event type: `!` output has gone to Claude, as a message nobody typed. */
 export const SHELL_OUTPUT_SENT = 'shell-output-sent'
+/** `other` event type: nothing was sent, because the project's folder no longer exists. */
+export const FOLDER_MISSING = 'folder-missing'
 
 export type LiveEvent =
   | { kind: 'init'; sessionId: string; cwd: string; model: string; permissionMode: string; mcpServers?: McpServerStatus[] }

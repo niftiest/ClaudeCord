@@ -68,7 +68,7 @@ export function IconRail({
     <nav className="iconrail" aria-label="Projects">
       <div className="iconrail-scroll">
         {sections.map((s, si) => {
-          if (s.kind === 'hidden') return null
+          if (s.kind === 'hidden' || s.kind === 'archived') return null
           const divider = si > 0 ? <div key={`d${si}`} className="iconrail-div" aria-hidden="true" /> : null
           if (s.kind === 'starred') {
             return <div key="starred" className="iconrail-sec">{divider}{s.channels.map(c => avatar(c, true))}</div>

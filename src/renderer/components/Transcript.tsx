@@ -20,7 +20,7 @@ const CARD_OPEN_MS = 400
 /** How far above the end the reader has to be before the jump button shows. */
 const JUMP_BUTTON_GAP = 200
 
-export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, sending = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, sending = false, savedTextOnly = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -38,6 +38,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   livePreview?: LivePreview | null
   /** A message of the user's is on its way and isn't in `items` yet. */
   sending?: boolean
+  /** The transcript has gone, and this is the text the catalog saved of it. */
+  savedTextOnly?: boolean
   /** When false, tool-call cards are dropped from the transcript (Appearance
    *  setting "Show tool calls") -- for readers who only want the conversation. */
   showToolCalls?: boolean
@@ -266,6 +268,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
     <div className="stream" ref={parentRef} onScroll={handleScroll} onWheel={releaseJump} onMouseDown={releaseJump} onKeyDown={releaseJump}
       onClickCapture={e => { if ((e.target as Element).closest('summary') !== null) openedCardAt.current = Date.now() }}>
       <div className="stream-content" ref={contentRef}>
+      {savedTextOnly && <div className="saved-text-note">This chat's transcript no longer exists. This is the text ClaudeCord saved of it, without tool calls or their output.</div>}
       {hasMore && <div className="empty">{loadingOlder ? 'Loading earlier messages…' : 'Scroll up for earlier messages'}</div>}
       {turns.map((turn, ti) => {
         const keyAt = (li: number): string => itemKeys[turn.startIndex + li]!

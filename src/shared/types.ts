@@ -25,6 +25,8 @@ export type ChannelRow = ProjectSummary & {
   meta: ChannelMeta
   /** `owner/name` when the project's folder is a clone of a GitHub repo. */
   repo?: string | null
+  /** The project's folder no longer exists, so its chats are read-only history. */
+  archived?: boolean
 }
 
 export type SessionSummary = {
@@ -56,6 +58,8 @@ export type RenderItem =
 
 export type TranscriptPage = {
   items: RenderItem[]; oldestSeq: number | null; hasMore: boolean
+  /** The transcript has gone, and this is the text the catalog saved of it. */
+  savedTextOnly?: boolean
   /** True when the catalog has indexed messages for this session but its JSONL
    *  file is no longer on disk (Claude Code deletes transcripts older than its
    *  cleanupPeriodDays, default 30). The cost/metadata survive in the catalog;

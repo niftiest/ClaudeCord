@@ -237,6 +237,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     onFinished: run => coordinator.deliverShellOutput(run.sessionPk)
   })
   const coordinator = new EngineCoordinator({
+    folderExists: existsSync,
     contextForMessage: sessionPk => shellRunBlocks(shellRunner.takeFinished(sessionPk)),
     wantsSuggestions: sessionPk => suggestionsWanted(getSettings(db).promptSuggestions, getProjectSettings(db, sessionPk), claudeAllowsSuggestions()),
     projectDefaults: {

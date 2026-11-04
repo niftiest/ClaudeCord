@@ -123,7 +123,7 @@ export function GroupedNav({ sections, selectedId, unread, remote = new Set<numb
       {sections.map(s => (
         <Section key={s.kind === 'group' ? `group:${s.groupId}` : s.kind === 'time' ? `time:${s.bucket}` : s.kind}
           section={s} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
-          defaultCollapsed={s.kind === 'hidden'} />
+          defaultCollapsed={s.kind === 'hidden' || s.kind === 'archived'} />
       ))}
     </>
   )

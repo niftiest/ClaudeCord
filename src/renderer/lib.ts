@@ -15,7 +15,7 @@ import type { ChannelMeta, ChannelGroup } from '../shared/shell-types'
 // no runtime/electron/node dependency, same rationale as engine-ipc-
 // contract.ts's own type-only StreamedRow import.
 import type { NewProjectOptions } from '../shared/engine-ipc-contract'
-import type { BackgroundTask, LiveEvent, PermissionRequest } from '../shared/engine-types'
+import { FOLDER_MISSING, type BackgroundTask, type LiveEvent, type PermissionRequest } from '../shared/engine-types'
 // Type-only: StreamedRow's home module (src/main/jsonl/stream.ts) reads real
 // files, but importing just its *type* is erased at compile time -- same
 // pattern engine-ipc-contract.ts already uses.
@@ -658,7 +658,7 @@ export function hasUserRenderItem(items: RenderItem[]): boolean {
  *  or accept a retry. */
 export function clearsRunning(event: LiveEvent): boolean {
   if (event.kind === 'result' || event.kind === 'exit') return true
-  return event.kind === 'other' && (event.type === 'refused-external-live' || event.type === 'unknown-session')
+  return event.kind === 'other' && (event.type === 'refused-external-live' || event.type === 'unknown-session' || event.type === FOLDER_MISSING)
 }
 
 /** Computes a stable identity per item in `list`, independently for that list
@@ -887,6 +887,7 @@ export type NavSection =
   | { kind: 'group'; groupId: number; title: string; icon: ChannelMeta['icon']; channels: ChannelRow[] }
   | { kind: 'time'; bucket: TimeBucket; title: string; channels: ChannelRow[] }
   | { kind: 'hidden'; title: string; channels: ChannelRow[] }
+  | { kind: 'archived'; title: string; channels: ChannelRow[] }
 
 /** Recency buckets the ungrouped channels fall into, most-recent first, so the
  *  chats you touched lately sit at the top without scrolling. */
@@ -944,8 +945,11 @@ export function groupChannels(channels: ChannelRow[], groups: ChannelGroup[], no
   // Hidden channels are excluded from every normal section and collected into
   // their own section at the very bottom, so a "hidden" channel truly leaves
   // the main list but stays recoverable (Unhide).
-  const visible = channels.filter(c => !c.meta.hidden)
-  const hidden = channels.filter(c => c.meta.hidden)
+  // Archived ones have a section of their own, whatever they're marked as.
+  const current = channels.filter(c => c.archived !== true)
+  const archived = channels.filter(c => c.archived === true)
+  const visible = current.filter(c => !c.meta.hidden)
+  const hidden = current.filter(c => c.meta.hidden)
 
   const starred = visible.filter(c => c.meta.starred)
   if (starred.length > 0) sections.push({ kind: 'starred', title: 'Starred', channels: starred })
@@ -982,6 +986,10 @@ export function groupChannels(channels: ChannelRow[], groups: ChannelGroup[], no
   }
 
   if (hidden.length > 0) sections.push({ kind: 'hidden', title: 'Hidden', channels: hidden })
+  if (archived.length > 0) {
+    archived.sort((a, b) => activityMs(b) - activityMs(a))
+    sections.push({ kind: 'archived', title: 'Archived', channels: archived })
+  }
 
   return sections
 }

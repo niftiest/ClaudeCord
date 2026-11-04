@@ -1275,6 +1275,8 @@ td.mg-c-date { font-family:var(--mono); font-size:11.5px; }
 /* ── Retention notice ─────────────────────────────────────────────────────── */
 .retention-bar { background:var(--amber, #f0b232); color:#1e1f22; }
 .retention-bar .update-bar-x { color:#1e1f22; }
+.composer-archived { margin:0 18px 20px; padding:12px 15px; border:1px solid var(--line); border-radius:10px; color:var(--mu); font-size:13px; overflow-wrap:anywhere; }
+.saved-text-note { margin:0 20px; padding:9px 12px; border:1px solid var(--line); border-radius:8px; color:var(--mu); font-size:12.5px; }
 
 /* ── Settings: Claude Code + Chat history ─────────────────────────────────── */
 .cc-scope { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }

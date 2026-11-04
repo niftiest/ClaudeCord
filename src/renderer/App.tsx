@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
-import { SHELL_OUTPUT_SENT, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
+import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
 import { Nav, SHOW_NAV_STATUS } from './components/Nav'
 import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
@@ -15,6 +15,7 @@ import { Transcript } from './components/Transcript'
 import { IndexProgress } from './components/IndexProgress'
 import { Composer } from './components/Composer'
 import { composeStore } from './compose-store'
+import { ArchivedNotice, readArchivedSeen, writeArchivedSeen } from './components/ArchivedNotice'
 import { NewChatDialog } from './components/NewChatDialog'
 import { LiveIndicator } from './components/LiveIndicator'
 import { ChatHeaderControls } from './components/ChatHeaderControls'
@@ -134,6 +135,9 @@ export function App() {
   const jumpPendingRef = useRef(false)
   const [jumpTarget, setJumpTarget] = useState<{ sessionPk: number; uuid: string; seq: number } | null>(null)
   const updateHoldRef = useRef(false)
+  const [savedTextOnly, setSavedTextOnly] = useState(false)
+  // Projects newly found with their folder gone, until the user has seen the notice.
+  const [newlyArchived, setNewlyArchived] = useState<ChannelRow[]>([])
   // Chats with a message on its way: sent, but not in the transcript yet. On a chat with
   // no running process that can take a few seconds.
   const [sendingPks, setSendingPks] = useState<ReadonlySet<number>>(new Set())
@@ -208,6 +212,15 @@ export function App() {
   // it and scrolls; the value itself is meaningless, only that it changed.
   const [scrollToBottomTick, setScrollToBottomTick] = useState(0)
   useEffect(() => { channelsRef.current = channels }, [channels])
+  useEffect(() => {
+    if (channels.length === 0) return
+    const archived = channels.filter(c => c.archived === true)
+    const seen = new Set(readArchivedSeen())
+    setNewlyArchived(archived.filter(c => !seen.has(c.dirName)))
+    // A folder that came back is forgotten, so losing it again is news.
+    const stillArchived = [...seen].filter(d => archived.some(c => c.dirName === d))
+    if (stillArchived.length !== seen.size) writeArchivedSeen(stillArchived)
+  }, [channels])
   useEffect(() => { projectIdRef.current = project?.id ?? null }, [project])
 
   // Drafts, queued messages and attachments live only in this window, so a restart for
@@ -221,6 +234,8 @@ export function App() {
   useEffect(() => api.onEvent((pk, ev) => {
     composeStore.handleEvent(pk, ev, (chat, command) => { void api.shellRun(chat, command) })
     if (ev.kind === 'other' && ev.type === SHELL_OUTPUT_SENT) markSending(pk, true)
+    // The folder went while the chat was open: its row moves to Archived.
+    if (ev.kind === 'other' && ev.type === FOLDER_MISSING) refreshNavRef.current()
     // It isn't coming: refused, stopped, or a command that writes no message of its own.
     if (clearsRunning(ev)) markSending(pk, false)
   }), [markSending])
@@ -458,7 +473,7 @@ export function App() {
     atBottomRef.current = true
     setSession(next)
     setItems([]); setOldestSeq(null); setHasMore(false); setSessionLoading(true)
-    setLoadingOlder(false); setTranscriptFileMissing(false)
+    setLoadingOlder(false); setTranscriptFileMissing(false); setSavedTextOnly(false)
     // A running turn (and its live preview / queued count) belongs to
     // whatever session was open a moment ago; none of it carries over to the
     // newly opened one -- Composer itself remounts fresh too (key=session.id).
@@ -479,6 +494,7 @@ export function App() {
       if (isStaleResponse(reqId, sessionReqId.current)) return // superseded by a newer selection
       setItems(page.items); setOldestSeq(page.oldestSeq); setHasMore(page.hasMore)
       setTranscriptFileMissing(page.fileMissing ?? false)
+      setSavedTextOnly(page.savedTextOnly ?? false)
       // Re-derive `running` when switching back to a session whose turn is
       // still streaming (Plan 3 Task 8 / Plan 2 review #6) — otherwise the
       // composer would wrongly allow a direct send into a live transport.
@@ -651,6 +667,8 @@ export function App() {
       if (ev.kind === 'result') void api.contextUsage(sid).then(c => { if (c !== null) setContext(c) })
       // A failed turn writes nothing to the chat, so without this it just stops.
       if (ev.kind === 'result' && ev.isError) setTerminalNotice(ev.text)
+      if (ev.kind === 'other' && ev.type === FOLDER_MISSING) setTerminalNotice('That message wasn\'t sent: this project\'s folder no longer exists, so Claude can\'t run here.')
+      if (ev.kind === 'other' && ev.type.startsWith('spawn-error')) setTerminalNotice(`Claude couldn't start: ${ev.type.slice('spawn-error: '.length)}`)
       if (ev.kind === 'status') setLiveStatus(ev.status === 'compacting' ? ev.status : null)
       else if (clearsRunning(ev)) setLiveStatus(null)
       // Task 10 review Fix 1: previously only a `result` event cleared
@@ -1209,6 +1227,12 @@ export function App() {
       )}
       <main className="main" data-theme={chatPaneTheme(themeChoice)} hidden={manageOpen}>
         <UpdateBar />
+        {newlyArchived.length > 0 && (
+          <ArchivedNotice projects={newlyArchived} onDismiss={() => {
+            writeArchivedSeen(channels.filter(c => c.archived === true).map(c => c.dirName))
+            setNewlyArchived([])
+          }} />
+        )}
         {settings !== null && !settings.retentionNoticeDismissed && (
           <RetentionNotice
             settingsOpen={settingsOpen}
@@ -1279,7 +1303,7 @@ export function App() {
           // session switch, stacking a new .stream under the stale one (each
           // switch leaked one, splitting the chat into 50/50 scroll boxes).
           : <><div style={{ display: findTerms === '' ? 'contents' : 'none' }}><Transcript key={`transcript-${session.id}`} items={items} hasMore={hasMore} loadingOlder={loadingOlder}
-              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview} sending={sendingPks.has(session.id)}
+              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview} sending={sendingPks.has(session.id)} savedTextOnly={savedTextOnly}
               showToolCalls={toolDisplay !== 'hidden'} groupToolCalls={toolDisplay === 'grouped'} fileMissing={transcriptFileMissing}
               claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
               thinkingExpanded={settings?.thinkingExpanded ?? false}
@@ -1334,7 +1358,12 @@ export function App() {
         )}
         {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} />}
         {session !== null && <ShellRuns runs={shellRuns} />}
-        {session !== null && (
+        {session !== null && channels.find(c => c.id === project?.id)?.archived === true && (
+          <div className="composer composer-archived" role="status">
+            This project's folder no longer exists{project?.cwd ? ` (${project.cwd})` : ''}, so this chat is read-only.
+          </div>
+        )}
+        {session !== null && channels.find(c => c.id === project?.id)?.archived !== true && (
           // Keyed on the session id (same reasoning as Transcript above): a
           // fresh Composer instance per session, so nothing bleeds from one
           // session into another. What's in progress survives the switch: text
