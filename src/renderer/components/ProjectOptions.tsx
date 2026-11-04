@@ -6,9 +6,9 @@ import type { SessionSummary } from '../../shared/types'
 const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
 
 /** Everything about the open chat and its project that doesn't need to sit in the header:
- *  mode, model, effort and cost, the terminal, and the choices Settings leaves to
+ *  mode, model, effort and cost, and the choices Settings leaves to
  *  "Choose per project". */
-export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onFork, onOpenTerminal, summary, children }: {
+export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onFork, summary, children }: {
   settings: AppSettings
   chat: ProjectSettings
   onChange: (patch: Partial<ProjectSettings>) => void
@@ -19,8 +19,6 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
   sessions: SessionSummary[]
   onOpenChat: (chat: SessionSummary) => void
   onFork: () => void
-  /** Null when there's no folder to open a terminal in. */
-  onOpenTerminal: (() => void) | null
   /** Mode and model, on hover, since they're out of sight until this opens. */
   summary: string
   /** Mode, model, effort and cost. */
@@ -44,10 +42,6 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
       {/* Stays mounted while closed: mode and model follow the running chat from in here. */}
       <div className="mcp-pop project-options-pop" role="dialog" aria-label="Project options" hidden={!open}>
           {children}
-          {onOpenTerminal !== null && (
-            <button type="button" className="project-options-link" title="Open this chat in Claude Code in a terminal: for /mcp, logins, reconnecting tools, and anything else the app can't do"
-              onClick={() => { setOpen(false); onOpenTerminal() }}>›_ Open in terminal</button>
-          )}
           <button type="button" className="project-options-link" onClick={() => { setOpen(false); onFork() }}>Fork this chat, to try something else from here</button>
           {sessions.length > 1 && (
             <div className="project-chats">

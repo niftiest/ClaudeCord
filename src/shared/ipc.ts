@@ -1,3 +1,4 @@
+import type { TextMenuAction, TextMenuRequest } from './text-menu'
 import type { ModelPrices } from './models'
 import type { AppDialogRequest } from './app-dialog'
 import type { ProjectSearchResult } from './project-search'
@@ -64,7 +65,10 @@ export const IPC = {
   // A question from main, shown in the window: asked, then shown, then answered.
   appDialogAsk: 'appDialog:ask',
   appDialogShown: 'appDialog:shown',
-  appDialogAnswer: 'appDialog:answer'
+  appDialogAnswer: 'appDialog:answer',
+  // Right-clicking text: main says what's there, the window draws the menu.
+  textMenuOpen: 'textMenu:open',
+  textMenuAction: 'textMenu:action'
 } as const
 
 export type ClaudeCordApi = {
@@ -84,6 +88,8 @@ export type ClaudeCordApi = {
   onAppDialog(cb: (request: AppDialogRequest) => void): () => void
   appDialogShown(id: number): void
   appDialogAnswer(id: number, index: number): void
+  onTextMenu(cb: (menu: TextMenuRequest) => void): () => void
+  textMenuAction(action: TextMenuAction): void
   onIndexProgress(cb: (p: IndexProgress) => void): () => void
 
   /** ProjectSummary rows merged with their ChannelMeta (Plan 3 Task 2) -- the

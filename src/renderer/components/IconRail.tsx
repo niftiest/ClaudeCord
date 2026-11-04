@@ -6,8 +6,8 @@ import { resolveChannelName, resolveChannelIcon, resolveIconValue, groupChannels
 
 /** 68px icon rail -- the collapsed state of the sidebar, ordered the SAME way as
  *  the chat list (groupChannels): Starred first (star-badged), then each user
- *  group as a collapsible folder tile, then the rest by recency. Foot: search /
- *  Manage / settings / collapse. */
+ *  group as a collapsible folder tile, then the rest by recency. Foot: expand /
+ *  search / Manage / settings. */
 function railIconStyle(icon: ResolvedIcon): React.CSSProperties {
   if (icon.kind === 'initials' || icon.kind === 'color') return { background: icon.color }
   if (icon.kind === 'emoji') return { background: 'var(--s3)', fontSize: 18 }
@@ -94,14 +94,14 @@ export function IconRail({
           title="New chat" aria-label="New chat" onClick={onNewChat}>+</button>
       </div>
       <div className="iconrail-foot">
+        <button type="button" className="iconrail-btn"
+          title={sidebarExpanded ? 'Collapse chat list' : 'Expand chat list'}
+          aria-label={sidebarExpanded ? 'Collapse chat list' : 'Expand chat list'}
+          onClick={onToggleSidebar}>{sidebarExpanded ? '«' : '»'}</button>
         <button type="button" className="iconrail-btn" title="Search (Ctrl+K)" aria-label="Search" onClick={onOpenSearch}>⌕</button>
         <button type="button" className={`iconrail-btn${manageOpen ? ' active' : ''}`} title="Manage Claude data (projects, notes, restore points, sessions)"
           aria-label="Manage" aria-pressed={manageOpen} onClick={onOpenManage}>▤</button>
         <button type="button" className="iconrail-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>⚙</button>
-        <button type="button" className="iconrail-collapse"
-          title={sidebarExpanded ? 'Collapse chat list' : 'Expand chat list'}
-          aria-label={sidebarExpanded ? 'Collapse chat list' : 'Expand chat list'}
-          onClick={onToggleSidebar}>{sidebarExpanded ? '«' : '»'}</button>
       </div>
     </nav>
   )

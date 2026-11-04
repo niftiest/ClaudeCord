@@ -11,6 +11,8 @@ export const UPDATE_IPC = {
   restartWhenFinished: 'update:restartWhenFinished',
   cancelRestart: 'update:cancelRestart',
   openDownload: 'update:openDownload',
+  setOpenChat: 'update:setOpenChat',
+  takeResumedChat: 'update:takeResumedChat',
   status: 'update:status'
 } as const
 
@@ -88,6 +90,10 @@ export type UpdateApi = {
   cancelUpdateRestart(): Promise<void>
   /** Don't restart by itself for now: there's something unsent in the window. */
   setUpdateHold(hold: boolean): Promise<void>
+  /** Which chat is on screen, to come back to after an update. */
+  setUpdateOpenChat(chat: { sessionPk: number; projectDir: string } | null): Promise<void>
+  /** The chat to reopen if this launch follows an update. Answers once. */
+  takeResumedChat(): Promise<{ sessionPk: number; projectDir: string } | null>
   /** Open the release page for a newer version (portable builds, if the download failed). */
   openUpdateDownload(): Promise<void>
   onUpdateStatus(cb: (s: UpdateStatus) => void): () => void

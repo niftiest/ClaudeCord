@@ -5,13 +5,13 @@ import type { ChannelIcon } from '../../shared/shell-types'
 import { ClaudeAvatar } from './ClaudeAvatar'
 import { ToolCard } from './ToolCard'
 import { ChatImage } from './ChatImage'
-import { Markdown } from './Markdown'
+import { Markdown, TextWithLinks } from './Markdown'
 import { PermissionCard } from './PermissionCard'
 import { parseQuestions } from '../question-form'
 import type { Elicitation, ElicitationAnswer } from '../../shared/engine-types'
 import { ElicitationCard, QuestionCard } from './QuestionCard'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
+import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, userMessageParts, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
@@ -317,12 +317,21 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                     {ts && <time className="turn-time">{ts}</time>}
                     <span className="turn-author">You</span>
                   </div>
-                  {turn.items.map((it, li) => (
-                    it.kind === 'text'
-                      ? <div key={keyAt(li)} className="bubble-me txt" data-msg={it.uuid}>{it.text}</div>
-                      : it.kind === 'image'
-                        ? <ChatImage key={keyAt(li)} source={it.source} />
-                        : null
+                  {userMessageParts(turn.items).map(part => (
+                    <div key={keyAt(part.first)} className="turn-user-msg">
+                      {part.images.length > 0 && (
+                        <div className="turn-user-images">
+                          {part.images.map(li => {
+                            const it = turn.items[li]!
+                            return it.kind === 'image' ? <ChatImage key={keyAt(li)} source={it.source} /> : null
+                          })}
+                        </div>
+                      )}
+                      {part.texts.map(li => {
+                        const it = turn.items[li]!
+                        return it.kind === 'text' ? <div key={keyAt(li)} className="bubble-me txt" data-msg={it.uuid}><TextWithLinks text={it.text} /></div> : null
+                      })}
+                    </div>
                   ))}
                 </div>
               </div>

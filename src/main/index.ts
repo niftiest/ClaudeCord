@@ -9,6 +9,8 @@ import { registerEngineIpc, type EngineIpcHandle } from './engine/engine-ipc'
 import { registerManageIpc } from './manage-ipc'
 import { registerSyncIpc, type SyncIpcHandle } from './sync-ipc'
 import { registerUpdater } from './updater'
+import { registerTextMenu } from './text-menu'
+import { saveResume, takeResume, usableBounds } from './update-resume'
 import { getSettings, updateSettings } from './catalog/settings'
 import { AUTOSTART_ARG } from './ipc'
 import { applyStartupSettings } from './elevation'
@@ -55,8 +57,13 @@ function createWindow(): void {
   const startup = getSettings(db)
   // A login start with "Start minimized": no splash, window stays in the tray
   // (or minimized to the taskbar when there's no tray icon).
-  const startHidden = (startup.startMinimized && process.argv.includes(AUTOSTART_ARG)) || process.argv.includes(UPDATED_HIDDEN_ARG)
-  if (!startHidden) splash = createSplash(icon)
+  const resumePath = join(app.getPath('userData'), 'update-resume.json')
+  // Just restarted for an update: put things back as they were.
+  const resumed = takeResume(resumePath, Date.now())
+  const startHidden = (startup.startMinimized && process.argv.includes(AUTOSTART_ARG)) || process.argv.includes(UPDATED_HIDDEN_ARG) || resumed?.hidden === true
+  // Nothing should jump in front of what the user is doing if it updated behind them.
+  const quietly = resumed !== null && (!resumed.focused || resumed.minimized)
+  if (!startHidden && !quietly) splash = createSplash(icon)
   // Older registrations didn't pass AUTOSTART_ARG; refresh the plain Run key
   // (the admin scheduled task is only rewritten from Settings, elevated).
   if (startup.startWithWindows && !startup.startWithAdmin && app.isPackaged) {
@@ -65,9 +72,9 @@ function createWindow(): void {
 
   // Never open bigger than the screen: 1080p at 150% scaling is only 1280x720.
   const workArea = screen.getPrimaryDisplay().workAreaSize
+  const resumedBounds = resumed === null ? null : usableBounds(resumed.bounds, screen.getAllDisplays().map(d => d.workArea))
   const win = new BrowserWindow({
-    width: Math.min(1600, workArea.width),
-    height: Math.min(1000, workArea.height),
+    ...(resumedBounds ?? { width: Math.min(1600, workArea.width), height: Math.min(1000, workArea.height) }),
     // Hidden until the renderer reports it has loaded (app:ready) -- the
     // splash is all the user sees until then.
     show: false,
@@ -82,6 +89,7 @@ function createWindow(): void {
   })
 
   mainWindow = win
+  registerTextMenu(win)
 
   const updaterChats = (): string[] => (engine?.busySessionIds() ?? []).map(id => {
     const row = db.prepare("SELECT COALESCE(custom_title, ai_title, title) AS title FROM sessions WHERE LOWER(session_id) = ? AND kind = 'main'").get(id) as { title: string | null } | undefined
@@ -119,9 +127,18 @@ function createWindow(): void {
     clearTimeout(revealTimer)
     ipcMain.removeListener(IPC.appReady, onAppReady)
     if (!win.isDestroyed()) {
-      if (!startHidden) {
-        win.show()
-        win.focus()
+      if (resumed?.minimized === true && !startHidden) {
+        if (resumed.maximized) win.maximize()
+        win.showInactive()
+        win.minimize()
+      } else if (!startHidden) {
+        if (resumed?.maximized === true) win.maximize()
+        if (quietly) {
+          win.showInactive()
+        } else {
+          win.show()
+          win.focus()
+        }
       } else if (!(desktop?.hasTray() ?? false)) {
         win.showInactive()
         win.minimize()
@@ -156,7 +173,21 @@ function createWindow(): void {
     autoCheck: () => getSettings(db).autoCheckUpdates,
     autoInstall: () => getSettings(db).autoInstallUpdates,
     activeWork: () => engine?.activeWork() ?? 0,
-    activeChats: updaterChats
+    activeChats: updaterChats,
+    resumedChat: resumed?.chat ?? null,
+    saveForRestart: chat => {
+      if (win.isDestroyed()) return
+      const minimized = win.isMinimized()
+      saveResume(resumePath, {
+        at: Date.now(),
+        bounds: win.getNormalBounds(),
+        maximized: win.isMaximized(),
+        minimized,
+        hidden: !win.isVisible() && !minimized,
+        focused: win.isFocused(),
+        chat
+      })
+    }
   })
 
   // The close button exits or hides to the tray, as the user chose the first time. A real

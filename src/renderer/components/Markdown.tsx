@@ -8,6 +8,7 @@ import apache from 'highlight.js/lib/languages/apache'
 import dos from 'highlight.js/lib/languages/dos'
 import powershell from 'highlight.js/lib/languages/powershell'
 import { api } from '../api'
+import { splitLinks } from '../lib'
 
 /** Claude's replies, rendered as the terminal would format them. Choices come from
  *  a scan of 10,742 real replies:
@@ -58,6 +59,13 @@ const COMPONENTS: Components = {
     }}>{children}</a>
   ),
   img: ({ src, alt }) => <span className="md-image-ref">🖼 {alt !== undefined && alt !== '' ? alt : typeof src === 'string' ? src : 'image'}</span>
+}
+
+/** A message of the user's: their text as typed, with any web addresses as working links. */
+export function TextWithLinks({ text }: { text: string }) {
+  return <>{splitLinks(text).map((part, i) => part.url
+    ? <a key={i} className="bubble-link" href={part.text} title={part.text} onClick={e => { e.preventDefault(); void api.openLink(part.text) }}>{part.text}</a>
+    : part.text)}</>
 }
 
 export const Markdown = memo(function Markdown({ text, highlight = true, className = '', anchor }: {

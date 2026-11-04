@@ -112,6 +112,50 @@ export function dropCancelledMessage(items: RenderItem[], uuid: string): RenderI
   return at === -1 ? items : items.slice(0, at)
 }
 
+/** A message as plain text and web addresses, in order. An address ends before punctuation
+ *  that closes the sentence around it, and keeps a bracket that opened inside it. */
+export type TextPart = { text: string; url: boolean }
+
+export function splitLinks(text: string): TextPart[] {
+  const parts: TextPart[] = []
+  let at = 0
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
+    let url = match[0]
+    for (;;) {
+      const trimmed = url.replace(/[.,;:!?*_~]+$/, '')
+      const closes = /[)\]}]$/.test(trimmed)
+      const opens = closes ? { ')': '(', ']': '[', '}': '{' }[trimmed.at(-1)!]! : ''
+      const unmatched = closes && trimmed.split(trimmed.at(-1)!).length > trimmed.split(opens).length
+      const next = unmatched ? trimmed.slice(0, -1) : trimmed
+      if (next === url) break
+      url = next
+    }
+    if (url.length <= 'https://'.length) continue
+    if (match.index > at) parts.push({ text: text.slice(at, match.index), url: false })
+    parts.push({ text: url, url: true })
+    at = match.index + url.length
+  }
+  if (at < text.length) parts.push({ text: text.slice(at), url: false })
+  return parts
+}
+
+/** One message of the user's, as positions in a turn's items: its pictures, which show
+ *  above it, and its text. A turn can hold several messages, and each keeps its own. */
+export type UserMessageParts = { first: number; images: number[]; texts: number[] }
+
+export function userMessageParts(items: RenderItem[]): UserMessageParts[] {
+  const parts: UserMessageParts[] = []
+  let uuid: string | null = null
+  items.forEach((item, i) => {
+    if (item.kind !== 'image' && item.kind !== 'text') return
+    if (item.uuid !== uuid || parts.length === 0) { parts.push({ first: i, images: [], texts: [] }); uuid = item.uuid }
+    const part = parts[parts.length - 1]!
+    if (item.kind === 'image') part.images.push(i)
+    else part.texts.push(i)
+  })
+  return parts
+}
+
 /** A contiguous run of render items belonging to one side of the conversation:
  *  a user turn (their text + any pasted images) or a Claude turn (assistant
  *  text, thinking, tool cards, images). `startIndex` is the item's position in

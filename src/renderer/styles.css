@@ -46,9 +46,6 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .nav-head { justify-content:space-between; gap:10px; padding:0 14px; }
 .nav-head-main { min-width:0; }
 .nav-head-actions { flex:none; display:flex; align-items:center; gap:8px; }
-.nav-head-caret { flex:none; margin-right:2px; color:var(--mu); font-size:13px; cursor:pointer;
-  background:none; border:0; padding:2px 4px; border-radius:4px; }
-.nav-head-caret:hover { background:var(--s2); color:var(--tx); }
 
 /* ── Icon rail (68px) — the collapsed state of the sidebar ── */
 .iconrail { width:68px; flex:none; background:var(--rail); display:flex; flex-direction:column;
@@ -309,7 +306,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .ctx-menu { position:fixed; z-index:20; min-width:200px; background:var(--s1); border:1px solid var(--line);
   border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,.45); padding:4px; font-size:13px; }
 .ctx-item { display:flex; align-items:center; gap:8px; width:100%; background:none; border:0;
-  color:var(--txt); padding:7px 10px; border-radius:4px; cursor:pointer; text-align:left; }
+  color:var(--txt); padding:7px 10px; border-radius:4px; cursor:pointer; text-align:left; font:inherit; }
 .ctx-item:hover, .ctx-item:focus-visible { background:var(--s3); outline:none; }
 .ctx-item.ctx-danger:hover { color:#ff9a9c; }
 .ctx-sep { height:1px; background:var(--line); margin:4px 2px; }
@@ -368,7 +365,7 @@ body { margin:0; background:var(--bg); color:var(--tx);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .stream { flex:1; padding:10px 0; display:flex; flex-direction:column; gap:12px; }
-.stream-content { flex:none; display:flex; flex-direction:column; gap:inherit; }
+.stream-content { flex:none; display:flex; flex-direction:column; gap:inherit; zoom:var(--chat-zoom, 1); }
 /* Stays at the foot of the visible chat, centred, right above the composer. No height of
    its own, so showing it doesn't change the chat's length. */
 .jump-latest { position:sticky; bottom:12px; flex:none; height:0; display:flex; justify-content:center; align-items:flex-end; z-index:5; pointer-events:none; }
@@ -621,7 +618,11 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .trust-prompt ul { margin:4px 0 0; padding-left:18px; }
 .chat-image { display:block; margin-top:4px; padding:0; border:1px solid var(--line); border-radius:8px; overflow:hidden;
   background:var(--s2); cursor:zoom-in; line-height:0; align-self:flex-end; width:fit-content; }
-.turn-user-col .chat-image { margin-left:auto; }
+.turn-user-msg { display:flex; flex-direction:column; align-items:flex-start; gap:4px; max-width:100%; }
+.turn-user-images { display:flex; flex-wrap:wrap; gap:6px; }
+.turn-user-images .chat-image { margin:0; }
+.turn-user-images .chat-image { width:64px; height:64px; box-sizing:border-box; }
+.turn-user-images .chat-image img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; }
 .chat-image img { display:block; max-width:240px; max-height:180px; object-fit:contain; }
 .chat-image:hover { border-color:var(--accent); }
 .chat-image-missing { margin-top:4px; font-size:12px; color:var(--mu); }
@@ -1327,6 +1328,8 @@ td.mg-c-date { font-family:var(--mono); font-size:11.5px; }
 .chead-term { flex:none; align-self:center; margin-right:10px; background:var(--s3); color:var(--tx); border:0;
   border-radius:4px; padding:5px 10px; font:inherit; font-size:12.5px; cursor:pointer; white-space:nowrap; }
 .chead-term:hover { background:var(--s2); }
+.chead-term-icon { display:flex; align-items:center; justify-content:center; margin-right:0; padding:5px 7px; }
+.chead-term-icon svg { display:block; width:20px; height:18px; }
 .term-prompt { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0 18px 8px;
   padding:9px 12px; border-radius:8px; background:var(--s2); border:1px solid var(--line); font-size:13px; color:var(--txt); }
 .term-prompt-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
@@ -1395,3 +1398,40 @@ td.mg-c-date { font-family:var(--mono); font-size:11.5px; }
 .sync-banner-line { display:flex; align-items:center; gap:10px; padding:2px 0; }
 .sync-banner-line.warn { color:#f0b232; }
 .sync-banner-action { background:none; border:1px solid currentColor; color:inherit; border-radius:4px; padding:1px 8px; font:inherit; cursor:pointer; }
+
+/* ── Compact chat list (Settings → Appearance), last so it outranks the themes above ── */
+[data-nav-density="compact"] .nav-list { padding:6px 0; }
+[data-nav-density="compact"] .nav-section { margin-bottom:10px; }
+[data-nav-density="compact"] .nav-section-head { padding-left:16px; padding-right:16px; }
+[data-nav-density="compact"] .nav-section-empty { padding-left:16px; }
+[data-nav-density="compact"] .ch { gap:8px; padding:3px 16px; border-radius:0; }
+[data-nav-density="compact"] .ch[aria-selected="true"] { background:var(--accent); }
+[data-nav-density="compact"] .ch[aria-selected="true"] .ch-name, [data-nav-density="compact"] .ch[aria-selected="true"] .ch-repo { color:#fff; }
+[data-nav-density="compact"] .ch-avatar { width:18px; height:18px; border-radius:5px; font-size:8px; letter-spacing:-.02em; }
+[data-nav-density="compact"] .ch-avatar.ch-avatar-emoji { font-size:12px; background:none; }
+[data-nav-density="compact"] .ch.unread .ch-avatar { box-shadow:none; animation:none; }
+[data-nav-density="compact"] .ch-top { align-items:center; }
+[data-nav-density="compact"] .ch-name { font-size:14px; font-weight:400; }
+[data-nav-density="compact"] .ch.unread .ch-name { font-weight:700; }
+[data-nav-density="compact"] .ch-preview, [data-nav-density="compact"] .ch-time, [data-nav-density="compact"] .ch-star { display:none; }
+[data-nav-density="compact"] .rc-badge-nav { right:-3px; top:-3px; width:10px; height:10px; border-width:1px; }
+[data-nav-density="compact"] .rc-badge-nav svg { width:7px; height:7px; }
+
+/* ── Text sizes and font (Settings → Appearance) ──────────────────────────── */
+/* The children, not the panels: a zoomed panel would grow wider instead of fitting more. */
+.nav > *, .crail > *, .blade > * { zoom:var(--sidebar-zoom, 1); }
+html[data-custom-font] body *:not(pre):not(pre *):not(code) { font-family:var(--app-font) !important; }
+.chat-scale-note { position:fixed; top:72px; left:50%; transform:translateX(-50%); z-index:50; padding:4px 12px; border-radius:6px;
+  background:rgba(0,0,0,.75); color:#fff; font-size:13px; font-variant-numeric:tabular-nums; pointer-events:none; }
+.font-scale { display:flex; align-items:center; gap:8px; }
+.font-scale .btn-secondary { width:30px; height:30px; padding:0; font-size:16px; line-height:1; }
+.font-scale-value { min-width:44px; text-align:center; font-variant-numeric:tabular-nums; }
+.font-scale-reset { background:none; border:0; color:var(--accent); font:inherit; font-size:12.5px; cursor:pointer; padding:0 4px; }
+
+/* ── Right-click menu for text ─────────────────────────────────────────────── */
+.ctx-menu.text-menu { z-index:2000; min-width:170px; max-width:320px; }
+.text-menu .ctx-item:disabled { color:var(--mu); opacity:.55; cursor:default; background:none; }
+.text-menu-word { font-weight:600; color:var(--tx); }
+.bubble-link { color:inherit; text-decoration:underline; }
+.bubble-link:hover { color:var(--tx); opacity:.85; }
+.text-menu-none { padding:7px 10px; color:var(--mu); font-style:italic; }

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { autoUpdater } from 'electron-updater'
 import { canRestartForUpdate, settleForRestart, UPDATE_IPC, type RestartWork, type UpdateState, type UpdateStatus } from '../shared/update-types'
 import { compareVersions } from '../shared/semver'
+import type { ResumeChat } from './update-resume'
 import { downloadPortable, handoffArgs, pickPortableAsset, previousFromArgv, type PortableAsset } from './portable-update'
 
 /** Self-update. Installed (NSIS) builds use electron-updater against the
@@ -30,7 +31,7 @@ declare global {
 
 export type UpdaterHandle = { dispose(): void }
 
-export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; autoInstall: () => boolean; activeWork: () => number; activeChats: () => string[] }): UpdaterHandle {
+export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; autoInstall: () => boolean; activeWork: () => number; activeChats: () => string[]; resumedChat: ResumeChat | null; saveForRestart: (chat: ResumeChat | null) => void }): UpdaterHandle {
   const channel: UpdateStatus['channel'] = !app.isPackaged ? 'dev'
     : process.env.PORTABLE_EXECUTABLE_DIR !== undefined ? 'portable' : 'installer'
   let state: UpdateState = channel === 'dev'
@@ -103,6 +104,8 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   function restartIntoUpdate(): void {
     if (state.state !== 'ready') return
     stopWaiting()
+    // Losing this only costs the window its place, so it mustn't stop the update.
+    try { opts.saveForRestart(openChat) } catch (err) { console.error('Could not save the window for after the update', err) }
     if (channel === 'installer') {
       // Silent install, then relaunch. The app's before-quit handlers still run.
       setImmediate(() => autoUpdater.quitAndInstall(true, true))
@@ -110,6 +113,10 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
       handOffToPortable(portableExe)
     }
   }
+
+  /** The chat on screen, as the window last said. */
+  let openChat: ResumeChat | null = null
+  let resumedChat = opts.resumedChat
 
   let checking = false
   async function check(): Promise<UpdateStatus> {
@@ -137,6 +144,12 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   ipcMain.handle(UPDATE_IPC.install, () => { restartIntoUpdate() })
   ipcMain.handle(UPDATE_IPC.setHold, (_e, value: unknown) => { hold = value === true })
   ipcMain.handle(UPDATE_IPC.work, () => currentWork())
+  ipcMain.handle(UPDATE_IPC.setOpenChat, (_e, chat: ResumeChat | null) => { openChat = chat })
+  ipcMain.handle(UPDATE_IPC.takeResumedChat, () => {
+    const chat = resumedChat
+    resumedChat = null
+    return chat
+  })
   ipcMain.handle(UPDATE_IPC.restartWhenFinished, () => {
     if (state.state !== 'ready') return
     waiting = currentWork()
@@ -189,7 +202,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   return {
     dispose() {
       for (const t of timers) clearTimeout(t)
-      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.setHold, UPDATE_IPC.work, UPDATE_IPC.restartWhenFinished, UPDATE_IPC.cancelRestart, UPDATE_IPC.openDownload]) ipcMain.removeHandler(ch)
+      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.setHold, UPDATE_IPC.work, UPDATE_IPC.restartWhenFinished, UPDATE_IPC.cancelRestart, UPDATE_IPC.openDownload, UPDATE_IPC.setOpenChat, UPDATE_IPC.takeResumedChat]) ipcMain.removeHandler(ch)
     }
   }
 }

@@ -47,7 +47,7 @@ describe('settings store', () => {
     const db = openCatalog(':memory:')
     const patch = {
       startWithAdmin: true, defaultModel: 'opus', defaultCwd: 'C:\\x', defaultBudgetUsd: 15,
-      theme: 'terminal' as const, density: 'compact' as const, idleReapMin: 45,
+      theme: 'terminal' as const, density: 'compact' as const, navDensity: 'compact' as const, idleReapMin: 45,
       extraFlags: ['--verbose', '--foo'], autoCleanDays: null
     }
     const next = updateSettings(db, patch)

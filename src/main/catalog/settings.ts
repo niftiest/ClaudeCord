@@ -1,3 +1,4 @@
+import { clampFontScale, FONT_SCALE_DEFAULT, validFontName } from '../../shared/font-settings'
 import type { Catalog } from './db'
 import { SUGGESTIONS_SETTINGS, TOOL_DISPLAY_SETTINGS, type SuggestionsSetting, type ToolDisplaySetting } from '../../shared/project-options'
 import { APP_THEMES, APP_THEME_SCOPES, CLOSE_ACTIONS, type AppSettings, type ChannelIcon, type CloseAction } from '../../shared/shell-types'
@@ -25,7 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultSkipPermissions: true, defaultBudgetUsd: null,
   notifyTurnComplete: true, notifyInputNeeded: true, notifyPermission: true, notifyError: true,
   doNotDisturb: false, quietHoursStart: null, quietHoursEnd: null,
-  theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', thinkingExpanded: false, toolCardsExpanded: false,
+  theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', navDensity: 'comfortable', chatFontScale: FONT_SCALE_DEFAULT, sidebarFontScale: FONT_SCALE_DEFAULT, appFont: '', thinkingExpanded: false, toolCardsExpanded: false,
   toolDisplay: 'grouped', promptSuggestions: 'off', showBlade: false, showContextRail: true,
   openRouterKey: '', avatarModel: 'openai/gpt-image-1', claudeIcon: { kind: 'initials' },
   claudeBin: 'claude', idleReapMin: 10, extraFlags: [],
@@ -55,7 +56,9 @@ function coerce<K extends keyof AppSettings>(key: K, value: unknown): AppSetting
   if (key === 'theme') return (typeof value === 'string' && THEMES.has(value) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'chromeIntegration') return (value === 'auto' || value === 'on' || value === 'off' ? value : undefined) as AppSettings[K] | undefined
   if (key === 'themeScope') return (typeof value === 'string' && THEME_SCOPES.has(value) ? value : undefined) as AppSettings[K] | undefined
-  if (key === 'density') return (typeof value === 'string' && DENSITIES.has(value) ? value : undefined) as AppSettings[K] | undefined
+  if (key === 'density' || key === 'navDensity') return (typeof value === 'string' && DENSITIES.has(value) ? value : undefined) as AppSettings[K] | undefined
+  if (key === 'chatFontScale' || key === 'sidebarFontScale') return (typeof value === 'number' && Number.isFinite(value) ? clampFontScale(value) : undefined) as AppSettings[K] | undefined
+  if (key === 'appFont') return (validFontName(value) ?? undefined) as AppSettings[K] | undefined
   // Bounded numbers
   if (key === 'idleReapMin') return (typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : undefined) as AppSettings[K] | undefined
   // Nullable non-negative money

@@ -27,6 +27,7 @@ import { SyncChatBanner, SyncConflictDialog, useSyncChat } from './components/Sy
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
 import { UpdateBar, UpdateIcon } from './components/UpdatesPanel'
+import { FONT_SCALE_DEFAULT, fontStack, stepFontScale } from '../shared/font-settings'
 import { RetentionNotice } from './components/RetentionNotice'
 import { ManageView } from './components/manage/ManageView'
 import type { DeleteTarget } from '../shared/manage-types'
@@ -34,6 +35,7 @@ import { EnginePool } from './components/EnginePool'
 import { McpChip } from './components/McpChip'
 import { MemoryDialog } from './components/MemoryDialog'
 import { ProjectOptions } from './components/ProjectOptions'
+import { OpenInTerminalButton } from './components/OpenInTerminalButton'
 import { effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
 import { ShellRuns } from './components/ShellRuns'
 import { WorkingLine, BackgroundTasksLine } from './components/WorkingLine'
@@ -63,6 +65,11 @@ function readStoredBool(key: string, fallback: boolean): boolean {
   const raw = window.localStorage.getItem(`cc.ui.${key}`)
   return raw === null ? fallback : raw === '1'
 }
+
+/** How far the wheel travels for one step of text size. A mouse's notch is more than this. */
+const WHEEL_NOTCH = 50
+const CHAT_SCALE_NOTE_MS = 1200
+const CHAT_SCALE_SAVE_MS = 300
 
 export function App() {
   const [githubReady, setGithubReady] = useState(false)
@@ -320,6 +327,65 @@ export function App() {
   // hiding tool-call cards). Kept live below via SettingsWindow.
   useEffect(() => { void api.getSettings().then(setSettings) }, [])
 
+  // Text sizes and font, on the page root so dialogs and pop-ups get the font too.
+  const chatScaleRef = useRef(FONT_SCALE_DEFAULT)
+  const chatScaleSaving = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [chatScaleNote, setChatScaleNote] = useState<number | null>(null)
+  const chatFontScale = settings?.chatFontScale ?? FONT_SCALE_DEFAULT
+  const sidebarFontScale = settings?.sidebarFontScale ?? FONT_SCALE_DEFAULT
+  const appFont = settings?.appFont ?? ''
+  useEffect(() => {
+    // Mid-scroll the wheel is ahead of what's saved, so an older answer mustn't pull it back.
+    if (chatScaleSaving.current !== null) return
+    chatScaleRef.current = chatFontScale
+    document.documentElement.style.setProperty('--chat-zoom', String(chatFontScale / 100))
+  }, [chatFontScale])
+  useEffect(() => { document.documentElement.style.setProperty('--sidebar-zoom', String(sidebarFontScale / 100)) }, [sidebarFontScale])
+  useEffect(() => {
+    const root = document.documentElement
+    if (appFont === '') {
+      root.removeAttribute('data-custom-font')
+      root.style.removeProperty('--app-font')
+    } else {
+      root.setAttribute('data-custom-font', '')
+      root.style.setProperty('--app-font', fontStack(appFont))
+    }
+  }, [appFont])
+
+  // Ctrl + wheel over the chat: its text size, for every chat. Keeps the reader's place.
+  useEffect(() => {
+    let leftover = 0
+    let hideNote: ReturnType<typeof setTimeout> | null = null
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      const stream = (e.target as Element | null)?.closest?.('.stream') ?? null
+      if (stream === null) return
+      e.preventDefault()
+      leftover += e.deltaY
+      if (Math.abs(leftover) < WHEEL_NOTCH) return
+      const next = stepFontScale(chatScaleRef.current, leftover < 0 ? 'up' : 'down')
+      leftover = 0
+      if (next === chatScaleRef.current) return
+      const place = stream.scrollTop / Math.max(stream.scrollHeight, 1)
+      chatScaleRef.current = next
+      document.documentElement.style.setProperty('--chat-zoom', String(next / 100))
+      stream.scrollTop = place * stream.scrollHeight
+      setChatScaleNote(next)
+      if (hideNote !== null) clearTimeout(hideNote)
+      hideNote = setTimeout(() => setChatScaleNote(null), CHAT_SCALE_NOTE_MS)
+      if (chatScaleSaving.current !== null) clearTimeout(chatScaleSaving.current)
+      chatScaleSaving.current = setTimeout(() => {
+        chatScaleSaving.current = null
+        void api.updateSettings({ chatFontScale: chatScaleRef.current }).then(setSettings)
+      }, CHAT_SCALE_SAVE_MS)
+    }
+    window.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      window.removeEventListener('wheel', onWheel)
+      if (hideNote !== null) clearTimeout(hideNote)
+    }
+  }, [])
+
   // Theme: `<html data-theme>` drives the [data-theme="terminal"] overrides in
   // styles.css. Cached in localStorage so main.tsx can apply it before first
   // paint (no Discord flash while settings load).
@@ -491,6 +557,17 @@ export function App() {
         setGroups(groupList)
         setTotalCost(cost)
         setProgress(null)
+        // Back from an update: the same chat, open before the window shows.
+        const resumed = await api.takeResumedChat()
+        const channel = resumed === null ? undefined : list.find(c => c.dirName === resumed.projectDir)
+        if (resumed !== null && channel !== undefined && !cancelled) {
+          setProject(channel)
+          const chats = await api.listSessions(channel.id)
+          if (cancelled) return
+          setSessions(chats)
+          const target = chats.find(s => s.id === resumed.sessionPk)
+          if (target !== undefined) await openSession(target)
+        }
       } catch (err) {
         // A failed first-run index must not leave the overlay stuck forever;
         // surface an empty app rather than an unrecoverable progress screen.
@@ -671,6 +748,13 @@ export function App() {
       }
     }
   }, [session, oldestSeq, hasMore])
+
+  // Which chat is on screen, in case an update restarts the app.
+  const openChatId = session?.id ?? null
+  const openChatDir = project?.dirName ?? null
+  useEffect(() => {
+    void api.setUpdateOpenChat(openChatId !== null && openChatDir !== null ? { sessionPk: openChatId, projectDir: openChatDir } : null)
+  }, [openChatId, openChatDir])
 
   // Going to a search result: load back to it, then Transcript scrolls there.
   useEffect(() => {
@@ -1351,7 +1435,7 @@ export function App() {
     : 'Another chat'
 
   return (
-    <div className="shell" data-density={settings?.density ?? 'comfortable'}>
+    <div className="shell" data-density={settings?.density ?? 'comfortable'} data-nav-density={settings?.navDensity ?? 'comfortable'}>
       {/* The icon rail stands in for the chat list: its buttons move under the list while that's open. */}
       {(manageOpen || !sidebarExpanded) && (
         <IconRail channels={channels} groups={groups} selectedId={project?.id ?? null} unread={unread} remote={remoteProjects}
@@ -1398,6 +1482,7 @@ export function App() {
       <OpenSubagentContext.Provider value={setSubagentOpen}>
       <main className="main" data-theme={chatPaneTheme(themeChoice)} hidden={manageOpen}>
         <UpdateBar />
+        {chatScaleNote !== null && <div className="chat-scale-note" role="status">{chatScaleNote}%</div>}
         {newlyArchived.length > 0 && (
           <ArchivedNotice projects={newlyArchived} onDismiss={() => {
             writeArchivedSeen(channels.filter(c => c.archived === true).map(c => c.dirName))
@@ -1423,10 +1508,6 @@ export function App() {
         <header className="chead">
           <div className="chead-main">
             <div className="chead-title-row">
-              {!sidebarExpanded && (
-                <button type="button" className="nav-head-caret" title="Show chat list"
-                  aria-label="Show chat list" onClick={() => setSidebarExpanded(true)}>»</button>
-              )}
               <h1>{project === null ? 'ClaudeCord' : resolveChannelName(project.meta, project.cwd, project.dirName)}</h1>
               {session !== null && <LiveIndicator running={running} queuedCount={queuedCount} />}
               {session !== null && mcpServers !== null && (
@@ -1444,13 +1525,15 @@ export function App() {
             <div className="path">{project?.cwd ?? `${channels.length} projects indexed`}</div>
           </div>
           {session !== null && <ProjectSearchBox ref={findInputRef} value={findQuery} onChange={setFindQuery} />}
+          {session !== null && channels.find(c => c.id === project?.id)?.archived !== true && (
+            <OpenInTerminalButton running={running} onOpen={openChatInTerminal} />
+          )}
           {session !== null && settings !== null && project !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
               onAddDir={() => { void api.addProjectDir(session.id, null).then(r => { if (!r.ok) setTerminalNotice(r.error); else setProjectSettings(r.settings) }) }}
               onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
               session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onFork={forkChat}
-              onOpenTerminal={channels.find(c => c.id === project.id)?.archived === true ? null : openChatInTerminal}
               summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}>
               <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />
             </ProjectOptions>

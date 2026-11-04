@@ -43,7 +43,7 @@ function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, on
   const name = resolveChannelName(channel.meta, channel.cwd, channel.dirName)
   const icon = resolveChannelIcon(channel.meta, name)
   return (
-    <div className={`ch${unread ? ' unread' : ''}`} role="option" tabIndex={0}
+    <div className={`ch${unread ? ' unread' : ''}`} role="option" tabIndex={0} title={name}
       aria-selected={selected}
       onClick={() => onSelect(channel)}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(channel) } }}

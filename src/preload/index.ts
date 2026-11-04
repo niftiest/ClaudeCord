@@ -1,3 +1,4 @@
+import type { TextMenuRequest } from '../shared/text-menu'
 import type { PlanUsage } from '../shared/plan-usage'
 import type { AppDialogRequest } from '../shared/app-dialog'
 import type { ShellRun } from '../shared/shell-run-types'
@@ -28,6 +29,12 @@ const api: ClaudeCordApi & EngineApi = {
   },
   appDialogShown: id => ipcRenderer.send(IPC.appDialogShown, id),
   appDialogAnswer: (id, index) => ipcRenderer.send(IPC.appDialogAnswer, id, index),
+  onTextMenu: cb => {
+    const listener = (_e: IpcRendererEvent, menu: TextMenuRequest) => cb(menu)
+    ipcRenderer.on(IPC.textMenuOpen, listener)
+    return () => { ipcRenderer.off(IPC.textMenuOpen, listener) }
+  },
+  textMenuAction: action => ipcRenderer.send(IPC.textMenuAction, action),
   onIndexProgress: cb => {
     const listener = (_e: IpcRendererEvent, p: IndexProgress) => cb(p)
     ipcRenderer.on(IPC.indexProgress, listener)
@@ -198,6 +205,8 @@ const update: UpdateApi = {
   checkForUpdates: () => ipcRenderer.invoke(UPDATE_IPC.check),
   installUpdate: () => ipcRenderer.invoke(UPDATE_IPC.install),
   setUpdateHold: hold => ipcRenderer.invoke(UPDATE_IPC.setHold, hold),
+  setUpdateOpenChat: chat => ipcRenderer.invoke(UPDATE_IPC.setOpenChat, chat),
+  takeResumedChat: () => ipcRenderer.invoke(UPDATE_IPC.takeResumedChat),
   updateRestartWork: () => ipcRenderer.invoke(UPDATE_IPC.work),
   restartWhenFinished: () => ipcRenderer.invoke(UPDATE_IPC.restartWhenFinished),
   cancelUpdateRestart: () => ipcRenderer.invoke(UPDATE_IPC.cancelRestart),

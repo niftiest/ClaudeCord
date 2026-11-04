@@ -62,6 +62,13 @@ export type AppSettings = {
    *  Code's own "enabled by default" preference; 'on' / 'off' override it. */
   chromeIntegration: 'auto' | 'on' | 'off'
   density: 'comfortable' | 'compact'
+  /** The chat list: two lines with a large icon, or one line with a small one. */
+  navDensity: 'comfortable' | 'compact'
+  /** Text size in the chat, and in the sidebars, as a percentage. See font-settings.ts. */
+  chatFontScale: number
+  sidebarFontScale: number
+  /** The font everywhere but code. Blank: the app's own fonts. */
+  appFont: string
   thinkingExpanded: boolean; toolCardsExpanded: boolean
   /** When false, tool-call cards (Bash, Read, etc.) are hidden from the
    *  transcript entirely -- for readers who only care about the conversation,

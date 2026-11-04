@@ -1,3 +1,4 @@
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, stepFontScale } from '../../shared/font-settings'
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AppSettings } from '../../shared/shell-types'
@@ -143,7 +144,14 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
                   options={[{ value: 'chat', label: 'Chat window only' }, { value: 'app', label: 'Sidebar + chat (whole app)' }]}
                   on={v => patch({ themeScope: v as AppSettings['themeScope'] })} />
               )}
-              <Select label="Density" value={settings.density} options={['comfortable', 'compact']} on={v => patch({ density: v as AppSettings['density'] })} />
+              <FontSelect value={settings.appFont} on={v => patch({ appFont: v })} />
+              <ScaleField label="Chat text size" hint="The conversation only, in every chat. Ctrl + mouse wheel over the chat changes this too."
+                value={settings.chatFontScale} on={v => patch({ chatFontScale: v })} />
+              <ScaleField label="Sidebar text size" hint="The chat list and the Files panel." value={settings.sidebarFontScale} on={v => patch({ sidebarFontScale: v })} />
+              <Select label="Chat list" value={settings.navDensity}
+                options={[{ value: 'comfortable', label: 'Comfortable: icon, name and preview' }, { value: 'compact', label: 'Compact: small icon and name, one line' }]}
+                on={v => patch({ navDensity: v as AppSettings['navDensity'] })} />
+              <Select label="Messages" value={settings.density} options={[{ value: 'comfortable', label: 'Comfortable' }, { value: 'compact', label: 'Compact' }]} on={v => patch({ density: v as AppSettings['density'] })} />
               <div className="settings-row">
                 <div className="settings-row-label">Claude avatar
                   <span className="settings-hint">The avatar shown on Claude’s messages (emoji / color / image / AI).</span>
@@ -269,6 +277,42 @@ function NumberField({ label, hint, value, on }: { label: string; hint?: string;
     </label>
   )
 }
+/** A text size: smaller, bigger, and back to how the app comes. */
+function ScaleField({ label, hint, value, on }: { label: string; hint?: string; value: number; on: (v: number) => void }) {
+  return (
+    <div className="settings-row">
+      <div className="settings-row-label">{label}{hint !== undefined && <span className="settings-hint">{hint}</span>}</div>
+      <div className="font-scale">
+        {value !== FONT_SCALE_DEFAULT && <button type="button" className="font-scale-reset" onClick={() => on(FONT_SCALE_DEFAULT)}>Reset</button>}
+        <button type="button" className="btn-secondary" aria-label={`${label}: smaller`} disabled={value <= FONT_SCALE_MIN} onClick={() => on(stepFontScale(value, 'down'))}>−</button>
+        <span className="font-scale-value">{value}%</span>
+        <button type="button" className="btn-secondary" aria-label={`${label}: bigger`} disabled={value >= FONT_SCALE_MAX} onClick={() => on(stepFontScale(value, 'up'))}>+</button>
+      </div>
+    </div>
+  )
+}
+
+/** The fonts on this PC, as Windows lists them. A saved font stays on the list even if it
+ *  has been uninstalled, so the setting doesn't change by itself. */
+function FontSelect({ value, on }: { value: string; on: (v: string) => void }) {
+  const [fonts, setFonts] = useState<string[] | null>(null)
+  useEffect(() => {
+    const query = (window as unknown as { queryLocalFonts?: () => Promise<Array<{ family: string }>> }).queryLocalFonts
+    if (query === undefined) { setFonts([]); return }
+    let alive = true
+    void query.call(window).then(list => {
+      if (alive) setFonts([...new Set(list.map(f => f.family))].sort((a, b) => a.localeCompare(b)))
+    }).catch(() => { if (alive) setFonts([]) })
+    return () => { alive = false }
+  }, [])
+  const names = fonts ?? []
+  return (
+    <Select label="Font" hint="Used everywhere except code, which stays monospaced so it lines up." value={value}
+      options={[{ value: '', label: 'Default' }, ...(value !== '' && !names.includes(value) ? [{ value, label: value }] : []), ...names.map(n => ({ value: n, label: n }))]}
+      on={on} />
+  )
+}
+
 function Select({ label, hint, value, options, on }: {
   label: string; hint?: string; value: string; options: (string | { value: string; label: string })[]; on: (v: string) => void
 }) {
