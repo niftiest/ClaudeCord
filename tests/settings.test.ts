@@ -7,6 +7,27 @@ import { SCHEMA_VERSION } from '../src/main/catalog/schema'
 import { getSettings, updateSettings, DEFAULT_SETTINGS } from '../src/main/catalog/settings'
 
 describe('settings store', () => {
+  it('asks what closing does until the user has chosen, then remembers', () => {
+    const db = openCatalog(':memory:')
+    expect(getSettings(db).closeAction).toBe('ask')
+    expect(updateSettings(db, { closeAction: 'tray' }).closeAction).toBe('tray')
+    expect(updateSettings(db, { closeAction: 'exit' }).closeAction).toBe('exit')
+    expect(getSettings(db).closeAction).toBe('exit')
+    expect(updateSettings(db, { closeAction: 'nonsense' as 'exit' }).closeAction).toBe('exit')
+  })
+
+  it('keeps the tray for someone who had already turned it on, and asks anyone else', () => {
+    const add = (db: ReturnType<typeof openCatalog>) => db.prepare('INSERT INTO settings_kv (key, value) VALUES (?, ?)')
+    const on = openCatalog(':memory:')
+    add(on).run('closeToTray', 'true')
+    expect(getSettings(on).closeAction).toBe('tray')
+    const off = openCatalog(':memory:')
+    add(off).run('closeToTray', 'false')
+    expect(getSettings(off).closeAction).toBe('ask')
+    // A later choice wins over the old setting.
+    expect(updateSettings(on, { closeAction: 'exit' }).closeAction).toBe('exit')
+  })
+
   it('returns full defaults on a fresh DB', () => {
     const db = openCatalog(':memory:')
     expect(getSettings(db)).toEqual(DEFAULT_SETTINGS)

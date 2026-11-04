@@ -6,6 +6,7 @@ import {
   type ComposerImage, type PastedTextChip, type QueueAction, type QueuedMessage
 } from '../lib'
 import { composeStore, nextHeld, shellCommandOf } from '../compose-store'
+import { filterHistory, stepHistory } from '../prompt-history'
 import type { ExternalLock } from '../../shared/engine-types'
 import { HIJACK_WORKING_TEXT, hijackBlock } from '../../shared/hijack'
 import type { ClaudeCommand, CommandSource } from '../../shared/claude-info-types'
@@ -70,12 +71,16 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ sessionPk, running, settled = false, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
   /** True once `running` and `lock` describe this chat, rather than the moment of opening it. */
   settled?: boolean
+  /** Shift+Tab, as in the terminal. */
+  onCycleMode?: () => void
+  /** Goes up each time a `!` in this chat is stopped, which is a chance to send what's next. */
+  shellStops?: number
   /** Set while a process outside ClaudeCord holds this chat: the composer
    *  goes read-only (typing/sending disabled, queued messages held, not
    *  drained) until it's released. Any draft text is kept. */
@@ -226,6 +231,14 @@ export function Composer({ sessionPk, running, settled = false, lock = null, cwd
     prevRunning.current = running
   }, [running, queue, onSend, lock]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const seenStops = useRef(shellStops)
+  useEffect(() => {
+    if (seenStops.current === shellStops) return
+    seenStops.current = shellStops
+    const next = nextHeld(queue)
+    if (!running && next !== undefined && lock === null) sendHeld(next)
+  }, [shellStops]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // A turn that ended while this chat wasn't on screen left no transition to see, so
   // what's held is checked once, as soon as it's known whether a turn is running.
   const checkedOnOpen = useRef(false)
@@ -308,6 +321,7 @@ export function Composer({ sessionPk, running, settled = false, lock = null, cwd
 
   function updateText(next: string) {
     setText(next)
+    if (next === '') setHistoryAt(-1)
     onDraftChange?.(next)
   }
 
@@ -375,7 +389,8 @@ export function Composer({ sessionPk, running, settled = false, lock = null, cwd
       }
       return
     }
-    if (running) {
+    // A side question doesn't wait for the turn: that's what it's for.
+    if (running && !/^\s*\/btw\s/.test(wouldSend)) {
       // QueuedMessage has a single `text` field with no separate pasted-chip
       // slot, so the combine has to happen now, at enqueue time.
       // It goes straight to Claude Code, which feeds it in at Claude's next step and
@@ -394,7 +409,60 @@ export function Composer({ sessionPk, running, settled = false, lock = null, cwd
     clearCompose()
   }
 
+  // Up and Down go through what was typed in this project, and Ctrl+R searches it.
+  const [history, setHistory] = useState<string[] | null>(null)
+  const [historyAt, setHistoryAt] = useState(-1)
+  const historyDraft = useRef('')
+  const [searching, setSearching] = useState<string | null>(null)
+  const [searchSelected, setSearchSelected] = useState(0)
+  async function loadHistory(): Promise<string[]> {
+    if (history !== null) return history
+    const loaded = await api.promptHistory(sessionPk)
+    setHistory(loaded)
+    return loaded
+  }
+  function moveHistory(dir: 'older' | 'newer', list: string[]) {
+    if (historyAt === -1) historyDraft.current = text
+    const step = stepHistory(list, historyAt, dir)
+    if (step === null) return
+    setHistoryAt(step.at)
+    const next = step.at === -1 ? historyDraft.current : step.text
+    pendingCaret.current = dir === 'older' ? 0 : next.length
+    setCaret(pendingCaret.current)
+    updateText(next)
+  }
+  const searchResults = searching === null ? [] : filterHistory(history ?? [], searching)
+  function acceptSearch(send: boolean) {
+    const picked = searchResults[Math.min(searchSelected, searchResults.length - 1)]
+    setSearching(null)
+    if (picked === undefined) return
+    updateText(picked)
+    pendingCaret.current = picked.length
+    setCaret(picked.length)
+    textareaRef.current?.focus()
+    if (send) setTimeout(() => textareaRef.current?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })), 0)
+  }
+
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Tab' && e.shiftKey && onCycleMode !== undefined) { e.preventDefault(); onCycleMode(); return }
+    if (e.key === 'r' && e.ctrlKey) {
+      e.preventDefault()
+      void loadHistory().then(() => { setSearching(''); setSearchSelected(0) })
+      return
+    }
+    if (!menuOpen && !e.shiftKey && e.key === 'ArrowUp' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+      // As in the terminal: with something queued, Up goes to that first.
+      const last = queue[queue.length - 1]
+      if (text.length === 0 && historyAt === -1 && last !== undefined) { e.preventDefault(); void editQueued(last); return }
+      e.preventDefault()
+      void loadHistory().then(list => moveHistory('older', list))
+      return
+    }
+    if (!menuOpen && !e.shiftKey && e.key === 'ArrowDown' && historyAt !== -1 && !text.slice(e.currentTarget.selectionEnd).includes('\n')) {
+      e.preventDefault()
+      void loadHistory().then(list => moveHistory('newer', list))
+      return
+    }
     if (menuOpen) {
       const count = matches.items.length
       if (e.key === 'Escape') { e.preventDefault(); setDismissedFor(text); return }
@@ -425,6 +493,25 @@ export function Composer({ sessionPk, running, settled = false, lock = null, cwd
 
   return (
     <div className="composer">
+      {searching !== null && (
+        <div className="history-search" role="dialog" aria-label="Search what you've typed">
+          <input autoFocus type="text" className="question-other" placeholder="Search what you've typed in this project" value={searching}
+            onChange={e => { setSearching(e.target.value); setSearchSelected(0) }}
+            onKeyDown={e => {
+              if (e.key === 'Escape') { e.preventDefault(); setSearching(null); textareaRef.current?.focus() }
+              else if (e.key === 'Tab') { e.preventDefault(); acceptSearch(false) }
+              else if (e.key === 'Enter') { e.preventDefault(); acceptSearch(false) }
+              else if (e.key === 'ArrowDown' || (e.key === 'r' && e.ctrlKey)) { e.preventDefault(); setSearchSelected(i => Math.min(i + 1, searchResults.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchSelected(i => Math.max(i - 1, 0)) }
+            }} />
+          <div className="history-results">
+            {searchResults.length === 0 && <div className="history-none">Nothing matches.</div>}
+            {searchResults.slice(0, 12).map((r, i) => (
+              <button type="button" key={r} className={`history-result${i === searchSelected ? ' selected' : ''}`} onMouseDown={e => { e.preventDefault(); setSearchSelected(i); updateText(r); setSearching(null); textareaRef.current?.focus() }}>{r}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {menuOpen && (
         <CompletionMenu label={completion.kind === 'command' ? 'Commands' : 'Files'} items={matches.items}
           selected={Math.min(selected, Math.max(matches.items.length - 1, 0))} note={menuNote}

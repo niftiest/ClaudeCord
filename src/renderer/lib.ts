@@ -15,7 +15,7 @@ import type { ChannelMeta, ChannelGroup } from '../shared/shell-types'
 // no runtime/electron/node dependency, same rationale as engine-ipc-
 // contract.ts's own type-only StreamedRow import.
 import type { NewProjectOptions } from '../shared/engine-ipc-contract'
-import { FOLDER_MISSING, type BackgroundTask, type LiveEvent, type PermissionRequest } from '../shared/engine-types'
+import { FOLDER_MISSING, PERMISSION_MODES, type BackgroundTask, type LiveEvent, type PermissionRequest, type PermissionSuggestion } from '../shared/engine-types'
 // Type-only: StreamedRow's home module (src/main/jsonl/stream.ts) reads real
 // files, but importing just its *type* is erased at compile time -- same
 // pattern engine-ipc-contract.ts already uses.
@@ -488,6 +488,69 @@ export function summarizePermissionRequest(tool: string, input: unknown): string
   return tool
 }
 
+/** The next mode Shift+Tab goes to. From a mode outside the list, it starts again. */
+export function nextPermissionMode(mode: string): string {
+  const at = PERMISSION_MODES.findIndex(m => m.value === mode)
+  return PERMISSION_MODES[(at + 1) % PERMISSION_MODES.length]!.value
+}
+
+/** What "don't ask again" would do, in words, from what Claude Code offers. */
+export function suggestionLabel(suggestions: PermissionSuggestion[]): string | null {
+  const parts = suggestions.flatMap((s): string[] => {
+    if (s.type === 'addRules' || s.type === 'replaceRules') {
+      return (s.rules ?? []).map(r => (r.ruleContent !== undefined && r.ruleContent.length > 0 ? `${r.toolName ?? 'tool'}(${r.ruleContent})` : r.toolName ?? 'this tool'))
+    }
+    if (s.type === 'addDirectories') return (s.directories ?? []).map(d => `access to ${d}`)
+    return []
+  })
+  return parts.length > 0 ? parts.join(', ') : null
+}
+
+export type DiffLine = { kind: 'same' | 'removed' | 'added'; text: string }
+export type PermissionDiff = { path: string | null; lines: DiffLine[]; hiddenLines: number }
+
+const MAX_DIFF_LINES = 400
+
+/** The lines an Edit or Write would change, or null for any other tool or an input without them.
+ *  Lines both sides share at the start and end stay as context, and the middle shows as removed
+ *  then added. */
+export function permissionDiff(tool: string, input: unknown): PermissionDiff | null {
+  if (typeof input !== 'object' || input === null) return null
+  const i = input as Record<string, unknown>
+  const path = typeof i.file_path === 'string' ? i.file_path : null
+  let lines: DiffLine[]
+  if (tool === 'Write' && typeof i.content === 'string') {
+    lines = i.content.split('\n').map(text => ({ kind: 'added' as const, text }))
+  } else if (tool === 'Edit' && typeof i.old_string === 'string' && typeof i.new_string === 'string') {
+    const before = i.old_string.split('\n')
+    const after = i.new_string.split('\n')
+    let start = 0
+    while (start < before.length && start < after.length && before[start] === after[start]) start++
+    let end = 0
+    while (end < before.length - start && end < after.length - start && before[before.length - 1 - end] === after[after.length - 1 - end]) end++
+    lines = [
+      ...before.slice(0, start).map(text => ({ kind: 'same' as const, text })),
+      ...before.slice(start, before.length - end).map(text => ({ kind: 'removed' as const, text })),
+      ...after.slice(start, after.length - end).map(text => ({ kind: 'added' as const, text })),
+      ...before.slice(before.length - end).map(text => ({ kind: 'same' as const, text }))
+    ]
+  } else {
+    return null
+  }
+  return { path, lines: lines.slice(0, MAX_DIFF_LINES), hiddenLines: Math.max(0, lines.length - MAX_DIFF_LINES) }
+}
+
+/** Claude asking the user something, with its own card rather than a permission's. */
+export function isQuestion(tool: string): boolean {
+  return tool === 'AskUserQuestion'
+}
+
+/** What to say about a failed API call being retried. */
+export function retryLabel(r: { attempt: number; maxRetries: number; error: string | null }): string {
+  const count = r.maxRetries > 0 ? `attempt ${r.attempt} of ${r.maxRetries}` : `attempt ${r.attempt}`
+  return `Retrying after an API error (${count}${r.error !== null ? `: ${r.error}` : ''})`
+}
+
 /** Plan mode surfaces as a specific tool request, `ExitPlanMode` -- treat that
  *  as a plan-approval card (accept/reject the plan) rather than an ordinary
  *  permission card (allow/allow-always/deny/edit). */
@@ -632,6 +695,12 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'background':
     case 'taskProgress':
     case 'commandLifecycle':
+    case 'permissionAsked':
+    case 'permissionCancelled':
+    case 'permissionGone':
+    case 'elicitation':
+    case 'retry':
+    case 'hook':
     case 'other':
       return prev
   }
@@ -1117,6 +1186,22 @@ export function terminalOnlyCommand(text: string): string | null {
 }
 
 /** True for /clear and its aliases, which ClaudeCord handles itself. */
+/** The question in `/btw question`, or null. */
+export function sideQuestionOf(text: string): string | null {
+  const m = /^\s*\/btw\s+([\s\S]+)$/.exec(text)
+  return m === null ? null : m[1]!.trim()
+}
+
+/** The name in `/rename name`, or null. A bare `/rename` is left to Claude Code, which picks one. */
+export function renameCommandOf(text: string): string | null {
+  const m = /^\s*\/rename\s+([\s\S]+)$/.exec(text)
+  return m === null ? null : m[1]!.trim()
+}
+
+export function isForkCommand(text: string): boolean {
+  return /^\s*\/(fork|branch)\s*$/.test(text)
+}
+
 export function isClearCommand(text: string): boolean {
   const name = leadingCommand(text)
   return name !== null && CLEAR_COMMANDS.has(name)

@@ -31,10 +31,14 @@ export const APP_THEMES: readonly AppTheme[] = ['discord', 'terminal', 'midnight
 export type AppThemeScope = 'chat' | 'app'
 export const APP_THEME_SCOPES: readonly AppThemeScope[] = ['chat', 'app']
 
+export const CLOSE_ACTIONS = ['ask', 'exit', 'tray'] as const
+export type CloseAction = typeof CLOSE_ACTIONS[number]
+
 export type AppSettings = {
   // Startup & System (Windows-specific behaviour behind a platform guard)
   startWithWindows: boolean; startMinimized: boolean; startWithAdmin: boolean
-  closeToTray: boolean; showTrayIcon: boolean
+  /** What the window's close button does. 'ask' until the user has chosen. */
+  closeAction: CloseAction; showTrayIcon: boolean
   // Defaults for new chats
   defaultCwd: string | null; defaultModel: string | null; defaultEffort: string | null
   defaultSkipPermissions: boolean

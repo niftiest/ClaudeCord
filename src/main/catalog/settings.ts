@@ -1,6 +1,6 @@
 import type { Catalog } from './db'
 import { SUGGESTIONS_SETTINGS, TOOL_DISPLAY_SETTINGS, type SuggestionsSetting, type ToolDisplaySetting } from '../../shared/project-options'
-import { APP_THEMES, APP_THEME_SCOPES, type AppSettings, type ChannelIcon } from '../../shared/shell-types'
+import { APP_THEMES, APP_THEME_SCOPES, CLOSE_ACTIONS, type AppSettings, type ChannelIcon, type CloseAction } from '../../shared/shell-types'
 
 /** Validate an unknown value as a ChannelIcon (settings persist it as JSON).
  *  Returns undefined when invalid so coerce keeps the prior/default. */
@@ -20,7 +20,7 @@ function validateIcon(v: unknown): ChannelIcon | undefined {
  *  default per-key. */
 export const DEFAULT_SETTINGS: AppSettings = {
   startWithWindows: false, startMinimized: false, startWithAdmin: false,
-  closeToTray: false, showTrayIcon: true,
+  closeAction: 'ask', showTrayIcon: true,
   defaultCwd: null, defaultModel: null, defaultEffort: null,
   defaultSkipPermissions: true, defaultBudgetUsd: null,
   notifyTurnComplete: true, notifyInputNeeded: true, notifyPermission: true, notifyError: true,
@@ -49,6 +49,7 @@ function validDays(v: unknown): boolean {
 function coerce<K extends keyof AppSettings>(key: K, value: unknown): AppSettings[K] | undefined {
   const def = DEFAULT_SETTINGS[key]
   // Enums
+  if (key === 'closeAction') return (CLOSE_ACTIONS.includes(value as CloseAction) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'toolDisplay') return (TOOL_DISPLAY_SETTINGS.includes(value as ToolDisplaySetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'promptSuggestions') return (SUGGESTIONS_SETTINGS.includes(value as SuggestionsSetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'theme') return (typeof value === 'string' && THEMES.has(value) ? value : undefined) as AppSettings[K] | undefined
@@ -96,6 +97,8 @@ export function getSettings(db: Catalog): AppSettings {
   const result: AppSettings = { ...DEFAULT_SETTINGS }
   // Replaced by toolDisplay: someone who had turned tool calls off keeps them off.
   if (rows.some(r => r.key === 'showToolCalls' && r.value === 'false')) result.toolDisplay = 'hidden'
+  // Replaced by closeAction: someone who had turned this on has already chosen.
+  if (rows.some(r => r.key === 'closeToTray' && r.value === 'true')) result.closeAction = 'tray'
   for (const { key, value } of rows) {
     if (!(key in DEFAULT_SETTINGS)) continue
     let parsed: unknown

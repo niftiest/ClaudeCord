@@ -41,6 +41,21 @@ export function chatsToShow(db: Catalog, projectId: number, exists: Exists = exi
   })
 }
 
+/** Search hits, leaving out chats hidden because they moved with their project. */
+export function withoutMovedChats<T extends { sessionPk: number }>(db: Catalog, hits: T[], exists: Exists = existsSync): T[] {
+  const known = new Map<number, boolean>()
+  const inProject = db.prepare("SELECT project_id AS projectId FROM sessions WHERE id = ?")
+  const shown = (pk: number): boolean => {
+    const cached = known.get(pk)
+    if (cached !== undefined) return cached
+    const row = inProject.get(pk) as { projectId: number } | undefined
+    const result = row === undefined || chatsToShow(db, row.projectId, exists).some(s => s.id === pk)
+    known.set(pk, result)
+    return result
+  }
+  return hits.filter(h => shown(h.sessionPk))
+}
+
 type MetaRow = { dir_name: string; friendly_name: string | null; starred: number; group_id: number | null; icon_json: string | null }
 
 /** Gives a project that moved the star, name, icon and group left on its old row, wherever

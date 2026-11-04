@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { openCatalog } from '../src/main/catalog/db'
 import { upsertProject, setProjectCwd, upsertSession } from '../src/main/catalog/repos'
-import { backupCatalogOnce, chatsToShow, folderGone, isConversationText, moveCustomisations } from '../src/main/catalog/archive'
+import { backupCatalogOnce, chatsToShow, folderGone, isConversationText, moveCustomisations, withoutMovedChats } from '../src/main/catalog/archive'
 import { setChannelGroup, setChannelIcon, setFriendlyName, setStarred, getChannelMeta, createGroup } from '../src/main/catalog/metadata'
 import { groupChannels } from '../src/renderer/lib'
 import { archivedNoticeText } from '../src/renderer/components/ArchivedNotice'
@@ -60,6 +60,17 @@ describe('chats in an archived project', () => {
     chat(db, oldP, 'both-gone', 5)
     chat(db, gone, 'both-gone', 5)
     expect(chatsToShow(db, oldP, exists).map(s => s.sessionId).sort()).toEqual(['both-gone', 'longer-here'])
+  })
+
+  it('leaves the hidden copy out of search results', () => {
+    const db = openCatalog(':memory:')
+    const oldP = project(db, 'old', OLD)
+    const newP = project(db, 'new', NEW)
+    const hidden = chat(db, oldP, 'moved', 10)
+    const kept = chat(db, oldP, 'only-here', 10)
+    const live = chat(db, newP, 'moved', 12)
+    const hits = [hidden, kept, live, hidden].map(sessionPk => ({ sessionPk }))
+    expect(withoutMovedChats(db, hits, exists).map(h => h.sessionPk)).toEqual([kept, live])
   })
 
   it('does not touch the catalog to do so', () => {

@@ -1,22 +1,7 @@
-// Single source of truth for the model + effort choices ClaudeCord offers and
-// the pricing it uses to estimate a chat's cost. Kept in shared/ so the
-// New-Chat dialog, the chat-header selector, and settings all show the same
-// list, and so cost math can be unit-tested without the renderer.
-//
-// Values are what gets passed to `claude --model <value>`: the alias forms
-// ('opus'/'sonnet'/'haiku'/'fable') resolve to the current generation the CLI
-// itself maps them to, and a full id ('claude-opus-4-8') pins an older one.
-// Labels/hints mirror Claude Code's own model picker.
+// Effort levels, cost estimates and image models. The Claude models the app offers aren't
+// here: they come from Claude Code itself (see renderer/components/useClaudeModels.ts).
 
 export type ModelOption = { value: string; label: string; hint: string }
-
-export const MODELS: ModelOption[] = [
-  { value: 'opus', label: 'Opus 5', hint: 'Best for everyday, complex tasks' },
-  { value: 'sonnet', label: 'Sonnet 5', hint: 'Efficient for routine tasks' },
-  { value: 'haiku', label: 'Haiku 4.5', hint: 'Fastest for quick answers' },
-  { value: 'fable', label: 'Fable 5', hint: 'Most capable, longest-running' },
-  { value: 'claude-opus-4-8', label: 'Opus 4.8', hint: 'Previous-generation Opus' }
-]
 
 /** For showing a model list: by name, newest version first within each. A label
  *  with no version comes first in its name. Claude Code's own order isn't either. */
@@ -83,41 +68,76 @@ export const IMAGE_MODELS: ModelOption[] = [
   { value: 'bytedance-seed/seedream-4.5', label: 'Seedream 4.5', hint: 'Alternative image model' }
 ]
 
-/** Per-million-token USD rates. cacheRead/cacheWrite follow Anthropic's
- *  standard multipliers (read ≈ 0.1× input, 5-minute write ≈ 1.25× input).
- *  These are list prices for a rough in-app estimate, NOT billing truth. */
+/** Per-million-token USD list prices, for a rough in-app estimate rather than billing truth.
+ *  `cacheWrite` is the one-hour rate, which is what Claude Code's own recorded costs match. */
 export type Pricing = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
-const opusPricing: Pricing = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }
-const PRICING: Record<string, Pricing> = {
-  // aliases → current generation
-  opus: opusPricing,
-  'claude-opus-5': opusPricing,
-  'claude-opus-4-8': opusPricing,
-  'claude-opus-4-7': opusPricing,
-  sonnet: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  haiku: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-  'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-  fable: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-  'claude-fable-5': { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }
+const rates = (input: number, output: number, cacheRead: number, cacheWrite: number): Pricing => ({ input, output, cacheRead, cacheWrite })
+const OPUS_4_5_TO_5 = rates(5, 25, 0.5, 10)
+const OPUS_5_5 = rates(4, 20, 0.2, 8)
+const OLD_OPUS = rates(15, 75, 1.5, 30)
+const OLD_SONNET = rates(3, 15, 0.3, 6)
+const SONNET_5 = rates(2, 10, 0.2, 4)
+const SONNET_5_5 = rates(2, 10, 0.1, 4)
+const HAIKU_5_5 = rates(0.1, 0.5, 0.01, 0.2)
+const FABLE_5 = rates(10, 50, 1, 20)
+const FABLE_5_1 = rates(10, 50, 0.25, 20)
+
+/** Prices read from the installed Claude Code (main/engine/model-prices.ts). */
+export type ModelPrices = { models: Record<string, Pricing>; newest: Record<string, Pricing> }
+
+let livePrices: ModelPrices | null = null
+/** Each process sets this once it has them. Until then, or if they can't be found, the table
+ *  below is used: it's from Claude Code 2.1.318. */
+export function setModelPrices(prices: ModelPrices | null): void {
+  livePrices = prices
 }
 
-/** Resolve a model string (alias, full id, or a dated id like
- *  `claude-opus-4-8-20260101`) to its pricing. Unknown/absent → Opus rates,
- *  the safe middle-of-the-road default rather than throwing on a model we
- *  haven't priced yet. Matching is longest-prefix so a dated snapshot still
- *  resolves to its family. */
+/** The newest of each name, which its alias means. A version with no price of its own is priced
+ *  as this. */
+const NEWEST: Record<string, Pricing> = { opus: OPUS_5_5, sonnet: SONNET_5_5, haiku: HAIKU_5_5, fable: FABLE_5_1 }
+
+const PRICING: Record<string, Pricing> = {
+  ...NEWEST,
+  'claude-opus-4-0': OLD_OPUS,
+  'claude-opus-4-1': OLD_OPUS,
+  'claude-opus-4-5': OPUS_4_5_TO_5,
+  'claude-opus-4-6': OPUS_4_5_TO_5,
+  'claude-opus-4-7': OPUS_4_5_TO_5,
+  'claude-opus-4-8': OPUS_4_5_TO_5,
+  'claude-opus-5': OPUS_4_5_TO_5,
+  'claude-opus-5-5': OPUS_5_5,
+  'claude-3-5-sonnet': OLD_SONNET,
+  'claude-3-7-sonnet': OLD_SONNET,
+  'claude-sonnet-4-0': OLD_SONNET,
+  'claude-sonnet-4-5': OLD_SONNET,
+  'claude-sonnet-4-6': OLD_SONNET,
+  'claude-sonnet-5': SONNET_5,
+  'claude-sonnet-5-5': SONNET_5_5,
+  'claude-3-5-haiku': rates(0.8, 4, 0.08, 1.6),
+  'claude-haiku-4-5': rates(1, 5, 0.1, 2),
+  'claude-haiku-5-5': HAIKU_5_5,
+  'claude-fable-5': FABLE_5,
+  'claude-fable-5-1': FABLE_5_1
+}
+
+/** A model's prices: its own, then its name's newest, then Opus for a name never seen. A dated
+ *  or suffixed id ("claude-opus-5-5[1m]") counts as the longest id it starts with. */
 export function resolveModelPricing(model: string | null | undefined): Pricing {
-  if (typeof model !== 'string' || model.length === 0) return opusPricing
-  if (PRICING[model] !== undefined) return PRICING[model]
+  const newest = livePrices?.newest ?? NEWEST
+  const table = livePrices === null ? PRICING : { ...newest, ...livePrices.models }
+  const opus = newest.opus ?? OPUS_5_5
+  if (typeof model !== 'string' || model.length === 0) return opus
+  if (table[model] !== undefined) return table[model]
   let best: Pricing | null = null
   let bestLen = -1
-  for (const key of Object.keys(PRICING)) {
-    const p = PRICING[key]
+  for (const key of Object.keys(table)) {
+    const p = table[key]
     if (p !== undefined && model.startsWith(key) && key.length > bestLen) { best = p; bestLen = key.length }
   }
-  return best ?? opusPricing
+  if (best !== null) return best
+  const name = Object.keys(newest).find(n => model.includes(n))
+  return name !== undefined ? newest[name]! : opus
 }
 
 /** Context-window size (tokens) for a model, for the context rail's fill bar.

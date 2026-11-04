@@ -3,7 +3,8 @@ import { api } from '../api'
 import type { AppSettings } from '../../shared/shell-types'
 import { McpSettings } from './McpSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { MODELS, EFFORTS, sortModels } from '../../shared/models'
+import { EFFORTS } from '../../shared/models'
+import { modelOption, useClaudeModels } from './useClaudeModels'
 import { IconPicker } from './IconPicker'
 import { ClaudeAvatar } from './ClaudeAvatar'
 import { UpdatesPanel } from './UpdatesPanel'
@@ -46,6 +47,7 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
   projects?: ProjectChoice[]
 }) {
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const models = useClaudeModels()
   const [section, setSection] = useState<Section>(initialSection ?? 'startup')
   // Claude Code's own model/effort, shown as what "(default)" means.
   const [claudeDefaults, setClaudeDefaults] = useState<{ model: string | null; effort: string | null }>({ model: null, effort: null })
@@ -87,20 +89,27 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
               {!IS_WINDOWS && <p className="settings-note">Startup and admin options are Windows-only.</p>}
               {IS_WINDOWS && <>
                 <Toggle label="Start with Windows" value={settings.startWithWindows} on={v => patch({ startWithWindows: v })} />
-                <Toggle label="Start minimised to tray" hint="When ClaudeCord starts with Windows." value={settings.startMinimized} on={v => patch({ startMinimized: v })} />
+                <Toggle label="Start minimized to tray" hint="When ClaudeCord starts with Windows." value={settings.startMinimized} on={v => patch({ startMinimized: v })} />
                 <Toggle label="Start with Admin Rights" hint="Relaunches elevated (UAC prompt). With ‘Start with Windows’, uses a scheduled task."
                   value={settings.startWithAdmin} on={v => patch({ startWithAdmin: v })} />
-                <Toggle label="Close button minimises to tray" hint="Keeps ClaudeCord running (and notifying) in the tray. Quit from the tray icon."
-                  value={settings.closeToTray} on={v => patch({ closeToTray: v })} />
-                <Toggle label="Show tray icon" hint="Always shown while “minimise to tray” is on." value={settings.showTrayIcon} on={v => patch({ showTrayIcon: v })} />
+                <Select label="When I close the window" hint="The tray keeps ClaudeCord running and notifying you. Quit from the tray icon."
+                  value={settings.closeAction}
+                  options={[{ value: 'ask', label: 'Ask me' }, { value: 'exit', label: 'Exit' }, { value: 'tray', label: 'Minimize to tray' }]}
+                  on={v => patch({ closeAction: v as AppSettings['closeAction'] })} />
+                <Toggle label="Show tray icon" hint="Always shown while “minimize to tray” is on." value={settings.showTrayIcon} on={v => patch({ showTrayIcon: v })} />
               </>}
             </Group>
           )}
           {section === 'defaults' && (
             <Group title="New chat defaults">
               <TextField label="Default working directory" hint="Used when no project is open." value={settings.defaultCwd ?? ''} placeholder="(none)" on={v => patch({ defaultCwd: v.trim() === '' ? null : v })} />
-              <Select label="Model" value={settings.defaultModel ?? ''}
-                options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.model ?? 'default'})` }, ...sortModels(MODELS).map(m => ({ value: m.value, label: m.label }))]}
+              <Select label="Model" value={settings.defaultModel === null ? '' : modelOption(models, settings.defaultModel)}
+                options={[
+                  { value: '', label: `(Claude Code’s: ${claudeDefaults.model ?? 'default'})` },
+                  ...models.map(m => ({ value: m.value, label: m.label })),
+                  // What's saved stays visible even when Claude no longer lists it.
+                  ...(settings.defaultModel !== null && !models.some(m => m.value === modelOption(models, settings.defaultModel!)) ? [{ value: settings.defaultModel, label: settings.defaultModel }] : [])
+                ]}
                 on={v => patch({ defaultModel: v === '' ? null : v })} />
               <Select label="Effort" value={settings.defaultEffort ?? ''}
                 options={[{ value: '', label: `(Claude Code’s: ${claudeDefaults.effort ?? 'default'})` }, ...EFFORTS.map(e => ({ value: e, label: e }))]}

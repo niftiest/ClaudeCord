@@ -1,6 +1,6 @@
 import { PlanUsageTracker } from './plan-usage'
 import { app, dialog, ipcMain, type BrowserWindow, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import type { Catalog } from '../catalog/db'
@@ -34,10 +34,12 @@ import { isExternallyLiveSession, sweepStaleSdkLocks, type OwnedProcess } from '
 import { LockMonitor } from './lock-monitor'
 import { chromeEnabledFor, claudeChromeDefault, findWindowsTerminal, mcpLoginCommand, openTerminal, terminalCommand } from './terminal'
 import { createPeriodicSweep, sweepExternalChanges } from './external-sync'
+import { forkTranscript, promptHistory, titleRow } from './chat-actions'
+import { listSessions } from '../catalog/repos'
+import type { SessionSummary } from '../../shared/types'
 import { isCatalogSettled } from '../indexer/indexer'
-import { PermissionRelay } from './permission-relay'
 import { addAllowRule, defaultManagedFiles } from '../claude-settings/files'
-import type { LiveEvent, PermissionRequest } from '../../shared/engine-types'
+import type { ElicitationAnswer, LiveEvent, PermissionRequest } from '../../shared/engine-types'
 
 /** The electron boundary for Plan 2's write path (Task 6): constructs the
  *  engine's real dependencies (a real SessionPool spawning real Transports,
@@ -152,6 +154,7 @@ export type EngineIpcHandle = {
 /** How often to look for idle processes. A process closes within this long of the
  *  idle limit, which is close enough. */
 const REAP_INTERVAL_MS = 60 * 1000
+const SIDE_QUESTION_MS = 120_000
 
 /** Claude waits up to 30s for a server to connect, so give it longer than that. */
 const MCP_RECONNECT_TIMEOUT_MS = 40_000
@@ -212,16 +215,8 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   // and prefixes the server itself, resolving --permission-prompt-tool to
   // `mcp__claudecord__approve` (the relay computes that fully-qualified name).
   // Confirmed live: the CLI's tools/call sends params.name === "approve".
-  const bridge = new PermissionBridge({ toolName: 'approve' })
-
-  // The relay wires a skip-permissions-OFF spawn to `bridge` over a per-session
-  // pipe (the CLI spawns a shim that tunnels to it). Server name 'claudecord'
-  // must match the mcp__claudecord__approve prompt-tool the CLI resolves.
-  const permissionRelay = new PermissionRelay({
-    bridge,
-    serverName: 'claudecord',
-    dir: join(app.getPath('userData'), 'permission-relay')
-  })
+  // Like the terminal, it waits as long as it takes: Claude Code is holding the tool call.
+  const bridge = new PermissionBridge({ toolName: 'approve', timeoutMs: 0 })
 
   /** The user's own Claude Code settings can turn suggestions off altogether. */
   const claudeAllowsSuggestions = (): boolean => {
@@ -260,7 +255,6 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       return { ...info, sessionKey: info.filePath }
     },
     rulesStore,
-    permissionRelay,
     defaults: {
       // Plan 3 Task 5: real persisted new-chat defaults. A per-chat override
       // (from the New-Chat dialog) still spreads over these via
@@ -268,8 +262,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       skipPermissions: s.defaultSkipPermissions,
       model: s.defaultModel ?? undefined,
       effort: s.defaultEffort ?? undefined,
-      claudeBin,
-      mcpConfigArg: join(app.getPath('userData'), 'permission-mcp-config.json')
+      claudeBin
     },
     isExternallyLive: isSessionExternallyLive,
     chromeEnabled: () => chromeEnabledFor(getSettings(db).chromeIntegration, () => claudeChromeDefault()),
@@ -332,6 +325,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     coordinator.resolvePermission(id, decision, editedInput, denyMessage)
   }
 
+  const liveModelChange = (sessionPk: number, overrides: { model?: unknown }): void => {
+    if (typeof overrides.model === 'string' && overrides.model.length > 0) void coordinator.setLiveModel(sessionPk, overrides.model)
+  }
+
   const onSetSessionOverrides = (
     _e: unknown,
     sessionPk: number,
@@ -344,6 +341,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     if (typeof overrides?.model === 'string') clean.model = overrides.model.length > 0 ? overrides.model : undefined
     if (typeof overrides?.effort === 'string') clean.effort = overrides.effort.length > 0 ? overrides.effort : undefined
     coordinator.mergeSessionDefaults(sessionPk, clean)
+    liveModelChange(sessionPk, overrides)
   }
 
   const countChats = db.prepare(`SELECT COUNT(*) AS n FROM sessions s JOIN projects p ON p.id = s.project_id WHERE p.dir_name = ?`)
@@ -577,6 +575,54 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? null : pool.turnInfo(info.filePath)
   })
+  ipcMain.handle(ENGINE_IPC.answerElicitation, (_e, sessionPk: number, requestId: string, answer: ElicitationAnswer) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info !== null) pool.respond(info.filePath, requestId, answer)
+  })
+  ipcMain.handle(ENGINE_IPC.chatMode, (_e, sessionPk: number) => coordinator.modeOf(sessionPk))
+  // A subagent that just finished isn't indexed until the next sweep, and there's no need to wait.
+  ipcMain.handle(ENGINE_IPC.indexNow, async (): Promise<void> => {
+    await sweepExternalChanges(db, { skip: fp => pool.isTurnRunning(fp) })
+  })
+  ipcMain.handle(ENGINE_IPC.promptHistory, (_e, sessionPk: number) => promptHistory(db, sessionPk))
+  ipcMain.handle(ENGINE_IPC.renameChat, async (_e, sessionPk: number, title: string): Promise<void> => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    const name = title.trim()
+    if (info === null || name.length === 0) return
+    // A running process keeps its own idea of the name, so it has to write it.
+    const asked = pool.request(info.filePath, 'rename_session', { title: name })
+    const done = asked === null ? false : await asked.then(() => true, () => false)
+    if (!done) appendFileSync(info.filePath, titleRow(info.resumeId, name), 'utf8')
+    db.prepare('UPDATE sessions SET custom_title = ? WHERE id = ?').run(name, sessionPk)
+  })
+  ipcMain.handle(ENGINE_IPC.forkChat, async (_e, sessionPk: number): Promise<{ ok: true; session: SessionSummary } | { ok: false; error: string }> => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null) return { ok: false, error: 'That chat no longer exists.' }
+    if (pool.isTurnRunning(info.filePath)) return { ok: false, error: "Wait for Claude to finish, or press Esc to stop it, then fork." }
+    if (!existsSync(info.filePath)) return { ok: false, error: "This chat's transcript no longer exists, so it can't be forked." }
+    const row = db.prepare('SELECT project_id AS projectId, COALESCE(custom_title, ai_title, title) AS title FROM sessions WHERE id = ?').get(sessionPk) as { projectId: number; title: string | null }
+    const newId = randomUUID()
+    try {
+      await forkTranscript(info.filePath, info.resumeId, newId, `${(row.title ?? 'Chat').slice(0, 80)} (fork)`)
+      await sweepExternalChanges(db, { skip: fp => pool.isTurnRunning(fp) })
+    } catch (err) {
+      return { ok: false, error: `Couldn't fork this chat: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    const session = listSessions(db, row.projectId).find(s => s.sessionId === newId)
+    return session === undefined ? { ok: false, error: "The fork was made, but it hasn't appeared yet." } : { ok: true, session }
+  })
+  ipcMain.handle(ENGINE_IPC.sideQuestion, async (_e, sessionPk: number, question: string): Promise<{ ok: true; answer: string } | { ok: false; error: string }> => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    const asked = info === null ? null : pool.request(info.filePath, 'side_question', { question }, SIDE_QUESTION_MS)
+    if (asked === null) return { ok: false, error: "A side question needs Claude running in this chat. Send a message first." }
+    try {
+      const reply = await asked as { response?: unknown } | null
+      return { ok: true, answer: typeof reply?.response === 'string' ? reply.response : '' }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(ENGINE_IPC.setChatMode, (_e, sessionPk: number, mode: string) => coordinator.setPermissionMode(sessionPk, mode))
   ipcMain.handle(ENGINE_IPC.stopTask, (_e, sessionPk: number, taskId: string) => {
     const info = getEngineSessionInfo(db, sessionPk)
     if (info !== null) pool.stopTask(info.filePath, taskId)
@@ -670,10 +716,16 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       return pool.snapshot().map(e => ({ sessionId: sessionIdOf(e.sessionKey), pid: e.pid }))
     },
     activeWork() {
-      return pool.snapshot().filter(e => e.busy || e.background > 0).length
+      return this.busySessionIds().length
     },
     busySessionIds() {
-      return pool.snapshot().filter(e => e.busy || e.background > 0).map(e => sessionIdOf(e.sessionKey).toLowerCase())
+      const turns = pool.snapshot().filter(e => e.busy || e.background > 0).map(e => sessionIdOf(e.sessionKey).toLowerCase())
+      // A `!` still running is work too: quitting would stop it.
+      const commands = shellRunner.runningChats().flatMap(pk => {
+        const info = getEngineSessionInfo(db, pk)
+        return info === null ? [] : [sessionIdOf(info.filePath).toLowerCase()]
+      })
+      return [...new Set([...turns, ...commands])]
     },
     stopOwned(sessionIds) {
       const want = new Set(sessionIds.map(s => s.toLowerCase()))
@@ -700,6 +752,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.backgroundTasks)
       ipcMain.removeHandler(ENGINE_IPC.withdrawQueued)
       ipcMain.removeHandler(ENGINE_IPC.stopTask)
+      ipcMain.removeHandler(ENGINE_IPC.answerElicitation)
+      ipcMain.removeHandler(ENGINE_IPC.chatMode)
+      for (const channel of [ENGINE_IPC.indexNow, ENGINE_IPC.promptHistory, ENGINE_IPC.renameChat, ENGINE_IPC.forkChat, ENGINE_IPC.sideQuestion]) ipcMain.removeHandler(channel)
+      ipcMain.removeHandler(ENGINE_IPC.setChatMode)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)
       ipcMain.removeHandler(ENGINE_IPC.listRemote)
@@ -729,7 +785,6 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       coordinator.disposeAll()
       pool.shutdown()
       bridge.shutdown()
-      permissionRelay.shutdown()
     }
   }
 }

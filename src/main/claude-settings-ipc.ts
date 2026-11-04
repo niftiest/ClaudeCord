@@ -9,7 +9,7 @@ import { defaultPaths } from './manage/paths'
 import { getLiveSessions } from './manage/live'
 import type { FileRemover } from './manage/types'
 import { fixedDrives, recycleBinRemover } from './manage-ipc'
-import { defaultManagedFiles, readSettingsView, writeSettings, type SettingsLocations } from './claude-settings/files'
+import { defaultManagedFiles, readSettingsText, readSettingsView, writeSettings, writeSettingsText, type SettingsLocations } from './claude-settings/files'
 import { findCandidates, isPolicyActive, previewOf, readRetentionStatus, runAutoClean, type RetentionPolicy } from './claude-settings/retention'
 import {
   CLAUDE_SETTINGS_IPC, type AutoCleanResult, type ClaudeSettingsPatch, type ClaudeSettingsTarget,
@@ -84,6 +84,16 @@ export function registerClaudeSettingsIpc(db: Catalog, window: BrowserWindow, en
       try {
         const t = validTarget(target)
         writeSettings(loc, t, typeof patch === 'object' && patch !== null ? patch : {})
+        return { ok: true, view: readSettingsView(loc, t) }
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+    [CLAUDE_SETTINGS_IPC.getText]: (_e, target: ClaudeSettingsTarget) => readSettingsText(loc, validTarget(target)),
+    [CLAUDE_SETTINGS_IPC.saveText]: (_e, target: ClaudeSettingsTarget, text: string): ClaudeSettingsUpdateResult => {
+      try {
+        const t = validTarget(target)
+        writeSettingsText(loc, t, String(text))
         return { ok: true, view: readSettingsView(loc, t) }
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) }

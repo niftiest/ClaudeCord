@@ -81,7 +81,7 @@ export function listProjects(db: Catalog): ProjectSummary[] {
 }
 
 const SESSION_COLUMNS = `
-  id, session_id AS sessionId, title, message_count AS messageCount,
+  id, session_id AS sessionId, COALESCE(custom_title, ai_title, title) AS title, message_count AS messageCount,
   last_ts AS lastTs, model, git_branch AS gitBranch,
   input_tokens AS inputTokens, output_tokens AS outputTokens,
   cache_read AS cacheRead, cache_write AS cacheWrite

@@ -145,17 +145,24 @@ export function discover(home: string = claudeHome(), opts: { readMeta?: boolean
       const subFiles = tryReaddir(subDir, 'subagents dir')
       if (subFiles === null) continue
 
-      for (const file of subFiles) {
-        if (!file.endsWith('.jsonl')) continue
-        const agentPath = join(subDir, file)
-        const ast = tryStat(agentPath, 'subagent file')
-        if (ast === null) continue
-        const agentId = file.slice(0, -6)
-        out.push({
-          kind: 'subagent', projectDir, sessionId: entry, agentId,
-          filePath: agentPath, size: ast.size, mtimeMs: ast.mtimeMs,
-          meta: withMeta ? readMeta(join(subDir, `${agentId}.meta.json`)) : null
-        })
+      // A workflow's agents sit one folder further down, under its run.
+      const workflowsDir = join(subDir, 'workflows')
+      const runDirs = existsSync(workflowsDir) ? (tryReaddir(workflowsDir, 'workflows dir') ?? []).map(run => join(workflowsDir, run)) : []
+      for (const dir of [subDir, ...runDirs]) {
+        const files = dir === subDir ? subFiles : tryReaddir(dir, 'workflow run dir')
+        if (files === null) continue
+        for (const file of files) {
+          if (!file.endsWith('.jsonl')) continue
+          const agentPath = join(dir, file)
+          const ast = tryStat(agentPath, 'subagent file')
+          if (ast === null) continue
+          const agentId = file.slice(0, -6)
+          out.push({
+            kind: 'subagent', projectDir, sessionId: entry, agentId,
+            filePath: agentPath, size: ast.size, mtimeMs: ast.mtimeMs,
+            meta: withMeta ? readMeta(join(dir, `${agentId}.meta.json`)) : null
+          })
+        }
       }
     }
   }

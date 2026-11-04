@@ -23,9 +23,9 @@ describe('repos', () => {
     const p = upsertProject(db, 'C--x')
     const m = upsertSession(db, { projectId: p, sessionId: 'm', kind: 'main', filePath: '/f/m.jsonl', fileSize: 1, fileMtimeMs: 1, model: 'opus' })
     const a = upsertSession(db, { projectId: p, sessionId: 'a', kind: 'subagent', filePath: '/f/a.jsonl', fileSize: 1, fileMtimeMs: 1, model: 'sonnet', toolUseId: 't1' })
-    db.prepare('UPDATE sessions SET input_tokens=? WHERE id=?').run(1_000_000, m)   // opus input: $5
-    db.prepare('UPDATE sessions SET output_tokens=? WHERE id=?').run(1_000_000, a)  // sonnet output: $15
-    expect(sumTotalCostUsd(db)).toBeCloseTo(20, 5)
+    db.prepare('UPDATE sessions SET input_tokens=? WHERE id=?').run(1_000_000, m)   // opus input: $4
+    db.prepare('UPDATE sessions SET output_tokens=? WHERE id=?').run(1_000_000, a)  // sonnet output: $10
+    expect(sumTotalCostUsd(db)).toBeCloseTo(14, 5)
   })
 
   it('sumTotalCostUsd is 0 for an empty catalog', () => {

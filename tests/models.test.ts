@@ -1,16 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
-  MODELS, EFFORTS, sortModels, resolveModelPricing, costOfSession, formatCost, formatCostWhole, contextWindowFor,
+  EFFORTS, sortModels, resolveModelPricing, costOfSession, formatCost, formatCostWhole, contextWindowFor,
   buildAvatarPrompt, formatImagePrice
 } from '../src/shared/models'
 
 describe('model catalog', () => {
-  it('offers the current Claude Code line-up with alias values', () => {
-    expect(MODELS.map(m => m.value)).toEqual(['opus', 'sonnet', 'haiku', 'fable', 'claude-opus-4-8'])
-    expect(MODELS.map(m => m.label)).toEqual(['Opus 5', 'Sonnet 5', 'Haiku 4.5', 'Fable 5', 'Opus 4.8'])
-    for (const m of MODELS) expect(m.hint.length).toBeGreaterThan(0)
-  })
-
   it('lists the five effort levels in ascending order', () => {
     expect(EFFORTS).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
@@ -18,15 +12,33 @@ describe('model catalog', () => {
 
 describe('resolveModelPricing', () => {
   it('matches an exact alias', () => {
-    expect(resolveModelPricing('sonnet').input).toBe(3)
-    expect(resolveModelPricing('haiku').output).toBe(5)
+    expect(resolveModelPricing('opus').input).toBe(4)
+    expect(resolveModelPricing('sonnet').input).toBe(2)
+    expect(resolveModelPricing('haiku').output).toBe(0.5)
     expect(resolveModelPricing('fable').input).toBe(10)
   })
 
   it('resolves a dated snapshot id by longest-prefix to its family', () => {
     // claude-opus-4-8-20260101 → the 'claude-opus-4-8' family, not bare opus
     expect(resolveModelPricing('claude-opus-4-8-20260101')).toEqual(resolveModelPricing('claude-opus-4-8'))
-    expect(resolveModelPricing('claude-sonnet-5-20260101').input).toBe(3)
+    expect(resolveModelPricing('claude-sonnet-4-6-20260101').input).toBe(3)
+  })
+
+  it('tells versions of the same name apart', () => {
+    expect(resolveModelPricing('claude-opus-5').input).toBe(5)
+    expect(resolveModelPricing('claude-opus-5-5').input).toBe(4)
+    expect(resolveModelPricing('claude-opus-5-5[1m]').input).toBe(4)
+    expect(resolveModelPricing('claude-opus-4-1').input).toBe(15)
+    expect(resolveModelPricing('claude-haiku-4-5-20251001').input).toBe(1)
+    expect(resolveModelPricing('claude-haiku-5-5').input).toBe(0.1)
+    expect(resolveModelPricing('claude-sonnet-5').cacheRead).toBe(0.2)
+    expect(resolveModelPricing('claude-sonnet-5-5').cacheRead).toBe(0.1)
+  })
+
+  it('prices a version it has never seen as the newest of its name', () => {
+    expect(resolveModelPricing('claude-haiku-9')).toEqual(resolveModelPricing('haiku'))
+    expect(resolveModelPricing('claude-sonnet-7-2')).toEqual(resolveModelPricing('sonnet'))
+    expect(resolveModelPricing('claude-fable-8')).toEqual(resolveModelPricing('fable'))
   })
 
   it('falls back to Opus rates for unknown/absent models', () => {
@@ -40,11 +52,11 @@ describe('resolveModelPricing', () => {
 
 describe('costOfSession', () => {
   it('sums every token bucket at the model rate (per MTok)', () => {
-    // 1M input @ $5 + 1M output @ $25 + 1M cacheRead @ $0.5 + 1M cacheWrite @ $6.25 = $36.75
+    // 1M input @ $4 + 1M output @ $20 + 1M cacheRead @ $0.2 + 1M cacheWrite @ $8 = $32.20
     const cost = costOfSession('opus', {
       inputTokens: 1_000_000, outputTokens: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000
     })
-    expect(cost).toBeCloseTo(36.75, 5)
+    expect(cost).toBeCloseTo(32.2, 5)
   })
 
   it('is zero for a session with no tokens', () => {
@@ -53,7 +65,7 @@ describe('costOfSession', () => {
 
   it('scales linearly and uses the given model rate', () => {
     const half = costOfSession('haiku', { inputTokens: 500_000, outputTokens: 0, cacheRead: 0, cacheWrite: 0 })
-    expect(half).toBeCloseTo(0.5, 5) // 0.5M @ $1/MTok
+    expect(half).toBeCloseTo(0.05, 5) // 0.5M @ $0.10/MTok
   })
 })
 

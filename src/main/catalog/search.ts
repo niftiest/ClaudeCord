@@ -54,7 +54,7 @@ export function searchProject(db: Catalog, projectId: number, query: string, lim
   const patterns = terms.map(t => `%${t.replace(/[\\%_]/g, c => `\\${c}`)}%`)
   const { total } = db.prepare(`SELECT COUNT(*) AS total ${where}`).get(projectId, ...patterns) as { total: number }
   const rows = db.prepare(`
-    SELECT m.id, m.session_pk AS sessionPk, m.uuid, m.seq, s.title, m.role, m.ts, m.text ${where}
+    SELECT m.id, m.session_pk AS sessionPk, m.uuid, m.seq, COALESCE(s.custom_title, s.ai_title, s.title) AS title, m.role, m.ts, m.text ${where}
     ORDER BY m.ts DESC, m.seq DESC
     LIMIT ?
   `).all(projectId, ...patterns, limit) as Array<Omit<ProjectSearchHit, 'trimmed'>>

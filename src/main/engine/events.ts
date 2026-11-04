@@ -1,6 +1,6 @@
 import type { PlanReading, PlanWindow } from '../../shared/plan-usage'
 import type { Usage } from '../../shared/types'
-import type { BackgroundTask, LiveEvent } from '../../shared/engine-types'
+import type { BackgroundTask, Elicitation, LiveEvent } from '../../shared/engine-types'
 import { blocksFromContent } from '../jsonl/parse'
 import { parseMcpServers } from './mcp-status'
 
@@ -41,11 +41,31 @@ function parseBackgroundTasks(raw: unknown): BackgroundTask[] {
 
 function parseSystem(row: Record<string, unknown>): LiveEvent {
   const other: LiveEvent = { kind: 'other', type: 'system' }
-  if (row.subtype === 'status') return { kind: 'status', status: typeof row.status === 'string' ? row.status : null }
+  if (row.subtype === 'status') return { kind: 'status', status: typeof row.status === 'string' ? row.status : null, ...(typeof row.permissionMode === 'string' ? { permissionMode: row.permissionMode } : {}) }
   if (row.subtype === 'background_tasks_changed') return { kind: 'background', tasks: parseBackgroundTasks(row.tasks) }
   if (row.subtype === 'task_progress' && typeof row.task_id === 'string') {
     const tokens = isPlainObject(row.usage) && typeof row.usage.total_tokens === 'number' ? row.usage.total_tokens : null
     return { kind: 'taskProgress', taskId: row.task_id, lastTool: typeof row.last_tool_name === 'string' ? row.last_tool_name : null, tokens }
+  }
+  if (row.subtype === 'api_retry') {
+    return {
+      kind: 'retry',
+      attempt: typeof row.attempt === 'number' ? row.attempt : 0,
+      maxRetries: typeof row.max_retries === 'number' ? row.max_retries : 0,
+      delayMs: typeof row.retry_delay_ms === 'number' ? row.retry_delay_ms : 0,
+      error: typeof row.error === 'string' ? row.error : null
+    }
+  }
+  if (row.subtype === 'hook_started' || row.subtype === 'hook_response') {
+    const output = [row.stderr, row.stdout, row.output].find((t): t is string => typeof t === 'string' && t.trim().length > 0) ?? ''
+    return {
+      kind: 'hook',
+      phase: row.subtype === 'hook_started' ? 'started' : 'finished',
+      name: typeof row.hook_name === 'string' ? row.hook_name : 'hook',
+      hookEvent: typeof row.hook_event === 'string' ? row.hook_event : '',
+      outcome: typeof row.outcome === 'string' ? row.outcome : null,
+      output: output.trim()
+    }
   }
   if (row.subtype !== 'init') return other
   const sessionId = row.session_id
@@ -165,6 +185,32 @@ export function parseControlResponse(line: string): ControlResponse | null {
   return { requestId: r.request_id, ok: false, error: typeof r.error === 'string' ? r.error : 'Claude Code refused the request.' }
 }
 
+export type ControlRequest = { requestId: string; subtype: string; request: Record<string, unknown> }
+
+/** Something Claude Code is asking this app, or null for any other line. */
+export function parseControlRequest(line: string): ControlRequest | null {
+  if (!line.includes('"control_request"')) return null
+  let value: unknown
+  try { value = JSON.parse(line) } catch { return null }
+  if (!isPlainObject(value) || value.type !== 'control_request' || typeof value.request_id !== 'string' || !isPlainObject(value.request)) return null
+  return { requestId: value.request_id, subtype: typeof value.request.subtype === 'string' ? value.request.subtype : '', request: value.request }
+}
+
+/** The form or page an elicitation request is asking the user about. */
+export function elicitationFrom(c: ControlRequest): Elicitation {
+  const r = c.request
+  return {
+    requestId: c.requestId,
+    server: typeof r.display_name === 'string' ? r.display_name : typeof r.mcp_server_name === 'string' ? r.mcp_server_name : 'An MCP server',
+    message: typeof r.message === 'string' ? r.message : '',
+    title: typeof r.title === 'string' ? r.title : null,
+    mode: r.mode === 'url' ? 'url' : 'form',
+    url: typeof r.url === 'string' && /^https?:\/\//i.test(r.url) ? r.url : null,
+    schema: r.requested_schema,
+    propertyOrder: r.property_order
+  }
+}
+
 /** Tolerant, never-throwing parse of one stream-json stdout line into a
  *  typed LiveEvent. Mirrors jsonl/parse.ts's parseLine: blank, non-JSON,
  *  non-object, or type-less lines all yield null. Every field narrowed off
@@ -197,6 +243,8 @@ export function parseEvent(line: string): LiveEvent | null {
       return parseRateLimit(value)
     case 'result':
       return parseResult(value)
+    case 'control_cancel_request':
+      return typeof value.request_id === 'string' ? { kind: 'permissionCancelled', requestId: value.request_id } : { kind: 'other', type }
     case 'command_lifecycle':
       return typeof value.command_uuid === 'string' && typeof value.state === 'string'
         ? { kind: 'commandLifecycle', uuid: value.command_uuid, state: value.state }

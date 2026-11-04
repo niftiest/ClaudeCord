@@ -3,11 +3,11 @@ import { modelOption, useClaudeModels } from './useClaudeModels'
 import { api } from '../api'
 import type { SessionSummary } from '../../shared/types'
 import { EFFORTS, costOfSession, formatCost } from '../../shared/models'
+import { PERMISSION_MODES } from '../../shared/engine-types'
 
-/** The model / effort / cost strip in the chat header (above the transcript).
- *  Model and effort are live overrides -- changing either pushes the choice to
- *  the engine (`api.setSessionOverrides`), which applies it on the session's
- *  NEXT turn (a spawned `claude` can't switch model mid-flight). The cost chip
+/** The mode / model / effort / cost strip in the chat header (above the transcript).
+ *  Mode and model apply to a running process straight away, even mid-turn. Effort
+ *  applies on the session's NEXT turn, which starts a new process. The cost chip
  *  is a read-only list-price estimate of the tokens the session has already
  *  spent, at the model those tokens were charged against (`session.model`).
  *
@@ -18,10 +18,13 @@ import { EFFORTS, costOfSession, formatCost } from '../../shared/models'
  *  REQUIRES HUMAN VERIFICATION: renders live in Electron; the selectors and
  *  the engine round-trip aren't exercised by vitest (the cost math and model
  *  list are, in tests/models.test.ts). */
-export function ChatHeaderControls({ session, liveModel }: {
+export function ChatHeaderControls({ session, liveModel, mode, onChangeMode }: {
   session: SessionSummary
   /** The model the chat's process says it's on, which /model can change. */
   liveModel: string | null
+  /** The permission mode the chat is in. */
+  mode: string
+  onChangeMode: (mode: string) => void
 }) {
   const models = useClaudeModels()
   // Seed the model select from whatever the session was last recorded running.
@@ -69,9 +72,17 @@ export function ChatHeaderControls({ session, liveModel }: {
   return (
     <div className="chead-controls">
       <label className="chead-control">
+        <span className="chead-control-label">Mode</span>
+        <select className="chead-select" value={mode} onChange={e => onChangeMode(e.target.value)}
+          title="What Claude can do without asking. Applies straight away. Shift+Tab in the message box changes it too.">
+          {PERMISSION_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          {!PERMISSION_MODES.some(m => m.value === mode) && <option value={mode}>{mode}</option>}
+        </select>
+      </label>
+      <label className="chead-control">
         <span className="chead-control-label">Model</span>
         <select className="chead-select" value={shown} onChange={e => changeModel(e.target.value)}
-          title="Model for the next turn">
+          title="Applies straight away, even if Claude is working">
           <option value="">Default</option>
           {models.map(m => <option key={m.value} value={m.value} title={m.description}>{m.label}</option>)}
           {!hasModel && <option value={shown}>{shown}</option>}

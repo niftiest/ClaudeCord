@@ -9,6 +9,7 @@ import type { BackgroundTask, LiveEvent, EngineSnapshot, TurnInfo } from '../../
 export interface TransportLike {
   /** Asks the process something without starting a turn. */
   request?(subtype: string, extra?: object, timeoutMs?: number): Promise<unknown>
+  respond?(requestId: string, response: unknown, error?: string): void
   start(): void
   send(msg: object): void
   interrupt(): void
@@ -287,6 +288,29 @@ export class SessionPool {
 
   /** Asks a live process something (not a turn: it doesn't count as activity).
    *  Null when this chat has no process running. */
+  /** Changes a running chat's model or mode without restarting it, even mid-turn. Afterwards
+   *  its spec says the same, so the next message doesn't replace the process over it. False
+   *  when no process is running, or it refused, and the next process starts with the change. */
+  async changeLive(sessionKey: string, subtype: 'set_model' | 'set_permission_mode', extra: object, spec: Partial<SpawnSpec>): Promise<boolean> {
+    const entry = this.live.get(sessionKey)
+    if (entry === undefined || entry.disposed) return false
+    try {
+      const answer = entry.transport.request?.(subtype, extra)
+      if (answer === undefined) return false
+      await answer
+    } catch {
+      return false
+    }
+    entry.spec = { ...entry.spec, ...spec }
+    return true
+  }
+
+  /** Answers something a chat's process asked. */
+  respond(sessionKey: string, requestId: string, response: unknown): void {
+    const entry = this.live.get(sessionKey)
+    if (entry !== undefined && !entry.disposed) entry.transport.respond?.(requestId, response)
+  }
+
   request(sessionKey: string, subtype: string, extra?: object, timeoutMs?: number): Promise<unknown> | null {
     const entry = this.live.get(sessionKey)
     if (entry === undefined || entry.disposed) return null

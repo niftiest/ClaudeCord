@@ -182,6 +182,33 @@ export function writeSettings(loc: SettingsLocations, target: ClaudeSettingsTarg
   if (target.scope === 'local' && !current.exists) excludeLocalSettingsFromGit(target.cwd)
 }
 
+/** The whole settings file as written, for the settings that have no control of their own. */
+export function readSettingsText(loc: SettingsLocations, target: ClaudeSettingsTarget): { path: string; text: string } {
+  const path = settingsPath(loc, target)
+  try {
+    return { path, text: readFileSync(path, 'utf8') }
+  } catch {
+    return { path, text: '{\n}\n' }
+  }
+}
+
+/** Replaces the whole file, once it's known to be a JSON object. */
+export function writeSettingsText(loc: SettingsLocations, target: ClaudeSettingsTarget, text: string): void {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (e) {
+    throw new Error(`That isn't valid JSON: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Settings have to be a JSON object, between { and }.')
+  const path = settingsPath(loc, target)
+  const existed = existsSync(path)
+  if (target.scope === 'user') backupUserFile(loc, path)
+  mkdirSync(join(path, '..'), { recursive: true })
+  atomicWriteText(path, text.endsWith('\n') ? text : `${text}\n`)
+  if (target.scope === 'local' && !existed) excludeLocalSettingsFromGit(target.cwd)
+}
+
 /** Adds a permission rule ("allow always") to a project's local settings,
  *  where Claude Code itself saves "don't ask again" rules. */
 export function addAllowRule(loc: SettingsLocations, cwd: string, rule: string): void {

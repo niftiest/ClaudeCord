@@ -2,7 +2,7 @@ import { ipcMain, app, shell, type BrowserWindow } from 'electron'
 import { applyStartupSettings, relaunchElevated, isElevated } from './elevation'
 import type { Catalog } from './catalog/db'
 import { listProjects, listSubagents, sumTotalCostUsd } from './catalog/repos'
-import { backupCatalogOnce, chatsToShow, folderGone, isConversationText, moveCustomisations } from './catalog/archive'
+import { backupCatalogOnce, chatsToShow, folderGone, isConversationText, moveCustomisations, withoutMovedChats } from './catalog/archive'
 import { displayText } from './jsonl/synthetic'
 import { readOriginRepo } from './engine/github'
 import { search, searchProject } from './catalog/search'
@@ -31,6 +31,8 @@ import type { TranscriptPage, ChannelRow, IndexProgress, RenderItem } from '../s
 import type { ChannelIcon } from '../shared/shell-types'
 import { IPC } from '../shared/ipc'
 import { launchExePath } from './portable-update'
+import { loadModelPrices } from './engine/model-prices'
+import { setModelPrices } from '../shared/models'
 
 /** Messages per page. Scrolling up requests the previous page. */
 export const PAGE_SIZE = 60
@@ -42,10 +44,10 @@ type NodeRow = { uuid: string; seq: number }
 
 /** A chat whose transcript has gone, from the text the catalog saved of it. Tool calls and
  *  their output weren't saved. Null when there's no text to show. */
-function savedTextPage(db: Catalog, sessionPk: number, window: string[], oldestSeq: number, hasMore: boolean): TranscriptPage | null {
+function savedTextPage(db: Catalog, sessionPk: number, window: string[], oldestSeq: number, hasMore: boolean, chainFilter: string): TranscriptPage | null {
   const wanted = new Set(window)
   const rows = db.prepare(
-    'SELECT uuid, role, ts, model, text FROM messages WHERE session_pk = ? AND is_sidechain = 0 AND seq >= ? ORDER BY seq'
+    `SELECT uuid, role, ts, model, text FROM messages WHERE session_pk = ? ${chainFilter} AND seq >= ? ORDER BY seq`
   ).all(sessionPk, oldestSeq) as Array<{ uuid: string; role: string; ts: string | null; model: string | null; text: string | null }>
   const items: RenderItem[] = []
   for (const row of rows) {
@@ -65,10 +67,12 @@ export async function loadTranscript(
 ): Promise<TranscriptPage> {
   const empty: TranscriptPage = { items: [], oldestSeq: null, hasMore: false }
 
-  const session = db.prepare('SELECT file_path FROM sessions WHERE id = ?').get(sessionPk) as
-    | { file_path: string }
+  const session = db.prepare('SELECT file_path, kind FROM sessions WHERE id = ?').get(sessionPk) as
+    | { file_path: string; kind: string }
     | undefined
   if (session === undefined) return empty
+  // Everything a subagent says is on a side chain, so in its own transcript that's the point.
+  const chainFilter = session.kind === 'subagent' ? '' : 'AND is_sidechain = 0'
 
   // A chat-history viewer shows EVERY message in chronological order (like
   // Discord), not a pruned "live branch". Earlier this walked the parentUuid
@@ -85,7 +89,7 @@ export async function loadTranscript(
   // Sidechain rows stay excluded — subagent traffic belongs nested in its Task
   // card, not inline in the main timeline.
   const nodes = db.prepare(
-    'SELECT uuid, seq FROM messages WHERE session_pk = ? AND is_sidechain = 0 ORDER BY seq'
+    `SELECT uuid, seq FROM messages WHERE session_pk = ? ${chainFilter} ORDER BY seq`
   ).all(sessionPk) as NodeRow[]
   if (nodes.length === 0) return empty
 
@@ -154,7 +158,7 @@ export async function loadTranscript(
     // gone -- almost always Claude Code's cleanupPeriodDays pruning an old chat.
     // Flag it so the UI shows an "archived / removed from disk" state rather
     // than an empty "no messages" one.
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return savedTextPage(db, sessionPk, window, firstSeq, eligible.length > window.length) ?? { ...empty, fileMissing: true }
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return savedTextPage(db, sessionPk, window, firstSeq, eligible.length > window.length, chainFilter) ?? { ...empty, fileMissing: true }
     throw err
   }
 
@@ -204,7 +208,7 @@ export type IpcHooks = {
   onSettingsChanged?: (s: AppSettings) => void
 }
 
-/** Startup registrations launch ClaudeCord with this, so "Start minimised"
+/** Startup registrations launch ClaudeCord with this, so "Start minimized"
  *  applies to a login start, not to the user opening the app themselves. */
 export const AUTOSTART_ARG = '--autostart'
 
@@ -216,7 +220,7 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
     loadTranscript(db, sessionPk, opts))
   ipcMain.handle(IPC.syncSessionIfStale, (_e, sessionPk: number) => syncSessionIfStale(db, sessionPk))
   ipcMain.handle(IPC.listSubagents, (_e, toolUseId: string) => listSubagents(db, toolUseId))
-  ipcMain.handle(IPC.search, (_e, query: string) => search(db, query))
+  ipcMain.handle(IPC.search, (_e, query: string) => withoutMovedChats(db, search(db, query)))
   ipcMain.handle(IPC.searchProject, (_e, projectId: number, query: string) => searchProject(db, projectId, query))
   ipcMain.handle(IPC.indexRun, async () => {
     await runIndex(db, {
@@ -238,7 +242,15 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
     }
     return listChannels(db)
   })
-  ipcMain.handle(IPC.totalCost, () => sumTotalCostUsd(db))
+  const pricesReady = loadModelPrices(db, homedir()).then(prices => {
+    setModelPrices(prices)
+    return prices
+  })
+  ipcMain.handle(IPC.modelPrices, () => pricesReady)
+  ipcMain.handle(IPC.totalCost, async () => {
+    await pricesReady
+    return sumTotalCostUsd(db)
+  })
   ipcMain.handle(IPC.listGroups, () => listGroups(db))
   ipcMain.handle(IPC.setFriendlyName, (_e, dirName: string, name: string | null) => setFriendlyName(db, dirName, name))
   ipcMain.handle(IPC.setStarred, (_e, dirName: string, starred: boolean) => setStarred(db, dirName, starred))

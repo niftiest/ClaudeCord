@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openCatalog, closeCatalog, selectMigrations } from '../src/main/catalog/db'
-import { SCHEMA_VERSION, type Migration } from '../src/main/catalog/schema'
+import { MIGRATIONS, SCHEMA_VERSION, type Migration } from '../src/main/catalog/schema'
 
 describe('catalog schema', () => {
   it('creates every table and the FTS index', () => {
@@ -130,6 +130,26 @@ describe('catalog schema', () => {
     expect(ftsAfterDelete2).toEqual([])
 
     closeCatalog(db)
+  })
+
+  // A catalog already at SCHEMA_VERSION runs nothing, so a newer migration would never reach it.
+  it('has a version that covers every migration', () => {
+    expect(SCHEMA_VERSION).toBe(Math.max(...MIGRATIONS.map(m => m.toVersion)))
+  })
+
+  it('brings a catalog from the previous version up to date, with its chat name columns', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-catalog-'))
+    const file = join(dir, 'catalog.db')
+    const db1 = openCatalog(file)
+    db1.exec('ALTER TABLE sessions DROP COLUMN custom_title')
+    db1.exec('ALTER TABLE sessions DROP COLUMN ai_title')
+    db1.prepare("UPDATE meta SET value = '8' WHERE key='schema_version'").run()
+    closeCatalog(db1)
+    const db2 = openCatalog(file)
+    const cols = (db2.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).toEqual(expect.arrayContaining(['custom_title', 'ai_title']))
+    closeCatalog(db2)
+    rmSync(dir, { recursive: true, force: true })
   })
 
   describe('schema_version on open', () => {

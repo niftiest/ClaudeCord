@@ -4,7 +4,8 @@ import type { FolderTrust, ShellRun } from './shell-run-types'
 import type { MemoryFile, MemoryFileContent, MemorySaveResult } from './project-memory-types'
 import type { ProjectSettings, ContextUsage } from './project-options'
 import type { ClaudeInfoResult, McpCheckResult, McpServerStatus } from './claude-info-types'
-import type { LiveEvent, PermissionRequest, PermissionDecision, EngineSnapshot, ExternalLock, RemoteSession, TurnInfo, BackgroundTask } from './engine-types'
+import type { SessionSummary } from './types'
+import type { ElicitationAnswer, LiveEvent, PermissionRequest, PermissionDecision, EngineSnapshot, ExternalLock, RemoteSession, TurnInfo, BackgroundTask } from './engine-types'
 export type { EngineSnapshot, ExternalLock, RemoteSession } from './engine-types'
 // Type-only import: StreamedRow's home module reads real files (node:fs), but
 // importing just its *type* here is erased at compile time -- the same
@@ -41,6 +42,14 @@ export const ENGINE_IPC = {
   backgroundTasks: 'engine:backgroundTasks',
   withdrawQueued: 'engine:withdrawQueued',
   stopTask: 'engine:stopTask',
+  answerElicitation: 'engine:answerElicitation',
+  chatMode: 'engine:chatMode',
+  promptHistory: 'engine:promptHistory',
+  indexNow: 'engine:indexNow',
+  renameChat: 'engine:renameChat',
+  forkChat: 'engine:forkChat',
+  sideQuestion: 'engine:sideQuestion',
+  setChatMode: 'engine:setChatMode',
   /** invoke: the chat's current external lock (a terminal holding it), or null. */
   getLock: 'engine:getLock',
   /** invoke: open the chat in a real Claude Code terminal (claude --resume). */
@@ -200,6 +209,16 @@ export type EngineApi = {
   turnInfo(sessionPk: number): Promise<TurnInfo | null>
   backgroundTasks(sessionPk: number): Promise<BackgroundTask[]>
   stopTask(sessionPk: number, taskId: string): Promise<void>
+  answerElicitation(sessionPk: number, requestId: string, answer: ElicitationAnswer): Promise<void>
+  chatMode(sessionPk: number): Promise<string>
+  /** Picks up what changed on disk without waiting for the next sweep. */
+  indexNow(): Promise<void>
+  /** What was typed in this chat's project, newest first. */
+  promptHistory(sessionPk: number): Promise<string[]>
+  renameChat(sessionPk: number, title: string): Promise<void>
+  forkChat(sessionPk: number): Promise<{ ok: true; session: SessionSummary } | { ok: false; error: string }>
+  sideQuestion(sessionPk: number, question: string): Promise<{ ok: true; answer: string } | { ok: false; error: string }>
+  setChatMode(sessionPk: number, mode: string): Promise<void>
   /** Returns an unsubscribe function, matching Plan 1's onIndexProgress. */
   onEvent(cb: (sessionPk: number, e: LiveEvent) => void): () => void
   onRows(cb: (sessionPk: number, rows: StreamedRow[]) => void): () => void

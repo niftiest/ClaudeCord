@@ -55,10 +55,13 @@ export type ClaudeInfoResult = { ok: true; info: ClaudeInfo } | { ok: false; err
  *  Claude's own command list can't answer this alone: it lists a few of these
  *  and leaves out aliases that do work, such as /cost. */
 export const TERMINAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
-  'add-dir', 'bug', 'chrome', 'color', 'doctor', 'exit', 'export', 'focus', 'help', 'hooks', 'ide',
-  'install-github-app', 'login', 'logout', 'memory', 'permissions', 'plugin', 'plugins', 'privacy-settings',
-  'quit', 'rc', 'release-notes', 'reload-plugins', 'remote-control', 'resume', 'rewind', 'send-to-project',
-  'settings', 'skills', 'status', 'statusline', 'tasks', 'terminal-setup', 'theme', 'todos', 'upgrade', 'vim'
+  'artifacts', 'autofix-pr', 'background', 'brief', 'bug', 'cd', 'chrome', 'cloud-plugins', 'copy', 'daemon', 'design-login',
+  'desktop', 'diff', 'doctor', 'exit', 'export', 'feedback', 'focus', 'help', 'hooks', 'ide', 'install', 'install-github-app',
+  'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'memory', 'mobile', 'passes', 'permissions', 'plugin', 'plugins',
+  'powerup', 'privacy-settings', 'quit', 'radio', 'rate-limit-options', 'rc', 'release-notes', 'remote-control', 'remote-env',
+  'restart', 'resume', 'rewind', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
+  'status', 'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'theme', 'todos', 'ultraplan', 'upgrade',
+  'vim', 'web-setup', 'wellbeing', 'workflows'
 ])
 
 /** ClaudeCord runs these itself: Claude would start a new session underneath

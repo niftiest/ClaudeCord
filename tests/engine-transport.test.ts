@@ -23,7 +23,9 @@ describe('buildArgs — always-present flags', () => {
       'stream-json',
       '--include-partial-messages',
       '--verbose',
-      '--replay-user-messages'
+      '--replay-user-messages',
+      '--include-hook-events',
+      '--allow-dangerously-skip-permissions'
     ])
   })
 })
@@ -127,7 +129,9 @@ describe('buildArgs — extraArgs', () => {
       'stream-json',
       '--include-partial-messages',
       '--verbose',
-      '--replay-user-messages'
+      '--replay-user-messages',
+      '--include-hook-events',
+      '--allow-dangerously-skip-permissions'
     ])
   })
 })
@@ -153,6 +157,8 @@ describe('buildArgs — full combination', () => {
       '--include-partial-messages',
       '--verbose',
       '--replay-user-messages',
+      '--include-hook-events',
+      '--allow-dangerously-skip-permissions',
       '--session-id',
       'sess-1',
       '--model',

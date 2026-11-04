@@ -503,11 +503,53 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .perm-summary { color:var(--txt); }
 .perm-input { margin:0; padding:9px 12px; border-top:1px solid var(--line); background:#232428;
   overflow-x:auto; color:var(--txt); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.perm-diff { padding:9px 12px; border-top:1px solid var(--line); background:#232428; max-height:360px; overflow:auto;
+  font-family:var(--mono); font-size:12px; color:var(--txt); }
+.perm-diff-path { color:var(--mu); padding-bottom:4px; overflow-wrap:anywhere; }
+.perm-diff-line { white-space:pre-wrap; overflow-wrap:anywhere; }
+.perm-diff-line.added { background:rgba(46,160,67,.2); }
+.perm-diff-line.removed { background:rgba(248,81,73,.2); }
 .perm-edit { padding:0 12px 9px; }
 .perm-edit-input { width:100%; background:var(--rail); border:1px solid var(--line); border-radius:4px;
   color:var(--tx); font:inherit; font-size:12px; padding:8px; outline:none; resize:vertical; }
 .perm-edit-input:focus { border-color:var(--accent); }
 .perm-edit-error { color:#ff9a9c; font-size:11.5px; margin-top:6px; }
+.side-question { margin:0 18px 8px; padding:8px 12px; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; background:var(--s1); max-height:220px; overflow:auto; }
+.side-question-head { display:flex; align-items:center; gap:10px; }
+.side-question-q { color:var(--mu); font-size:12.5px; flex:1; overflow-wrap:anywhere; }
+.side-question-head .update-bar-x { color:var(--mu); }
+.side-question-a { margin-top:6px; color:var(--txt); font-size:13.5px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.subagent-view { position:absolute; inset:0; z-index:40; display:flex; flex-direction:column; background:var(--bg); }
+.subagent-head { display:flex; align-items:center; gap:12px; padding:10px 18px; border-bottom:1px solid var(--line); color:var(--tx); }
+.subagent-title { flex:1; color:var(--mu); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tool-open-agent { margin:6px 0 2px 10px; font-size:12px; padding:4px 10px; }
+.history-search { position:absolute; left:18px; right:18px; bottom:calc(100% + 4px); z-index:30; padding:8px; border:1px solid var(--line); border-radius:10px; background:var(--s1); box-shadow:0 6px 24px rgba(0,0,0,.35); }
+.history-results { max-height:260px; overflow:auto; margin-top:6px; }
+.history-result { display:block; width:100%; padding:5px 8px; border:0; border-radius:6px; background:none; color:var(--txt); font:inherit; font-size:13px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.history-result:hover, .history-result.selected { background:var(--s3); color:var(--tx); }
+.history-none { padding:6px 8px; color:var(--mu); font-size:12.5px; }
+.project-option-name { flex-direction:column; align-items:stretch; gap:4px; }
+.project-option-name input { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--tx); font:inherit; font-size:12.5px; }
+.project-chats { margin-top:6px; max-height:220px; overflow:auto; }
+.project-chat { display:block; width:100%; padding:4px 6px; border:0; border-radius:6px; background:none; color:var(--txt); font:inherit; font-size:12.5px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.project-chat:hover { background:var(--s3); }
+.project-chat.current { color:var(--tx); font-weight:600; }
+.cc-raw { margin-top:18px; }
+.cc-raw > summary { cursor:pointer; color:var(--txt); font-size:13px; }
+.cc-raw-text { width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--tx); font-family:var(--mono); font-size:12.5px; }
+.cc-raw-actions { display:flex; align-items:center; gap:10px; margin-top:6px; }
+.perm-why { padding:0 12px 6px; color:var(--mu); font-size:12.5px; overflow-wrap:anywhere; }
+.question { padding:4px 12px 10px; border:0; margin:0; font-family:var(--font, inherit); min-width:0; }
+.question-text { color:var(--tx); font-size:13.5px; margin-bottom:6px; padding:0; overflow-wrap:anywhere; }
+.question-chip { display:inline-block; margin-right:8px; padding:1px 7px; border-radius:6px; background:var(--s3); color:var(--txt); font-size:11px; }
+.question-required { color:var(--mu); font-size:12px; }
+.question-option { display:flex; align-items:flex-start; gap:8px; padding:4px 2px; cursor:pointer; color:var(--txt); font-size:13px; }
+.question-option input { margin-top:3px; flex:none; }
+.question-label { display:block; }
+.question-desc { display:block; color:var(--mu); font-size:12px; margin-top:1px; }
+.question-other { width:100%; box-sizing:border-box; margin-top:6px; padding:6px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--tx); font:inherit; font-size:13px; }
+.question-preview { margin-top:8px; }
+.question-url { overflow-wrap:anywhere; font-size:12px; color:var(--txt); }
 .perm-actions { display:flex; flex-wrap:wrap; gap:8px; padding:0 12px 12px; }
 .perm-actions .btn-primary, .perm-actions .btn-secondary { font-family:inherit; font-size:12px; padding:6px 12px; }
 .perm-deny:not(:disabled):hover { background:rgba(237,66,69,.16); color:#ff9a9c; }
@@ -736,6 +778,12 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .field-row .field-input { flex:1; min-width:0; }
 .field-checkbox { display:flex; align-items:center; gap:8px; font-size:13.5px; color:var(--txt); cursor:pointer; }
 .field-checkbox input { cursor:pointer; }
+.app-dialog-overlay { z-index:2000; }
+.modal.app-dialog { width:480px; }
+.modal.app-dialog .modal-title { margin-bottom:10px; }
+.app-dialog-detail { margin:0 0 12px; color:var(--txt); font-size:13.5px; line-height:1.45; }
+.app-dialog-items { margin:0 0 12px; padding:8px 12px; list-style:none; background:var(--rail); border-radius:4px;
+  color:var(--tx); font-size:13px; overflow-wrap:anywhere; }
 .modal-error { background:rgba(237,66,69,.12); border:1px solid rgba(237,66,69,.4); color:#ff9a9c;
   border-radius:4px; padding:8px 10px; font-size:12.5px; margin-bottom:14px; }
 .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }

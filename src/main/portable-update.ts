@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
  *  `--updated-from=<old path>`, and deletes the old one once that has exited. */
 
 export const UPDATED_FROM_ARG = '--updated-from='
-/** The old window was in the tray or minimised, so the new one stays out of the way too. */
+/** The old window was in the tray or minimized, so the new one stays out of the way too. */
 export const UPDATED_HIDDEN_ARG = '--updated-hidden'
 
 export type PortableAsset = { name: string; url: string; size: number; sha256: string | null }

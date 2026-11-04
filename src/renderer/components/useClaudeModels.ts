@@ -1,29 +1,31 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { EFFORTS, MODELS, sortModels } from '../../shared/models'
+import { sortModels } from '../../shared/models'
 import type { ClaudeModel } from '../../shared/claude-info-types'
 
-/** Used until Claude answers, or if it can't be asked. */
-const FALLBACK: ClaudeModel[] = sortModels(MODELS.map(m => ({ value: m.value, label: m.label, description: m.hint, resolved: null, efforts: [...EFFORTS] })))
-
 let request: Promise<ClaudeModel[]> | null = null
+let loaded: ClaudeModel[] = []
 
-/** Claude Code's own model list. Asked once per run, from the home folder, because
- *  the list doesn't depend on the project and asking starts a brief process. */
-function loadModels(): Promise<ClaudeModel[]> {
+/** Claude Code's own model list: the only models the app offers. Asked when the app loads, from
+ *  the home folder, because the list doesn't depend on the project and asking starts a brief
+ *  process. If Claude can't answer the list stays empty, and the next window that needs it asks again. */
+export function loadClaudeModels(): Promise<ClaudeModel[]> {
   request ??= api.claudeInfo(null).then(r => {
-    if (r.ok && r.info.models.length > 0) return sortModels(r.info.models)
+    if (r.ok && r.info.models.length > 0) {
+      loaded = sortModels(r.info.models)
+      return loaded
+    }
     request = null
-    return FALLBACK
-  }).catch(() => { request = null; return FALLBACK })
+    return []
+  }).catch(() => { request = null; return [] })
   return request
 }
 
 export function useClaudeModels(): ClaudeModel[] {
-  const [models, setModels] = useState(FALLBACK)
+  const [models, setModels] = useState(loaded)
   useEffect(() => {
     let alive = true
-    void loadModels().then(m => { if (alive) setModels(m) })
+    void loadClaudeModels().then(m => { if (alive) setModels(m) })
     return () => { alive = false }
   }, [])
   return models

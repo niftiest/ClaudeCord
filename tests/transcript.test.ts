@@ -32,6 +32,46 @@ async function seededSession() {
   return { db, id }
 }
 
+describe('a subagent transcript', () => {
+  function writeSubagent(): string {
+    const dir = join(dirname(sessionFile), '11111111-1111-1111-1111-111111111111', 'subagents')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'agent-abc.jsonl')
+    const rows = [
+      { type: 'user', uuid: 's1', parentUuid: null, isSidechain: true, agentId: 'abc', cwd: 'C:\\Demo', timestamp: '2026-07-23T10:00:30Z', message: { role: 'user', content: 'Reply with heron' } },
+      { type: 'assistant', uuid: 's2', parentUuid: 's1', isSidechain: true, agentId: 'abc', timestamp: '2026-07-23T10:00:40Z', message: { role: 'assistant', content: [{ type: 'text', text: 'heron' }] } }
+    ]
+    writeFileSync(file, rows.map(r => JSON.stringify(r)).join('\n') + '\n')
+    return file
+  }
+  const texts = (items: Array<{ kind: string; text?: string }>): Array<string | undefined> => items.filter(i => i.kind === 'text').map(i => i.text)
+
+  it('shows the side-chain messages it is made of', async () => {
+    writeSubagent()
+    const db = openCatalog(':memory:')
+    await runIndex(db, { home })
+    const { id } = db.prepare("SELECT id FROM sessions WHERE kind='subagent'").get() as { id: number }
+    expect(texts((await loadTranscript(db, id)).items)).toEqual(['Reply with heron', 'heron'])
+  })
+
+  it('still shows the saved text once its file is gone', async () => {
+    const file = writeSubagent()
+    const db = openCatalog(':memory:')
+    await runIndex(db, { home })
+    const { id } = db.prepare("SELECT id FROM sessions WHERE kind='subagent'").get() as { id: number }
+    unlinkSync(file)
+    const page = await loadTranscript(db, id)
+    expect(page.savedTextOnly).toBe(true)
+    expect(texts(page.items)).toEqual(['Reply with heron', 'heron'])
+  })
+
+  it('stays out of the main chat', async () => {
+    writeSubagent()
+    const { db, id } = await seededSession()
+    expect(texts((await loadTranscript(db, id)).items)).not.toContain('heron')
+  })
+})
+
 describe('loadTranscript', () => {
   it('renders every message chronologically, including rewound branches, and pairs tool results', async () => {
     const { db, id } = await seededSession()

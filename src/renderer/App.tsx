@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
-import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
+import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type Elicitation, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
 import { Nav, SHOW_NAV_STATUS } from './components/Nav'
 import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
@@ -15,6 +15,7 @@ import { Transcript } from './components/Transcript'
 import { IndexProgress } from './components/IndexProgress'
 import { Composer } from './components/Composer'
 import { composeStore } from './compose-store'
+import { OpenSubagentContext, SubagentViewer } from './components/SubagentViewer'
 import { ArchivedNotice, readArchivedSeen, writeArchivedSeen } from './components/ArchivedNotice'
 import { NewChatDialog } from './components/NewChatDialog'
 import { LiveIndicator } from './components/LiveIndicator'
@@ -42,7 +43,7 @@ import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, sideQuestionOf, renameCommandOf, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -136,6 +137,26 @@ export function App() {
   const [jumpTarget, setJumpTarget] = useState<{ sessionPk: number; uuid: string; seq: number } | null>(null)
   const updateHoldRef = useRef(false)
   const [savedTextOnly, setSavedTextOnly] = useState(false)
+  const lastSentRef = useRef('')
+  const [subagentOpen, setSubagentOpen] = useState<string | null>(null)
+  const closeSubagent = useCallback((): void => setSubagentOpen(null), [])
+  // A `/btw` question, and its answer once it comes.
+  const [sideQuestion, setSideQuestion] = useState<{ question: string; answer: string | null; error: string | null } | null>(null)
+  const [chatMode, setChatMode] = useState('default')
+  // What MCP servers are asking, by chat, kept for a chat that isn't on screen.
+  const [elicitations, setElicitations] = useState<Map<number, Elicitation[]>>(new Map())
+  const setChatElicitations = useCallback((pk: number, change: (list: Elicitation[]) => Elicitation[]): void => {
+    setElicitations(prev => {
+      const next = change(prev.get(pk) ?? [])
+      if (next.length === 0 && !prev.has(pk)) return prev
+      const map = new Map(prev)
+      if (next.length === 0) map.delete(pk)
+      else map.set(pk, next)
+      return map
+    })
+  }, [])
+  const [liveActivity, setLiveActivity] = useState<string | null>(null)
+  const [shellStops, setShellStops] = useState(0)
   // Projects newly found with their folder gone, until the user has seen the notice.
   const [newlyArchived, setNewlyArchived] = useState<ChannelRow[]>([])
   // Chats with a message on its way: sent, but not in the transcript yet. On a chat with
@@ -233,12 +254,26 @@ export function App() {
   // Every chat's queue, whichever chat is on screen.
   useEffect(() => api.onEvent((pk, ev) => {
     composeStore.handleEvent(pk, ev, (chat, command) => { void api.shellRun(chat, command) })
+    if (ev.kind === 'elicitation') setChatElicitations(pk, list => [...list, ev.request])
+    if (ev.kind === 'permissionGone') {
+      setPermissionsByPk(prev => {
+        const list = prev.get(pk)
+        if (list === undefined || !list.some(r => r.id === ev.id)) return prev
+        const next = new Map(prev)
+        const left = list.filter(r => r.id !== ev.id)
+        if (left.length === 0) next.delete(pk)
+        else next.set(pk, left)
+        return next
+      })
+    }
+    // The process that asked is gone, or the turn it asked in is over.
+    if (ev.kind === 'exit' || ev.kind === 'result') setChatElicitations(pk, () => [])
     if (ev.kind === 'other' && ev.type === SHELL_OUTPUT_SENT) markSending(pk, true)
     // The folder went while the chat was open: its row moves to Archived.
     if (ev.kind === 'other' && ev.type === FOLDER_MISSING) refreshNavRef.current()
     // It isn't coming: refused, stopped, or a command that writes no message of its own.
     if (clearsRunning(ev)) markSending(pk, false)
-  }), [markSending])
+  }), [markSending, setChatElicitations])
   // Whichever chat is on screen, so one opened later doesn't show it as still on its way.
   useEffect(() => api.onRows((pk, rows) => {
     if (sendingRef.current.has(pk) && hasUserRenderItem(renderItemsFromStreamedRows(rows))) markSending(pk, false)
@@ -660,6 +695,8 @@ export function App() {
       if (ev.kind === 'usage') setTurnTokens(n => n + ev.outputTokens)
       if (ev.kind === 'suggestion') setSuggestion(ev.text)
       if (ev.kind === 'init') setLiveModel(ev.model)
+      if (ev.kind === 'init') setChatMode(ev.permissionMode)
+      if (ev.kind === 'status' && ev.permissionMode !== undefined) setChatMode(ev.permissionMode)
       // Also how a turn nobody sent shows up: Claude Code carrying on after a background task.
       if (ev.kind === 'init') setRunning(true)
       if (ev.kind === 'background') setBackgroundTasks(ev.tasks)
@@ -667,7 +704,19 @@ export function App() {
       if (ev.kind === 'result') void api.contextUsage(sid).then(c => { if (c !== null) setContext(c) })
       // A failed turn writes nothing to the chat, so without this it just stops.
       if (ev.kind === 'result' && ev.isError) setTerminalNotice(ev.text)
-      if (ev.kind === 'other' && ev.type === FOLDER_MISSING) setTerminalNotice('That message wasn\'t sent: this project\'s folder no longer exists, so Claude can\'t run here.')
+      if (ev.kind === 'retry') setLiveActivity(retryLabel(ev))
+      if (ev.kind === 'hook' && ev.phase === 'started') setLiveActivity(`Running hook: ${ev.name}`)
+      if (ev.kind === 'hook' && ev.phase === 'finished') {
+        setLiveActivity(null)
+        if (ev.outcome === 'error') setTerminalNotice(`The ${ev.name} hook failed${ev.output.length > 0 ? `: ${ev.output.slice(0, 400)}` : '.'}`)
+      }
+      if (ev.kind === 'delta' || ev.kind === 'assistant' || clearsRunning(ev)) setLiveActivity(null)
+      if (ev.kind === 'other' && ev.type === FOLDER_MISSING) {
+        const unsent = lastSentRef.current
+        void (unsent.length > 0 ? navigator.clipboard.writeText(unsent).then(() => true, () => false) : Promise.resolve(false)).then(copied => {
+          setTerminalNotice(`That message wasn't sent: this project's folder no longer exists, so Claude can't run here.${copied ? ' Your message is on the clipboard.' : ''}`)
+        })
+      }
       if (ev.kind === 'other' && ev.type.startsWith('spawn-error')) setTerminalNotice(`Claude couldn't start: ${ev.type.slice('spawn-error: '.length)}`)
       if (ev.kind === 'status') setLiveStatus(ev.status === 'compacting' ? ev.status : null)
       else if (clearsRunning(ev)) setLiveStatus(null)
@@ -726,7 +775,15 @@ export function App() {
     if (sessionPk === null) return
     let alive = true
     void api.shellList(sessionPk).then(r => { if (alive) setShellRuns(r) })
-    const off = api.onShellChanged((pk, runs) => { if (pk === sessionPk) setShellRuns(runs) })
+    const off = api.onShellChanged((pk, runs) => {
+      if (pk !== sessionPk) return
+      setShellRuns(prev => {
+        // One that finished goes to Claude and a turn follows, which sends what's queued next.
+        // One that was stopped has no turn to wait for.
+        if (prev.some(p => p.state === 'running' && runs.find(r => r.id === p.id)?.state === 'stopped')) setShellStops(n => n + 1)
+        return runs
+      })
+    })
     return () => { alive = false; off() }
   }, [sessionPk])
   useEffect(() => {
@@ -935,6 +992,41 @@ export function App() {
     []
   )
 
+  useEffect(() => {
+    if (sessionPk === null) return
+    let alive = true
+    void api.chatMode(sessionPk).then(m => { if (alive) setChatMode(m) })
+    return () => { alive = false }
+  }, [sessionPk])
+  const changeChatMode = useCallback((mode: string): void => {
+    if (sessionPk === null) return
+    setChatMode(mode)
+    void api.setChatMode(sessionPk, mode)
+  }, [sessionPk])
+
+  const renameChat = (title: string): void => {
+    if (session === null) return
+    const pk = session.id
+    const name = title.trim()
+    void api.renameChat(pk, name).then(async () => {
+      setSession(s => (s !== null && s.id === pk ? { ...s, title: name } : s))
+      if (projectIdRef.current !== null) setSessions(await api.listSessions(projectIdRef.current))
+    })
+  }
+  const forkChat = (): void => {
+    if (session === null) return
+    void api.forkChat(session.id).then(async r => {
+      if (!r.ok) { setTerminalNotice(r.error); return }
+      if (projectIdRef.current !== null) setSessions(await api.listSessions(projectIdRef.current))
+      refreshNavRef.current()
+      await openSession(r.session)
+    })
+  }
+  const renameChatRef = useRef(renameChat)
+  renameChatRef.current = renameChat
+  const forkChatRef = useRef(forkChat)
+  forkChatRef.current = forkChat
+
   const syncChat = useSyncChat(session?.id ?? null)
   const onSendRef = useRef<(text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void>(() => {})
   const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
@@ -973,6 +1065,17 @@ export function App() {
     const combined = buildOutgoingText(text, pastedTexts)
     // Guard: an empty send (whitespace-only, no images) is a no-op.
     if (combined.trim().length === 0 && images.length === 0) return
+    // Answered on the side, without touching the conversation or waiting for a turn.
+    const side = sideQuestionOf(combined)
+    if (side !== null) {
+      const pk = session.id
+      setSideQuestion({ question: side, answer: null, error: null })
+      void api.sideQuestion(pk, side).then(r => setSideQuestion(r.ok ? { question: side, answer: r.answer, error: null } : { question: side, answer: null, error: r.error }))
+      return
+    }
+    const newName = renameCommandOf(combined)
+    if (newName !== null) { renameChatRef.current(newName); return }
+    if (isForkCommand(combined)) { forkChatRef.current(); return }
     // /clear would move Claude to a new session underneath this chat.
     if (isClearCommand(combined)) {
       void clearChatRef.current()
@@ -999,6 +1102,7 @@ export function App() {
     // as stale and bail rather than wholesale-replacing `items` out from
     // under this turn's own live rows.
     reloadGenRef.current++
+    lastSentRef.current = combined
     // A message for Claude's next step shows in the queue instead.
     if (uuid === undefined) markSending(session.id, true)
     api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
@@ -1225,6 +1329,7 @@ export function App() {
             onResize={dx => setBladeWidth(w => clamp(w + dx, BLADE_MIN, BLADE_MAX))} />}
         </>
       )}
+      <OpenSubagentContext.Provider value={setSubagentOpen}>
       <main className="main" data-theme={chatPaneTheme(themeChoice)} hidden={manageOpen}>
         <UpdateBar />
         {newlyArchived.length > 0 && (
@@ -1273,7 +1378,7 @@ export function App() {
             <div className="path">{project?.cwd ?? `${channels.length} projects indexed`}</div>
           </div>
           {session !== null && <ProjectSearchBox ref={findInputRef} value={findQuery} onChange={setFindQuery} />}
-          {session !== null && (
+          {session !== null && channels.find(c => c.id === project?.id)?.archived !== true && (
             <button type="button" className="chead-term" onClick={openChatInTerminal}
               title="Open this chat in Claude Code in a terminal: for /mcp, logins, reconnecting tools, and anything else the app can't do">
               ›_ Open in terminal
@@ -1282,9 +1387,10 @@ export function App() {
           {session !== null && settings !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
-              onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }} />
+              onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
+              session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onRename={renameChat} onFork={forkChat} />
           )}
-          {session !== null && <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} />}
+          {session !== null && <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />}
         </header>
         {session !== null && <SyncChatBanner info={syncChat.info} onOpenSettings={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />}
         {session === null
@@ -1318,6 +1424,12 @@ export function App() {
               }}
               scrollToBottomSignal={scrollToBottomTick}
               permissionRequests={permissionsByPk.get(session.id) ?? []}
+              elicitations={elicitations.get(session.id) ?? []}
+              onAnswerElicitation={(requestId, answer) => {
+                setChatElicitations(session.id, list => list.filter(r => r.requestId !== requestId))
+                void api.answerElicitation(session.id, requestId, answer)
+              }}
+              onOpenLink={url => { void api.openLink(url) }}
               onResolvePermission={(id, decision, editedInput, denyMessage) =>
                 onResolvePermission(session.id, id, decision, editedInput, denyMessage)} /></div>
               {findTerms !== '' && (
@@ -1354,10 +1466,18 @@ export function App() {
         )}
         {session !== null && running && (
           <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus} pending={pending} lastActivity={lastEventAt}
-            waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0} />
+            waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0 || (elicitations.get(session.id)?.length ?? 0) > 0} activity={liveActivity} />
         )}
         {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} />}
         {session !== null && <ShellRuns runs={shellRuns} />}
+        {sideQuestion !== null && (
+          <div className="side-question" role="status">
+            <div className="side-question-head"><span className="perm-badge">Side question</span><span className="side-question-q">{sideQuestion.question}</span>
+              <button type="button" className="update-bar-x" aria-label="Close" onClick={() => setSideQuestion(null)}>✕</button></div>
+            <div className="side-question-a">{sideQuestion.error ?? sideQuestion.answer ?? 'Asking…'}</div>
+          </div>
+        )}
+        {subagentOpen !== null && <SubagentViewer toolUseId={subagentOpen} onClose={closeSubagent} />}
         {session !== null && channels.find(c => c.id === project?.id)?.archived === true && (
           <div className="composer composer-archived" role="status">
             This project's folder no longer exists{project?.cwd ? ` (${project.cwd})` : ''}, so this chat is read-only.
@@ -1368,7 +1488,7 @@ export function App() {
           // fresh Composer instance per session, so nothing bleeds from one
           // session into another. What's in progress survives the switch: text
           // via draftsRef, chips and the queue in composeStore.
-          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} settled={settledPk === session.id} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
+          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} settled={settledPk === session.id} shellStops={shellStops} onCycleMode={() => changeChatMode(nextPermissionMode(chatMode))} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
             onShellCommand={command => { void api.shellRun(session.id, command) }}
             onHijack={async () => {
               const r = await api.hijackChat(session.id)
@@ -1384,6 +1504,7 @@ export function App() {
             onSend={onSend} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
         )}
       </main>
+      </OpenSubagentContext.Provider>
       {!manageOpen && (settings?.showContextRail ?? true) && (
         railExpanded
           ? <ContextRail session={session} fsEntries={fsEntries}

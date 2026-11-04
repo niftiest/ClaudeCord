@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, screen } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createSplash, type Splash } from './splash'
@@ -9,11 +9,13 @@ import { registerEngineIpc, type EngineIpcHandle } from './engine/engine-ipc'
 import { registerManageIpc } from './manage-ipc'
 import { registerSyncIpc, type SyncIpcHandle } from './sync-ipc'
 import { registerUpdater } from './updater'
-import { getSettings } from './catalog/settings'
+import { getSettings, updateSettings } from './catalog/settings'
 import { AUTOSTART_ARG } from './ipc'
 import { applyStartupSettings } from './elevation'
 import { registerClaudeSettingsIpc } from './claude-settings-ipc'
 import { createDesktop, type Desktop } from './desktop'
+import { AppDialogs } from './app-dialog'
+import type { AppDialogRequest } from '../shared/app-dialog'
 import { isDeletablePrevious, launchExePath, previousFromArgv, removePrevious, UPDATED_HIDDEN_ARG } from './portable-update'
 
 // Module-level so every app-lifecycle listener below can reach the same
@@ -29,6 +31,11 @@ let desktop: Desktop | null = null
 let revealed = false
 /** Set when the app is really quitting, so "close to tray" lets the window close. */
 let quitting = false
+/** Set once closing has been agreed, so the window's close goes through this time. */
+let closeAgreed = false
+/** A close or quit is waiting on the user's answer. */
+let closeQuestionOpen = false
+let dialogs: AppDialogs | null = null
 
 /** Longest the splash may stand in for the main window. The splash tracks the
  *  startup index, so a big first-run archive legitimately takes a while; past
@@ -46,8 +53,8 @@ function createWindow(): void {
   const icon = devIcon()
   const db = openCatalog(join(app.getPath('userData'), 'catalog.db'))
   const startup = getSettings(db)
-  // A login start with "Start minimised": no splash, window stays in the tray
-  // (or minimised to the taskbar when there's no tray icon).
+  // A login start with "Start minimized": no splash, window stays in the tray
+  // (or minimized to the taskbar when there's no tray icon).
   const startHidden = (startup.startMinimized && process.argv.includes(AUTOSTART_ARG)) || process.argv.includes(UPDATED_HIDDEN_ARG)
   if (!startHidden) splash = createSplash(icon)
   // Older registrations didn't pass AUTOSTART_ARG; refresh the plain Run key
@@ -76,7 +83,34 @@ function createWindow(): void {
 
   mainWindow = win
 
-  desktop = createDesktop(db, () => mainWindow, { quit: () => { quitting = true; app.quit() } })
+  const updaterChats = (): string[] => (engine?.busySessionIds() ?? []).map(id => {
+    const row = db.prepare("SELECT COALESCE(custom_title, ai_title, title) AS title FROM sessions WHERE LOWER(session_id) = ? AND kind = 'main'").get(id) as { title: string | null } | undefined
+    return row?.title ?? 'Untitled chat'
+  })
+  dialogs = new AppDialogs(
+    request => { win.webContents.send(IPC.appDialogAsk, request) },
+    request => askNatively(win, request)
+  )
+  const onDialogShown = (e: Electron.IpcMainEvent, id: number): void => { if (e.sender === win.webContents) dialogs?.shown(id) }
+  const onDialogAnswer = (e: Electron.IpcMainEvent, id: number, index: number): void => { if (e.sender === win.webContents) dialogs?.answer(id, index) }
+  ipcMain.on(IPC.appDialogShown, onDialogShown)
+  ipcMain.on(IPC.appDialogAnswer, onDialogAnswer)
+  win.on('closed', () => {
+    ipcMain.removeListener(IPC.appDialogShown, onDialogShown)
+    ipcMain.removeListener(IPC.appDialogAnswer, onDialogAnswer)
+    dialogs?.cancelAll()
+  })
+
+  desktop = createDesktop(db, () => mainWindow, { quit: () => {
+    // The question shows in the window, which may be in the tray.
+    if (closeQuestionOpen) { bringToFront(win); return }
+    closeQuestionOpen = true
+    void confirmStoppingWork(win, updaterChats()).then(agreed => {
+      if (!agreed) return
+      quitting = true
+      app.quit()
+    }).finally(() => { closeQuestionOpen = false })
+  } })
   desktop.syncTray()
 
   const reveal = (): void => {
@@ -122,19 +156,37 @@ function createWindow(): void {
     autoCheck: () => getSettings(db).autoCheckUpdates,
     autoInstall: () => getSettings(db).autoInstallUpdates,
     activeWork: () => engine?.activeWork() ?? 0,
-    activeChats: () => (engine?.busySessionIds() ?? []).map(id => {
-      const row = db.prepare("SELECT title FROM sessions WHERE LOWER(session_id) = ? AND kind = 'main'").get(id) as { title: string | null } | undefined
-      return row?.title ?? 'Untitled chat'
-    })
+    activeChats: updaterChats
   })
 
-  // "Close button minimises to tray": hide instead of closing, unless the app
-  // is quitting (tray menu, update install, Windows shutting down).
+  // The close button exits or hides to the tray, as the user chose the first time. A real
+  // quit (tray menu, update install, Windows shutting down) never comes through here.
+  const closeAsChosen = async (): Promise<void> => {
+    let action = getSettings(db).closeAction
+    if (action === 'ask') {
+      const chosen = await askCloseAction(win)
+      if (chosen === null || win.isDestroyed()) return
+      updateSettings(db, { closeAction: chosen })
+      desktop?.syncTray()
+      action = chosen
+    }
+    if (action === 'tray' && (desktop?.hasTray() ?? false)) {
+      win.hide()
+      return
+    }
+    if (!(await confirmStoppingWork(win, updaterChats())) || win.isDestroyed()) return
+    closeAgreed = true
+    win.close()
+  }
   win.on('close', e => {
-    if (quitting || !getSettings(db).closeToTray || !(desktop?.hasTray() ?? false)) return
+    if (quitting || closeAgreed) return
     e.preventDefault()
-    win.hide()
+    if (closeQuestionOpen) { bringToFront(win); return }
+    closeQuestionOpen = true
+    void closeAsChosen().finally(() => { closeQuestionOpen = false })
   })
+  // Windows is shutting down: nobody is there to answer a question.
+  win.on('session-end', () => { quitting = true })
   win.on('closed', () => { desktop?.dispose(); desktop = null })
   win.on('closed', () => claudeSettings.dispose())
   win.on('closed', () => updater.dispose())
@@ -181,6 +233,61 @@ if (previousExe !== null && portableExe !== undefined && isDeletablePrevious(pre
 } else {
   start()
 }
+function bringToFront(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+/** A question for a window that can't show one itself. */
+async function askNatively(win: BrowserWindow, request: AppDialogRequest): Promise<number> {
+  const options = {
+    type: 'question' as const,
+    title: 'ClaudeCord',
+    message: request.title,
+    detail: [...(request.items ?? []), ...request.detail].join('\n\n'),
+    buttons: request.buttons.map(b => b.label),
+    defaultId: request.defaultIndex,
+    cancelId: request.cancelIndex,
+    noLink: true
+  }
+  const { response } = win.isDestroyed() ? await dialog.showMessageBox(options) : await dialog.showMessageBox(win, options)
+  return response
+}
+
+/** The first time the window is closed: exit, or keep running in the tray. Null is Cancel. */
+async function askCloseAction(win: BrowserWindow): Promise<'exit' | 'tray' | null> {
+  bringToFront(win)
+  const choice = await dialogs!.ask({
+    title: 'When you close ClaudeCord',
+    detail: [
+      'Should it exit, or minimize to the tray? In the tray it keeps running and notifying you, and you quit from the tray icon.',
+      'This will be remembered. You can change it in Settings, under Startup & System.'
+    ],
+    buttons: [{ label: 'Cancel', kind: 'secondary' }, { label: 'Exit', kind: 'secondary' }, { label: 'Minimize to tray', kind: 'primary' }],
+    defaultIndex: 2,
+    cancelIndex: 0
+  })
+  return choice === 2 ? 'tray' : choice === 1 ? 'exit' : null
+}
+
+/** Closing with chats working stops them, so it asks first. Quitting for an update has its
+ *  own question and doesn't come through here. */
+async function confirmStoppingWork(win: BrowserWindow, chats: string[]): Promise<boolean> {
+  if (chats.length === 0) return true
+  bringToFront(win)
+  const choice = await dialogs!.ask({
+    title: chats.length === 1 ? 'Claude is still working in 1 chat' : `Claude is still working in ${chats.length} chats`,
+    items: chats.length > 5 ? [...chats.slice(0, 5), `and ${chats.length - 5} more`] : chats,
+    detail: ['Closing stops this work. A command already started may keep running and could still change files.'],
+    buttons: [{ label: 'Close anyway', kind: 'danger' }, { label: 'Keep working', kind: 'primary' }],
+    defaultIndex: 1,
+    cancelIndex: 1
+  })
+  return choice === 0
+}
+
 app.on('window-all-closed', () => {
   // Fix 3: tear the engine down (pool/bridge/watchers) before quitting --
   // not just on the window's own 'closed' event above, which covers the

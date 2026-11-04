@@ -7,8 +7,11 @@ import { ToolCard } from './ToolCard'
 import { ChatImage } from './ChatImage'
 import { Markdown } from './Markdown'
 import { PermissionCard } from './PermissionCard'
+import { parseQuestions } from '../question-form'
+import type { Elicitation, ElicitationAnswer } from '../../shared/engine-types'
+import { ElicitationCard, QuestionCard } from './QuestionCard'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldScrollToBottom, followAfterScroll, isPlanApproval, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
+import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
@@ -20,7 +23,7 @@ const CARD_OPEN_MS = 400
 /** How far above the end the reader has to be before the jump button shows. */
 const JUMP_BUTTON_GAP = 200
 
-export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, sending = false, savedTextOnly = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, elicitations = [], onAnswerElicitation, onOpenLink, livePreview, sending = false, savedTextOnly = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -35,6 +38,10 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   onResolvePermission?: ResolvePermission
   /** Transient "assistant is typing" preview (Plan 2 Task 10) accumulated from
    *  live engine:event deltas, rendered after the messages while a turn streams. */
+  /** What MCP servers are asking the user. */
+  elicitations?: Elicitation[]
+  onAnswerElicitation?: (requestId: string, answer: ElicitationAnswer) => void
+  onOpenLink?: (url: string) => void
   livePreview?: LivePreview | null
   /** A message of the user's is on its way and isn't in `items` yet. */
   sending?: boolean
@@ -161,7 +168,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // has none until it decodes, and text reflows as fonts and highlighting land. So
   // follow the height itself, as well as the chat's own box getting shorter when the
   // composer grows. This runs before the frame is painted, so nothing shows cut off.
-  const hasStream = items.length > 0 || pending.length > 0 || preview !== null || sending
+  const hasStream = items.length > 0 || pending.length > 0 || elicitations.length > 0 || preview !== null || sending
   useEffect(() => {
     const el = parentRef.current
     const content = contentRef.current
@@ -386,13 +393,20 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
           </div>
         </div>
       )}
-      {pending.length > 0 && (
+      {(pending.length > 0 || elicitations.length > 0) && (
         <div className="turn">
           <ClaudeAvatar icon={claudeIcon} size={28} />
           <div className="turn-body perm-stack">
+            {elicitations.map(request => (
+              <ElicitationCard key={request.requestId} request={request}
+                onAnswer={(id, answer) => onAnswerElicitation?.(id, answer)} onOpenLink={url => onOpenLink?.(url)} />
+            ))}
             {pending.map(req => (
               isPlanApproval(req.tool)
                 ? <PlanApprovalCard key={req.id} req={req}
+                    onResolve={(id, decision, editedInput, denyMessage) => onResolvePermission?.(id, decision, editedInput, denyMessage)} />
+                : isQuestion(req.tool) && parseQuestions(req.input) !== null
+                ? <QuestionCard key={req.id} req={req}
                     onResolve={(id, decision, editedInput, denyMessage) => onResolvePermission?.(id, decision, editedInput, denyMessage)} />
                 : <PermissionCard key={req.id} req={req}
                     onResolve={(id, decision, editedInput, denyMessage) => onResolvePermission?.(id, decision, editedInput, denyMessage)} />

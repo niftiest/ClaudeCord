@@ -87,8 +87,7 @@ describe.skipIf(!RUN_E2E)('EngineCoordinator — real CLI round trip (CLAUDECORD
           rulesStore: { add: () => {}, get: () => [] },
           defaults: {
             skipPermissions: true,
-            claudeBin: 'claude',
-            mcpConfigArg: join(tmpdir(), 'claudecord-e2e-permission-mcp-config.json')
+            claudeBin: 'claude'
           },
           isExternallyLive: () => false
         })

@@ -48,7 +48,7 @@ export function BackgroundTasksLine({ tasks, running, onStop }: { tasks: Backgro
   )
 }
 
-export function WorkingLine({ startedAt, tokens, pending, lastActivity, status, waitingOnYou }: {
+export function WorkingLine({ startedAt, tokens, pending, lastActivity, status, waitingOnYou, activity = null }: {
   startedAt: number
   tokens: number
   /** This turn's tool calls still waiting for a result. */
@@ -57,6 +57,8 @@ export function WorkingLine({ startedAt, tokens, pending, lastActivity, status, 
   lastActivity: number
   status: string | null
   waitingOnYou: boolean
+  /** Something holding the turn up: an API retry, or a hook running. */
+  activity?: string | null
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -64,9 +66,10 @@ export function WorkingLine({ startedAt, tokens, pending, lastActivity, status, 
     return () => clearInterval(timer)
   }, [])
   const label = waitingOnYou ? 'Waiting for your answer'
+    : activity !== null ? activity
     : status === 'compacting' ? 'Compacting conversation'
     : pickVerb(startedAt)
-  const details = workingDetails({ now, startedAt, tokens, pending, lastActivity, quiet: waitingOnYou || status !== null })
+  const details = workingDetails({ now, startedAt, tokens, pending, lastActivity, quiet: waitingOnYou || status !== null || activity !== null })
   return (
     <div className="working-line" role="status">
       <span className="working-star" aria-hidden="true">✻</span> {label}… <span className="working-details">({details.join(' · ')})</span>

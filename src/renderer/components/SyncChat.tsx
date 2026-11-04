@@ -117,8 +117,8 @@ export function SyncConflictDialog({ conflict, heldMessage, onLater, onResolved,
       <div className="modal-overlay">
         <div className="modal sync-dialog">
           <h2 className="modal-title">Both versions are kept</h2>
-          <p className="settings-note">This chat now continues from what {conflict.otherDevice} synced. Your messages from this PC are in their own chat, labelled “from” this PC, in the same project.</p>
-          <p className="settings-note">You can tell Claude what happened here too. It goes in as a clearly labelled report, because Claude in this chat never saw that work.</p>
+          <p className="settings-note">This chat now continues from what {conflict.otherDevice} synced. Your messages from this PC are in their own chat, labeled “from” this PC, in the same project.</p>
+          <p className="settings-note">You can tell Claude what happened here too. It goes in as a clearly labeled report, because Claude in this chat never saw that work.</p>
           <pre className="sync-summary">{done.summary}</pre>
           <div className="modal-actions">
             {done.branchPk !== null && (

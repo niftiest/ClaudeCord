@@ -85,6 +85,8 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
   let gitBranch: string | null = null
   let model: string | null = null
   let title: string | null = null
+  let customTitle: string | null = null
+  let aiTitle: string | null = null
   let firstTs: string | null = null
   let lastTs: string | null = null
   let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheWrite = 0
@@ -107,13 +109,15 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
       db.prepare(`
         UPDATE sessions SET
           indexed_offset = 0, indexed_seq = 0, message_count = 0,
-          first_ts = NULL, last_ts = NULL, title = NULL, model = NULL, git_branch = NULL,
+          first_ts = NULL, last_ts = NULL, title = NULL, custom_title = NULL, ai_title = NULL, model = NULL, git_branch = NULL,
           input_tokens = 0, output_tokens = 0, cache_read = 0, cache_write = 0, last_usage = NULL
         WHERE id = ?
       `).run(sessionPk)
     }
 
     for (const { row, byteOffset, seq } of rows) {
+      if (row.type === 'custom-title' && typeof (row as { customTitle?: unknown }).customTitle === 'string') customTitle = (row as unknown as { customTitle: string }).customTitle
+      if (row.type === 'ai-title' && typeof (row as { aiTitle?: unknown }).aiTitle === 'string') aiTitle = (row as unknown as { aiTitle: string }).aiTitle
       if (!isMessageRow(row)) continue
       const text = textOf(row)
       const info = insert.run({
@@ -158,11 +162,12 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
         indexed_offset = ?, indexed_seq = ?,
         message_count = (SELECT COUNT(*) FROM messages WHERE session_pk = ?),
         first_ts = COALESCE(first_ts, ?), last_ts = COALESCE(?, last_ts),
-        title = COALESCE(title, ?), model = COALESCE(?, model), git_branch = COALESCE(git_branch, ?),
+        title = COALESCE(title, ?), custom_title = COALESCE(?, custom_title), ai_title = COALESCE(?, ai_title),
+        model = COALESCE(?, model), git_branch = COALESCE(git_branch, ?),
         input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
         cache_read = cache_read + ?, cache_write = cache_write + ?, last_usage = ?
       WHERE id = ?
-    `).run(endOffset, seqEnd, sessionPk, firstTs, lastTs, title, model, gitBranch,
+    `).run(endOffset, seqEnd, sessionPk, firstTs, lastTs, title, customTitle, aiTitle, model, gitBranch,
            inputTokens, outputTokens, cacheRead, cacheWrite, lastUsage === null ? null : JSON.stringify(lastUsage), sessionPk)
 
     if (cwd !== null) setProjectCwd(db, projectId, cwd)

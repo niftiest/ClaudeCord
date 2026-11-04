@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process'
-import { parseControlResponse, parseEvent } from './events'
+import { elicitationFrom, parseControlRequest, parseControlResponse, parseEvent } from './events'
 import type { LiveEvent } from '../../shared/engine-types'
 
 /** Everything needed to build one `claude` invocation's argv and spawn it
@@ -39,7 +39,11 @@ export function buildArgs(spec: SpawnSpec): string[] {
     '--include-partial-messages',
     '--verbose',
     // Reports when a queued message is taken in, which the composer's queue shows.
-    '--replay-user-messages'
+    '--replay-user-messages',
+    // Hooks running or failing, so a chat they hold up doesn't look stuck.
+    '--include-hook-events',
+    // Lets the mode change to bypass during a chat. It doesn't start in that mode.
+    '--allow-dangerously-skip-permissions'
   ]
 
   if (spec.sessionId !== undefined) args.push('--session-id', spec.sessionId)
@@ -206,6 +210,15 @@ export class Transport {
     this.child.stdin.write(JSON.stringify(userMessage) + '\n')
   }
 
+  /** Answers something the process asked. */
+  respond(requestId: string, response: unknown, error?: string): void {
+    if (this.child === null || this.exited) return
+    const body = error !== undefined
+      ? { subtype: 'error', request_id: requestId, error }
+      : { subtype: 'success', request_id: requestId, response }
+    this.child.stdin.write(JSON.stringify({ type: 'control_response', response: body }) + '\n')
+  }
+
   /** Asks the process something without starting a turn. Rejects if it refuses,
    *  doesn't answer in time, or exits first. */
   request(subtype: string, extra: object = {}, timeoutMs = 10_000): Promise<unknown> {
@@ -288,6 +301,14 @@ export class Transport {
       const lineBuf = this.pendingStdout.subarray(0, index)
       this.pendingStdout = this.pendingStdout.subarray(index + 1)
       const line = lineBuf.toString('utf8')
+      const asked = parseControlRequest(line)
+      if (asked !== null) {
+        if (asked.subtype === 'elicitation') this.emitEvent({ kind: 'elicitation', request: elicitationFrom(asked) })
+        else if (asked.subtype === 'can_use_tool') this.emitEvent({ kind: 'permissionAsked', requestId: asked.requestId, args: asked.request })
+        // Nothing else is ever asked of this app. Silence would leave Claude Code waiting.
+        else this.respond(asked.requestId, null, `ClaudeCord can't answer ${asked.subtype || 'that request'}.`)
+        continue
+      }
       const control = parseControlResponse(line)
       if (control !== null) {
         const waiter = this.pendingRequests.get(control.requestId)

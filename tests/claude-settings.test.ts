@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  addAllowRule, readSettingsView, settingsPath, validateSetting, writeSettings, type SettingsLocations
+  addAllowRule, readSettingsText, readSettingsView, settingsPath, validateSetting, writeSettings, writeSettingsText, type SettingsLocations
 } from '../src/main/claude-settings/files'
 import { daysFor, findCandidates, isPolicyActive, previewOf, readRetentionStatus, runAutoClean, DAY_MS } from '../src/main/claude-settings/retention'
 import { openCatalog } from '../src/main/catalog/db'
@@ -98,6 +98,29 @@ describe('Claude Code settings files', () => {
     expect(readJson(join(cwd, '.claude', 'settings.local.json'))).toEqual({ permissions: { allow: ['Bash(npm test:*)', 'WebFetch(domain:github.com)'] } })
     const exclude = readFileSync(join(cwd, '.git', 'info', 'exclude'), 'utf8')
     expect(exclude.split('\n').filter(l => l === '.claude/settings.local.json')).toHaveLength(1)
+  })
+})
+
+describe('editing a settings file directly', () => {
+  it('reads an empty object when there is no file yet', () => {
+    const r = readSettingsText(loc, { scope: 'user' })
+    expect(r.path).toBe(settingsPath(loc, { scope: 'user' }))
+    expect(JSON.parse(r.text)).toEqual({})
+  })
+
+  it('saves exactly what was typed, with a final newline, and backs up the user file first', () => {
+    const user = settingsPath(loc, { scope: 'user' })
+    writeFileSync(user, '{"model":"opus"}\n')
+    writeSettingsText(loc, { scope: 'user' }, '{\n  // kept out\n}'.replace('  // kept out\n', '  "effortLevel": "high"\n'))
+    expect(readFileSync(user, 'utf8')).toBe('{\n  "effortLevel": "high"\n}\n')
+    expect(readdirSync(join(loc.claudeDir, 'backups', 'claudecord')).length).toBe(1)
+  })
+
+  it.each([['{ not json', /valid JSON/], ['[1,2]', /JSON object/], ['null', /JSON object/]])('refuses %s and leaves the file alone', (text, message) => {
+    const user = settingsPath(loc, { scope: 'user' })
+    writeFileSync(user, '{"model":"opus"}\n')
+    expect(() => writeSettingsText(loc, { scope: 'user' }, text)).toThrow(message)
+    expect(readFileSync(user, 'utf8')).toBe('{"model":"opus"}\n')
   })
 })
 

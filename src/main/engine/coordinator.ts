@@ -2,7 +2,7 @@ import { safeExtraFlags, type SpawnSpec } from './transport'
 import { allowAlwaysRule } from './permission-bridge'
 import type { StreamedRow } from '../jsonl/stream'
 import type { ContentBlock } from '../../shared/types'
-import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type LiveEvent, type PermissionRequest, type PermissionDecision } from '../../shared/engine-types'
+import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type PermissionSuggestion, type LiveEvent, type PermissionRequest, type PermissionDecision } from '../../shared/engine-types'
 
 /** Engine core: ties the primitives built in Tasks 1-5 (pool, watcher,
  *  permission bridge, transport) into the one thing the IPC boundary
@@ -38,6 +38,8 @@ export interface PoolLike {
   interrupt(sessionKey: string): void
   on(sessionKey: string, cb: (e: LiveEvent) => void): void
   isTurnRunning(sessionKey: string): boolean
+  respond?(sessionKey: string, requestId: string, response: unknown): void
+  changeLive?(sessionKey: string, subtype: 'set_model' | 'set_permission_mode', extra: object, spec: Partial<SpawnSpec>): Promise<boolean>
 }
 
 export interface WatcherLike {
@@ -49,6 +51,8 @@ export interface BridgeLike {
   readonly toolName: string
   onRequest(cb: (req: PermissionRequest) => void): void
   resolve(id: string, decision: PermissionDecision): void
+  handleRequest(args: unknown, sessionKey: string): { id: string; answer: Promise<unknown> }
+  cancel(id: string): boolean
 }
 
 /** Persists "allow always" rules per cwd so the NEXT spawn against that
@@ -60,23 +64,12 @@ export type RulesStore = {
   get(cwd: string): string[]
 }
 
-/** Injected by engine-ipc.ts (the real net/fs-backed PermissionRelay) to wire
- *  a skip-permissions-OFF spawn to ClaudeCord's in-process permission bridge.
- *  Given a sessionKey it returns the two spawn args -- the per-session
- *  `--mcp-config` path and the fully-qualified `--permission-prompt-tool`
- *  name. Optional: when absent (unit tests, or a build without the relay) the
- *  coordinator falls back to `defaults.mcpConfigArg` + `bridge.toolName`. */
-export type PermissionRelayLike = {
-  ensure(sessionKey: string): { mcpConfigArg: string; permissionPromptTool: string }
-}
-
 export type EngineDefaults = {
   skipPermissions: boolean
   model?: string
   effort?: string
   permissionMode?: string
   claudeBin: string
-  mcpConfigArg: string
 }
 
 export type EngineCoordinatorDeps = {
@@ -85,10 +78,6 @@ export type EngineCoordinatorDeps = {
   bridge: BridgeLike
   lookupSession: (sessionPk: number) => SessionInfo | null
   rulesStore: RulesStore
-  /** Wires a skip-permissions-OFF spawn to the in-process bridge (see
-   *  PermissionRelayLike). Omit to fall back to defaults.mcpConfigArg +
-   *  bridge.toolName. */
-  permissionRelay?: PermissionRelayLike
   defaults: EngineDefaults
   /** Predicate mirroring the pool's own two-writer guard: true when a
    *  terminal (or anything outside this app) already holds the session's
@@ -170,9 +159,7 @@ function buildUserMessage(text: string, images?: ImageBlockInput[], before: Cont
 function buildSpawnSpec(
   info: SessionInfo,
   defaults: EngineDefaults,
-  bridge: BridgeLike,
   rulesStore: RulesStore,
-  permissionRelay?: PermissionRelayLike,
   chrome = false,
   extras: { maxBudgetUsd: number | null; extraFlags: string[] } = { maxBudgetUsd: null, extraFlags: [] }
 ): SpawnSpec {
@@ -191,24 +178,23 @@ function buildSpawnSpec(
   if (chrome) spec.chrome = true
   if (extras.maxBudgetUsd !== null && extras.maxBudgetUsd > 0) spec.maxBudgetUsd = extras.maxBudgetUsd
 
+  // Claude Code asks over stdin and stdout. As well as more about each request, this is what
+  // offers Claude its question and plan-mode tools, so it applies when skipping permissions too.
+  spec.permissionPromptTool = 'stdio'
   if (!defaults.skipPermissions) {
-    // The relay (when wired) owns the per-session pipe + config and computes
-    // the fully-qualified prompt-tool name (mcp__<server>__<tool>). Falling
-    // back to bridge.toolName + defaults.mcpConfigArg keeps the coordinator's
-    // unit tests -- which inject no relay -- working unchanged.
-    const wiring = permissionRelay !== undefined
-      ? permissionRelay.ensure(info.sessionKey)
-      : { mcpConfigArg: defaults.mcpConfigArg, permissionPromptTool: bridge.toolName }
-    spec.permissionPromptTool = wiring.permissionPromptTool
-    const extraArgs = ['--mcp-config', wiring.mcpConfigArg]
     const rules = rulesStore.get(info.cwd)
-    if (rules.length > 0) extraArgs.push('--allowedTools', rules.join(','))
-    spec.extraArgs = extraArgs
+    if (rules.length > 0) spec.extraArgs = ['--allowedTools', rules.join(',')]
   }
   const userFlags = safeExtraFlags(extras.extraFlags)
   if (userFlags.length > 0) spec.extraArgs = [...(spec.extraArgs ?? []), ...userFlags]
 
   return spec
+}
+
+/** What "don't ask again" applies from Claude Code's suggestions: rules and folders. One may
+ *  also offer a change of mode, which is the user's own choice in the header, not a side effect. */
+export function alwaysAllowChanges(suggestions: PermissionSuggestion[]): PermissionSuggestion[] {
+  return suggestions.filter(s => s.type !== 'setMode')
 }
 
 type PendingPermission = { req: PermissionRequest; sessionPk: number; cwd: string }
@@ -225,6 +211,10 @@ export class EngineCoordinator {
   private readonly sessionKeyToPk = new Map<string, number>()
   private readonly watchers = new Map<number, WatcherLike>()
   private readonly subscribedKeys = new Set<string>()
+  /** Modes picked in the chat header. They last as long as the app is open. */
+  private readonly chatModes = new Map<number, string>()
+  /** Requests Claude Code is waiting on, to the bridge's id for each. */
+  private readonly asked = new Map<string, string>()
   /** Chats with `!` output to deliver once the running turn ends. */
   private readonly shellOutputWaiting = new Set<number>()
   private readonly pendingPermissions = new Map<string, PendingPermission>()
@@ -276,8 +266,8 @@ export class EngineCoordinator {
     this.ensureEventSubscription(info.sessionKey, sessionPk)
     this.ensureWatcher(sessionPk, info)
 
-    const spec = buildSpawnSpec(info, this.effectiveDefaults(sessionPk), this.deps.bridge, this.deps.rulesStore,
-      this.deps.permissionRelay, this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
+    const spec = buildSpawnSpec(info, this.effectiveDefaults(sessionPk), this.deps.rulesStore,
+      this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
     // A slash command has to be the whole message, or Claude reads it as text.
     const before = text.trimStart().startsWith('/') ? [] : this.deps.contextForMessage?.(sessionPk) ?? []
     // `!` output that a message has already carried: nothing is left to say.
@@ -364,12 +354,17 @@ export class EngineCoordinator {
       return
     }
 
-    if (decision === 'allow_always' && pending !== undefined) {
+    // Claude Code says what "don't ask again" means for this request, and applies it now.
+    // For a plan, the same button means "and accept edits from here on".
+    const suggestions: PermissionSuggestion[] = decision !== 'allow_always' ? []
+      : pending?.req.tool === 'ExitPlanMode' ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+      : alwaysAllowChanges(pending?.req.suggestions ?? [])
+    if (decision === 'allow_always' && suggestions.length === 0 && pending !== undefined) {
       const rule = allowAlwaysRule(pending.req.tool, pending.req.input)
       this.deps.rulesStore.add(pending.cwd, rule)
     }
 
-    this.deps.bridge.resolve(id, { behavior: 'allow', updatedInput: editedInput ?? pending?.req.input })
+    this.deps.bridge.resolve(id, { behavior: 'allow', updatedInput: editedInput ?? pending?.req.input, ...(suggestions.length > 0 ? { updatedPermissions: suggestions } : {}) })
   }
 
   onEvent(cb: (sessionPk: number, e: LiveEvent) => void): void {
@@ -466,7 +461,33 @@ export class EngineCoordinator {
    *  `deps.defaults` by reference (no allocation on the hot path every
    *  send() already is). */
   private effectiveDefaults(sessionPk: number): EngineDefaults {
-    return { ...this.deps.defaults, ...this.overridesFor(sessionPk) }
+    const merged = { ...this.deps.defaults, ...this.overridesFor(sessionPk) }
+    const mode = this.chatModes.get(sessionPk)
+    if (mode === undefined) return merged
+    return mode === 'bypassPermissions'
+      ? { ...merged, skipPermissions: true, permissionMode: undefined }
+      : { ...merged, skipPermissions: false, permissionMode: mode }
+  }
+
+  /** The mode this chat is in, or will start its next process in. */
+  modeOf(sessionPk: number): string {
+    const d = this.effectiveDefaults(sessionPk)
+    return d.skipPermissions ? 'bypassPermissions' : d.permissionMode ?? 'default'
+  }
+
+  /** Switches a chat's mode: at once if it has a process, even mid-turn, or else for its next. */
+  async setPermissionMode(sessionPk: number, mode: string): Promise<void> {
+    this.chatModes.set(sessionPk, mode)
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null) return
+    const d = this.effectiveDefaults(sessionPk)
+    await this.deps.pool.changeLive?.(info.sessionKey, 'set_permission_mode', { mode }, { skipPermissions: d.skipPermissions, permissionMode: d.permissionMode })
+  }
+
+  /** A model picked for a chat with a running process applies straight away. */
+  async setLiveModel(sessionPk: number, model: string): Promise<void> {
+    const info = this.deps.lookupSession(sessionPk)
+    if (info !== null) await this.deps.pool.changeLive?.(info.sessionKey, 'set_model', { model }, { model })
   }
 
   /** The choices that apply to this chat, which belong to its project when stored. */
@@ -502,9 +523,33 @@ export class EngineCoordinator {
     if (this.subscribedKeys.has(sessionKey)) return
     this.subscribedKeys.add(sessionKey)
     this.deps.pool.on(sessionKey, (e) => {
+      if (e.kind === 'permissionAsked') { this.askPermission(sessionKey, e.requestId, e.args); return }
+      if (e.kind === 'permissionCancelled') { this.cancelPermission(sessionKey, sessionPk, e.requestId); return }
+      // Nothing is left to answer for a process that has gone.
+      if (e.kind === 'exit') for (const requestId of [...this.asked.keys()].filter(k => k.startsWith(`${sessionKey}\0`))) this.cancelPermission(sessionKey, sessionPk, requestId.slice(sessionKey.length + 1))
       this.emitEvent(sessionPk, e)
       if (e.kind === 'result' && this.shellOutputWaiting.has(sessionPk)) this.deliverShellOutput(sessionPk)
     })
+  }
+
+  private askPermission(sessionKey: string, requestId: string, args: Record<string, unknown>): void {
+    const { id, answer } = this.deps.bridge.handleRequest(args, sessionKey)
+    const key = `${sessionKey}\0${requestId}`
+    this.asked.set(key, id)
+    void answer.then((result: unknown) => {
+      // A cancelled one has nobody left to hear the answer.
+      if (this.asked.delete(key)) this.deps.pool.respond?.(sessionKey, requestId, result)
+    })
+  }
+
+  private cancelPermission(sessionKey: string, sessionPk: number, requestId: string): void {
+    const key = `${sessionKey}\0${requestId}`
+    const id = this.asked.get(key)
+    if (id === undefined) return
+    this.asked.delete(key)
+    this.pendingPermissions.delete(id)
+    this.deps.bridge.cancel(id)
+    this.emitEvent(sessionPk, { kind: 'permissionGone', id })
   }
 
   /** Starts exactly one watcher per session, from the offset the catalog has

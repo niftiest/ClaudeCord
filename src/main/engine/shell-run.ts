@@ -99,6 +99,11 @@ export class ShellRunner {
     return this.runs.filter(r => r.sessionPk === sessionPk)
   }
 
+  /** Chats with a command still running, once each. */
+  runningChats(): number[] {
+    return [...new Set(this.runs.filter(r => r.state === 'running').map(r => r.sessionPk))]
+  }
+
   run(sessionPk: number, cwd: string, command: string): ShellRun {
     const run: ShellRun = {
       id: this.deps.makeId?.() ?? randomUUID(), sessionPk, command, output: '',

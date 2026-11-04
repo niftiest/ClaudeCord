@@ -1,15 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { PassThrough } from 'node:stream'
 import {
   buildPermissionResult,
-  toMcpToolResult,
   parsePermissionArgs,
   allowAlwaysRule,
-  PermissionBridge,
-  routeMcpRequest,
-  McpStdioServer
+  PermissionBridge
 } from '../src/main/engine/permission-bridge'
 import type { PermissionDecision } from '../src/shared/engine-types'
+
+const ask = (bridge: PermissionBridge, args: unknown, key: string) => bridge.handleRequest(args, key).answer
 
 // ---------------------------------------------------------------------------
 // buildPermissionResult -- the DOCUMENTED response contract, pinned exactly
@@ -33,20 +31,6 @@ describe('buildPermissionResult', () => {
     const result = buildPermissionResult(decision, { command: 'rm -rf /' })
     expect(result).toEqual({ behavior: 'deny', message: 'not allowed' })
     expect('updatedInput' in result).toBe(false)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// toMcpToolResult -- MCP text-content-block wrapper
-// ---------------------------------------------------------------------------
-
-describe('toMcpToolResult', () => {
-  it('wraps into { content: [{ type: text, text: <json> }] } and round-trips', () => {
-    const result = { behavior: 'allow', updatedInput: { command: 'ls' } }
-    const wrapped = toMcpToolResult(result)
-    expect(wrapped.content).toHaveLength(1)
-    expect(wrapped.content[0]?.type).toBe('text')
-    expect(JSON.parse(wrapped.content[0]?.text ?? '')).toEqual(result)
   })
 })
 
@@ -136,10 +120,10 @@ describe('allowAlwaysRule', () => {
 // ---------------------------------------------------------------------------
 
 describe('PermissionBridge', () => {
-  it('handleToolCall parks and does not resolve until resolve() is called', async () => {
+  it('a request parks and does not resolve until resolve() is called', async () => {
     const bridge = new PermissionBridge()
     let settled = false
-    const promise = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'ls' } }, 'session-a')
+    const promise = ask(bridge, { tool_name: 'Bash', input: { command: 'ls' } }, 'session-a')
     void promise.then(() => {
       settled = true
     })
@@ -148,7 +132,7 @@ describe('PermissionBridge', () => {
     expect(settled).toBe(false)
   })
 
-  it('onRequest fires with the parsed request and a stable id; resolve() completes with the right MCP result', async () => {
+  it('onRequest fires with the parsed request and a stable id; resolve() completes with the right answer', async () => {
     const bridge = new PermissionBridge()
     let seenId = ''
     bridge.onRequest((req) => {
@@ -157,25 +141,24 @@ describe('PermissionBridge', () => {
       seenId = req.id
     })
 
-    const promise = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'ls' } }, 'session-a')
+    const promise = ask(bridge, { tool_name: 'Bash', input: { command: 'ls' } }, 'session-a')
     expect(seenId).not.toBe('')
 
     bridge.resolve(seenId, { behavior: 'allow' })
-    const result = (await promise) as { content: { type: string; text: string }[] }
-    expect(result.content[0]?.type).toBe('text')
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } })
+    const result = await promise
+    expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } })
   })
 
-  it('deny decision resolves to a deny MCP result', async () => {
+  it('deny decision resolves to a deny', async () => {
     const bridge = new PermissionBridge()
     let seenId = ''
     bridge.onRequest((req) => {
       seenId = req.id
     })
-    const promise = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'rm -rf /' } }, 'session-a')
+    const promise = ask(bridge, { tool_name: 'Bash', input: { command: 'rm -rf /' } }, 'session-a')
     bridge.resolve(seenId, { behavior: 'deny', message: 'nope' })
-    const result = (await promise) as { content: { type: string; text: string }[] }
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ behavior: 'deny', message: 'nope' })
+    const result = await promise
+    expect(result).toEqual({ behavior: 'deny', message: 'nope' })
   })
 
   it('two concurrent requests get distinct ids and resolve independently', async () => {
@@ -183,15 +166,15 @@ describe('PermissionBridge', () => {
     const ids: string[] = []
     bridge.onRequest((req) => ids.push(req.id))
 
-    const p1 = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
-    const p2 = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'b' } }, 'session-a')
+    const p1 = ask(bridge, { tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
+    const p2 = ask(bridge, { tool_name: 'Bash', input: { command: 'b' } }, 'session-a')
 
     expect(ids).toHaveLength(2)
     expect(ids[0]).not.toBe(ids[1])
 
     bridge.resolve(ids[1] as string, { behavior: 'allow' })
-    const r2 = (await p2) as { content: { type: string; text: string }[] }
-    expect(JSON.parse(r2.content[0]?.text ?? '')).toEqual({ behavior: 'allow', updatedInput: { command: 'b' } })
+    const r2 = await p2
+    expect(r2).toEqual({ behavior: 'allow', updatedInput: { command: 'b' } })
 
     // p1 still parked -- only resolving p2 must not have resolved it.
     let p1Settled = false
@@ -202,8 +185,8 @@ describe('PermissionBridge', () => {
     expect(p1Settled).toBe(false)
 
     bridge.resolve(ids[0] as string, { behavior: 'deny', message: 'no' })
-    const r1 = (await p1) as { content: { type: string; text: string }[] }
-    expect(JSON.parse(r1.content[0]?.text ?? '')).toEqual({ behavior: 'deny', message: 'no' })
+    const r1 = await p1
+    expect(r1).toEqual({ behavior: 'deny', message: 'no' })
   })
 
   it('resolving an unknown id is a safe no-op', () => {
@@ -217,43 +200,40 @@ describe('PermissionBridge', () => {
     bridge.onRequest((req) => {
       seenId = req.id
     })
-    const promise = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
+    const promise = ask(bridge, { tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
     bridge.resolve(seenId, { behavior: 'allow' })
     expect(() => bridge.resolve(seenId, { behavior: 'deny', message: 'too late' })).not.toThrow()
-    const result = (await promise) as { content: { type: string; text: string }[] }
+    const result = await promise
     // First resolve wins -- the second (unknown-id-by-then) call is a no-op.
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ behavior: 'allow', updatedInput: { command: 'a' } })
+    expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'a' } })
   })
 
   it('a request unresolved by the configured timeout resolves to deny, not hang', async () => {
     const bridge = new PermissionBridge({ timeoutMs: 20 })
-    const promise = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
-    const result = (await promise) as { content: { type: string; text: string }[] }
-    const parsed = JSON.parse(result.content[0]?.text ?? '')
+    const promise = ask(bridge, { tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
+    const result = await promise
+    const parsed = result
     expect(parsed.behavior).toBe('deny')
     expect(typeof parsed.message).toBe('string')
   })
 
   it('shutdown() denies every still-parked request', async () => {
     const bridge = new PermissionBridge()
-    const p1 = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
-    const p2 = bridge.handleToolCall({ tool_name: 'Bash', input: { command: 'b' } }, 'session-a')
+    const p1 = ask(bridge, { tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
+    const p2 = ask(bridge, { tool_name: 'Bash', input: { command: 'b' } }, 'session-a')
 
     bridge.shutdown()
 
-    const [r1, r2] = (await Promise.all([p1, p2])) as { content: { type: string; text: string }[] }[]
-    expect(JSON.parse(r1?.content[0]?.text ?? '').behavior).toBe('deny')
-    expect(JSON.parse(r2?.content[0]?.text ?? '').behavior).toBe('deny')
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1.behavior).toBe('deny')
+    expect(r2.behavior).toBe('deny')
   })
 
-  it('handleToolCall after shutdown() denies immediately rather than parking', async () => {
+  it('a request after shutdown() denies immediately rather than parking', async () => {
     const bridge = new PermissionBridge()
     bridge.shutdown()
-    const result = (await bridge.handleToolCall(
-      { tool_name: 'Bash', input: { command: 'a' } },
-      'session-a'
-    )) as { content: { type: string; text: string }[] }
-    expect(JSON.parse(result.content[0]?.text ?? '').behavior).toBe('deny')
+    const result = await ask(bridge, { tool_name: 'Bash', input: { command: 'a' } }, 'session-a')
+    expect(result.behavior).toBe('deny')
   })
 
   it('toolName defaults to approve and is overridable', () => {
@@ -262,148 +242,28 @@ describe('PermissionBridge', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// JSON-RPC framing / routing
-// ---------------------------------------------------------------------------
-
-describe('routeMcpRequest', () => {
-  it('initialize responds promptly with protocolVersion + capabilities + serverInfo', async () => {
-    const bridge = new PermissionBridge()
-    const res = await routeMcpRequest(
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
-      bridge,
-      'session-a'
-    )
-    expect(res?.id).toBe(1)
-    const result = res?.result as { protocolVersion: string; serverInfo: { name: string } }
-    expect(result.protocolVersion).toBe('2024-11-05')
-    expect(result.serverInfo.name).toBeTruthy()
+describe('requests from Claude Code', () => {
+  it('keeps what Claude Code says about a request', () => {
+    const req = parsePermissionArgs({
+      tool_name: 'Bash', input: {}, title: 'Run ls', description: 'Lists files', decision_reason: 'Matched an ask rule', blocked_path: 'C:\\x',
+      permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }], behavior: 'allow', destination: 'localSettings' }, 'junk']
+    }, 'perm-1', 'session-a')
+    expect(req).toMatchObject({ title: 'Run ls', description: 'Lists files', reason: 'Matched an ask rule', blockedPath: 'C:\\x' })
+    expect(req.suggestions).toHaveLength(1)
   })
 
-  it('notifications/initialized (no id) produces no response', async () => {
-    const bridge = new PermissionBridge()
-    const res = await routeMcpRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }, bridge, 'session-a')
-    expect(res).toBeNull()
+  it('passes on "do not ask again" with an allow', () => {
+    const updatedPermissions = [{ type: 'addRules' }]
+    expect(buildPermissionResult({ behavior: 'allow', updatedPermissions }, { a: 1 })).toEqual({ behavior: 'allow', updatedInput: { a: 1 }, updatedPermissions })
+    expect(buildPermissionResult({ behavior: 'allow', updatedPermissions: [] }, { a: 1 })).toEqual({ behavior: 'allow', updatedInput: { a: 1 } })
   })
 
-  it('tools/list advertises exactly one tool named after bridge.toolName', async () => {
-    const bridge = new PermissionBridge({ toolName: 'approve' })
-    const res = await routeMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, bridge, 'session-a')
-    const result = res?.result as { tools: { name: string }[] }
-    expect(result.tools).toHaveLength(1)
-    expect(result.tools[0]?.name).toBe('approve')
-  })
-
-  it('a recorded tools/call request routes to handleToolCall and produces the MCP result envelope', async () => {
-    const bridge = new PermissionBridge()
-    bridge.onRequest((req) => {
-      bridge.resolve(req.id, { behavior: 'allow' })
-    })
-
-    // Constructed per the MCP spec's tools/call shape, carrying the
-    // undocumented-but-de-facto tool_name/input/tool_use_id arguments.
-    const recordedRequest = {
-      jsonrpc: '2.0',
-      id: 'req-1',
-      method: 'tools/call',
-      params: {
-        name: 'approve',
-        arguments: { tool_name: 'Bash', input: { command: 'ls' }, tool_use_id: 'toolu_01' }
-      }
-    }
-
-    const res = await routeMcpRequest(recordedRequest, bridge, 'session-a')
-    expect(res?.id).toBe('req-1')
-    const result = res?.result as { content: { type: string; text: string }[] }
-    expect(result.content[0]?.type).toBe('text')
-    expect(JSON.parse(result.content[0]?.text ?? '')).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } })
-  })
-
-  it('unknown method with an id gets a JSON-RPC error response', async () => {
-    const bridge = new PermissionBridge()
-    const res = await routeMcpRequest({ jsonrpc: '2.0', id: 9, method: 'nonsense/method' }, bridge, 'session-a')
-    expect(res?.error?.code).toBe(-32601)
-  })
-
-  it('malformed / non-object request with no id produces no response', async () => {
-    const bridge = new PermissionBridge()
-    expect(await routeMcpRequest(null, bridge, 'session-a')).toBeNull()
-    expect(await routeMcpRequest('garbage', bridge, 'session-a')).toBeNull()
-    expect(await routeMcpRequest({ notJsonRpc: true }, bridge, 'session-a')).toBeNull()
-  })
-
-  it('malformed request that does carry an id gets an invalid-request error, not a throw', async () => {
-    const bridge = new PermissionBridge()
-    const res = await routeMcpRequest({ id: 5, notAMethodField: true }, bridge, 'session-a')
-    expect(res?.id).toBe(5)
-    expect(res?.error?.code).toBe(-32600)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// McpStdioServer -- newline-delimited JSON-RPC over injectable streams
-// ---------------------------------------------------------------------------
-
-describe('McpStdioServer', () => {
-  it('handles a request split across chunks and writes one framed response line', async () => {
-    const bridge = new PermissionBridge()
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const server = new McpStdioServer(bridge, 'session-a', { input, output })
-    server.start()
-
-    const written: string[] = []
-    output.on('data', (chunk: Buffer) => written.push(chunk.toString('utf8')))
-
-    const line = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n'
-    // Split the line across two writes to prove byte-safe line framing.
-    input.write(line.slice(0, 5))
-    input.write(line.slice(5))
-
-    await vi.waitFor(() => {
-      expect(written.join('')).toContain('"id":1')
-    })
-
-    const response = JSON.parse(written.join('').trim())
-    expect(response.result.tools).toHaveLength(1)
-  })
-
-  it('a malformed JSON line is dropped without crashing the server', async () => {
-    const bridge = new PermissionBridge()
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const server = new McpStdioServer(bridge, 'session-a', { input, output })
-    server.start()
-
-    const written: string[] = []
-    output.on('data', (chunk: Buffer) => written.push(chunk.toString('utf8')))
-
-    input.write('not json at all\n')
-    input.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }) + '\n')
-
-    await vi.waitFor(() => {
-      expect(written.join('')).toContain('"id":7')
-    })
-  })
-
-  it('two requests arriving in one chunk both get responses', async () => {
-    const bridge = new PermissionBridge()
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const server = new McpStdioServer(bridge, 'session-a', { input, output })
-    server.start()
-
-    const written: string[] = []
-    output.on('data', (chunk: Buffer) => written.push(chunk.toString('utf8')))
-
-    const l1 = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
-    const l2 = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
-    input.write(l1 + '\n' + l2 + '\n')
-
-    await vi.waitFor(() => {
-      const joined = written.join('')
-      expect(joined).toContain('"id":1')
-      expect(joined).toContain('"id":2')
-    })
+  it('can be cancelled once, and an answer after that does nothing', async () => {
+    const bridge = new PermissionBridge({ timeoutMs: 0 })
+    const { id, answer } = bridge.handleRequest({ tool_name: 'Bash', input: {} }, 'session-a')
+    expect(bridge.cancel(id)).toBe(true)
+    expect((await answer).behavior).toBe('deny')
+    expect(bridge.cancel(id)).toBe(false)
+    expect(() => bridge.resolve(id, { behavior: 'allow' })).not.toThrow()
   })
 })

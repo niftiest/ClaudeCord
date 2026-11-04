@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   EngineCoordinator,
+  alwaysAllowChanges,
   type PoolLike,
   type WatcherLike,
   type BridgeLike,
@@ -22,6 +23,8 @@ class FakePool implements PoolLike {
   interruptCalls: string[] = []
   turnRunning = false
   isTurnRunning(): boolean { return this.turnRunning }
+  responses: Array<{ requestId: string; response: unknown }> = []
+  respond(_sessionKey: string, requestId: string, response: unknown): void { this.responses.push({ requestId, response }) }
   private subscribers = new Map<string, Array<(e: LiveEvent) => void>>()
 
   send(sessionKey: string, spec: SpawnSpec, msg: object): void {
@@ -83,6 +86,20 @@ class FakeBridge implements BridgeLike {
     this.resolveCalls.push({ id, decision })
   }
 
+  handled: Array<{ args: unknown; sessionKey: string; settle: (result: unknown) => void; id: string }> = []
+  cancelled: string[] = []
+
+  handleRequest(args: unknown, sessionKey: string): { id: string; answer: Promise<unknown> } {
+    const id = `perm-${this.handled.length + 1}`
+    const answer = new Promise<unknown>(settle => { this.handled.push({ args, sessionKey, settle, id }) })
+    return { id, answer }
+  }
+
+  cancel(id: string): boolean {
+    this.cancelled.push(id)
+    return true
+  }
+
   fireRequest(req: PermissionRequest): void {
     for (const cb of this.requestListeners) cb(req)
   }
@@ -120,7 +137,6 @@ function makeDefaults(overrides: Partial<EngineDefaults> = {}): EngineDefaults {
   return {
     skipPermissions: false,
     claudeBin: 'claude',
-    mcpConfigArg: 'C:\\proj\\.claudecord\\mcp-config.json',
     ...overrides
   }
 }
@@ -187,36 +203,33 @@ describe('EngineCoordinator — send() SpawnSpec construction', () => {
     const { coordinator, pool } = makeCoordinator({
       rulesStore,
       bridge,
-      defaults: makeDefaults({ skipPermissions: false, mcpConfigArg: 'C:\\cfg.json' })
+      defaults: makeDefaults({ skipPermissions: false })
     })
 
     coordinator.send(1, 'hello')
 
     const { spec } = pool.sent[0]!
-    expect(spec.permissionPromptTool).toBe('mcp__claudecord__approve')
-    expect(spec.extraArgs).toContain('--mcp-config')
-    expect(spec.extraArgs![spec.extraArgs!.indexOf('--mcp-config') + 1]).toBe('C:\\cfg.json')
+    expect(spec.permissionPromptTool).toBe('stdio')
     expect(spec.extraArgs).toContain('--allowedTools')
     expect(spec.extraArgs![spec.extraArgs!.indexOf('--allowedTools') + 1]).toBe('Bash(npm run *)')
   })
 
-  it('skipPermissions=false with no persisted rules still wires the tool + mcp-config but no --allowedTools', () => {
+  it('skipPermissions=false with no persisted rules still wires the prompt tool but no --allowedTools', () => {
     const { coordinator, pool } = makeCoordinator({ defaults: makeDefaults({ skipPermissions: false }) })
     coordinator.send(1, 'hello')
 
     const { spec } = pool.sent[0]!
-    expect(spec.permissionPromptTool).toBeDefined()
-    expect(spec.extraArgs).toContain('--mcp-config')
-    expect(spec.extraArgs).not.toContain('--allowedTools')
+    expect(spec.permissionPromptTool).toBe('stdio')
+    expect(spec.extraArgs).toBeUndefined()
   })
 
-  it('skipPermissions=true sets the flag and does NOT set a permission tool or mcp-config', () => {
+  it('skipPermissions=true sets the flag, and still asks over stdio so questions work', () => {
     const { coordinator, pool } = makeCoordinator({ defaults: makeDefaults({ skipPermissions: true }) })
     coordinator.send(1, 'hello')
 
     const { spec } = pool.sent[0]!
     expect(spec.skipPermissions).toBe(true)
-    expect(spec.permissionPromptTool).toBeUndefined()
+    expect(spec.permissionPromptTool).toBe('stdio')
     expect(spec.extraArgs).toBeUndefined()
   })
 
@@ -626,6 +639,57 @@ describe('EngineCoordinator.watchSession (read-only tailing while locked)', () =
     const { coordinator, watchers } = makeCoordinator()
     expect(coordinator.watchSession(999)).toBe(false)
     expect(watchers).toHaveLength(0)
+  })
+})
+
+describe('EngineCoordinator -- permission requests from Claude Code', () => {
+  const asked = (requestId: string, tool = 'Bash'): LiveEvent => ({ kind: 'permissionAsked', requestId, args: { tool_name: tool, input: {} } })
+  const answered = (pool: FakePool): Array<{ requestId: string; response: unknown }> => pool.responses
+
+  it('parks a request, keeps it from the window, and answers with what was decided', async () => {
+    const { coordinator, pool, bridge } = makeCoordinator()
+    const seen: LiveEvent[] = []
+    coordinator.onEvent((_pk, e) => seen.push(e))
+    coordinator.send(1, 'hello')
+    pool.emit('session-1', asked('r1'))
+    expect(bridge.handled).toHaveLength(1)
+    expect(seen.some(e => e.kind === 'permissionAsked')).toBe(false)
+    bridge.handled[0]!.settle({ behavior: 'allow', updatedInput: {} })
+    await new Promise(r => setTimeout(r, 0))
+    expect(answered(pool)).toEqual([{ requestId: 'r1', response: { behavior: 'allow', updatedInput: {} } }])
+  })
+
+  it('takes the card back when Claude Code stops waiting, and sends no late answer', async () => {
+    const { coordinator, pool, bridge } = makeCoordinator()
+    const seen: LiveEvent[] = []
+    coordinator.onEvent((_pk, e) => seen.push(e))
+    coordinator.send(1, 'hello')
+    pool.emit('session-1', asked('r1'))
+    pool.emit('session-1', { kind: 'permissionCancelled', requestId: 'r1' })
+    expect(bridge.cancelled).toEqual(['perm-1'])
+    expect(seen).toContainEqual({ kind: 'permissionGone', id: 'perm-1' })
+    bridge.handled[0]!.settle({ behavior: 'deny', message: 'x' })
+    await new Promise(r => setTimeout(r, 0))
+    expect(answered(pool)).toEqual([])
+  })
+
+  it('takes back every card of a process that exits, and only that chat', () => {
+    const other: SessionInfo = { ...SESSION, sessionPk: 2, sessionKey: 'session-2', filePath: 'C:\\proj\\.claude\\session-2.jsonl' }
+    const { coordinator, pool, bridge } = makeCoordinator({ lookupSession: makeLookup(SESSION, other) })
+    coordinator.send(1, 'hello')
+    coordinator.send(2, 'hello')
+    pool.emit('session-1', asked('r1'))
+    pool.emit('session-2', asked('r2'))
+    pool.emit('session-1', { kind: 'exit', code: 0 })
+    expect(bridge.cancelled).toEqual(['perm-1'])
+  })
+})
+
+describe('don\'t ask again', () => {
+  it('adds rules and folders, but never changes the mode as a side effect', () => {
+    const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }] }
+    const dir = { type: 'addDirectories', directories: ['C:\\x'] }
+    expect(alwaysAllowChanges([rule, dir, { type: 'setMode', mode: 'acceptEdits' }])).toEqual([rule, dir])
   })
 })
 

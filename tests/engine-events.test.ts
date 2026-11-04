@@ -84,8 +84,8 @@ describe('parseEvent — init', () => {
     expect(parseEvent(missingPermissionMode)).toEqual({ kind: 'other', type: 'system' })
   })
 
-  it('maps a hook system event (non-init subtype) to kind:other', () => {
-    expect(parseEvent(HOOK)).toEqual({ kind: 'other', type: 'system' })
+  it('maps a hook system event to kind:hook', () => {
+    expect(parseEvent(HOOK)).toMatchObject({ kind: 'hook' })
   })
 })
 

@@ -79,6 +79,17 @@ describe('! commands', () => {
     expect(finished).toEqual(['r1', 'r2'])
   })
 
+  it('knows which chats have a command running', () => {
+    const { r, shells } = runner()
+    r.run(1, 'C:\\p', 'a')
+    r.run(1, 'C:\\p', 'b')
+    r.run(2, 'C:\\p', 'c')
+    expect(r.runningChats().sort()).toEqual([1, 2])
+    shells[0]!.emit('close', 0)
+    shells[1]!.emit('close', 0)
+    expect(r.runningChats()).toEqual([2])
+  })
+
   it('hands over only finished runs, once', () => {
     const { r, shells } = runner()
     r.run(1, 'C:\\p', 'done')

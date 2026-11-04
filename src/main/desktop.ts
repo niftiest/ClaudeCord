@@ -10,7 +10,7 @@ import { CLAUDE_SETTINGS_IPC } from '../shared/claude-settings-types'
 
 /** Desktop integration: notifications for chats that need you while
  *  ClaudeCord isn't in front, and the tray icon (close to tray, start
- *  minimised). */
+ *  minimized). */
 
 /** The app icon: bundled next to the exe when packaged, in resources/ when run from source. */
 export function appIconPath(): string | undefined {
@@ -82,7 +82,7 @@ export function createDesktop(db: Catalog, getWindow: () => BrowserWindow | null
 
   const syncTray = (): void => {
     const s = getSettings(db)
-    const want = s.showTrayIcon || s.closeToTray
+    const want = s.showTrayIcon || s.closeAction === 'tray'
     if (!want) {
       tray?.destroy()
       tray = null

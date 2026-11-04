@@ -1,4 +1,5 @@
 import type { PlanUsage } from '../shared/plan-usage'
+import type { AppDialogRequest } from '../shared/app-dialog'
 import type { ShellRun } from '../shared/shell-run-types'
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC, type ClaudeCordApi, type IndexProgress } from '../shared/ipc'
@@ -20,6 +21,13 @@ const api: ClaudeCordApi & EngineApi = {
   searchProject: (projectId, query) => ipcRenderer.invoke(IPC.searchProject, projectId, query),
   runIndex: () => ipcRenderer.invoke(IPC.indexRun),
   appReady: () => ipcRenderer.send(IPC.appReady),
+  onAppDialog: cb => {
+    const listener = (_e: IpcRendererEvent, request: AppDialogRequest) => cb(request)
+    ipcRenderer.on(IPC.appDialogAsk, listener)
+    return () => { ipcRenderer.off(IPC.appDialogAsk, listener) }
+  },
+  appDialogShown: id => ipcRenderer.send(IPC.appDialogShown, id),
+  appDialogAnswer: (id, index) => ipcRenderer.send(IPC.appDialogAnswer, id, index),
   onIndexProgress: cb => {
     const listener = (_e: IpcRendererEvent, p: IndexProgress) => cb(p)
     ipcRenderer.on(IPC.indexProgress, listener)
@@ -28,6 +36,7 @@ const api: ClaudeCordApi & EngineApi = {
 
   listChannels: () => ipcRenderer.invoke(IPC.listChannels),
   totalCost: () => ipcRenderer.invoke(IPC.totalCost),
+  modelPrices: () => ipcRenderer.invoke(IPC.modelPrices),
   listGroups: () => ipcRenderer.invoke(IPC.listGroups),
   setFriendlyName: (dirName, name) => ipcRenderer.invoke(IPC.setFriendlyName, dirName, name),
   setStarred: (dirName, starred) => ipcRenderer.invoke(IPC.setStarred, dirName, starred),
@@ -75,6 +84,14 @@ const api: ClaudeCordApi & EngineApi = {
   turnInfo: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.turnInfo, sessionPk),
   backgroundTasks: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.backgroundTasks, sessionPk),
   stopTask: (sessionPk, taskId) => ipcRenderer.invoke(ENGINE_IPC.stopTask, sessionPk, taskId),
+  chatMode: sessionPk => ipcRenderer.invoke(ENGINE_IPC.chatMode, sessionPk),
+  promptHistory: sessionPk => ipcRenderer.invoke(ENGINE_IPC.promptHistory, sessionPk),
+  indexNow: () => ipcRenderer.invoke(ENGINE_IPC.indexNow),
+  renameChat: (sessionPk, title) => ipcRenderer.invoke(ENGINE_IPC.renameChat, sessionPk, title),
+  forkChat: sessionPk => ipcRenderer.invoke(ENGINE_IPC.forkChat, sessionPk),
+  sideQuestion: (sessionPk, question) => ipcRenderer.invoke(ENGINE_IPC.sideQuestion, sessionPk, question),
+  setChatMode: (sessionPk, mode) => ipcRenderer.invoke(ENGINE_IPC.setChatMode, sessionPk, mode),
+  answerElicitation: (sessionPk, requestId, answer) => ipcRenderer.invoke(ENGINE_IPC.answerElicitation, sessionPk, requestId, answer),
   onEvent: cb => {
     const listener = (_e: IpcRendererEvent, sessionPk: number, ev: LiveEvent) => cb(sessionPk, ev)
     ipcRenderer.on(ENGINE_IPC.event, listener)
@@ -192,6 +209,8 @@ const update: UpdateApi = {
 const claudeSettings: ClaudeSettingsApi = {
   claudeSettingsGet: target => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.get, target),
   claudeSettingsUpdate: (target, patch) => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.update, target, patch),
+  claudeSettingsText: target => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.getText, target),
+  claudeSettingsSaveText: (target, text) => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.saveText, target, text),
   retentionStatus: () => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.retentionStatus),
   retentionPreview: () => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.retentionPreview),
   retentionRunNow: () => ipcRenderer.invoke(CLAUDE_SETTINGS_IPC.retentionRunNow),

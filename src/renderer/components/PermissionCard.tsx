@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { PermissionRequest } from '../../shared/engine-types'
-import { summarizePermissionRequest, previewAllowAlwaysRule, parseEditedInput } from '../lib'
+import { summarizePermissionRequest, previewAllowAlwaysRule, parseEditedInput, suggestionLabel, permissionDiff } from '../lib'
 
 type Decision = 'allow' | 'allow_always' | 'deny'
 
@@ -29,7 +29,8 @@ export function PermissionCard({ req, onResolve }: {
 
   const disabled = resolved !== null
   const inputJson = JSON.stringify(req.input, null, 2) ?? ''
-  const rulePreview = previewAllowAlwaysRule(req.tool, req.input)
+  const diff = permissionDiff(req.tool, req.input)
+  const rulePreview = suggestionLabel(req.suggestions ?? []) ?? previewAllowAlwaysRule(req.tool, req.input)
 
   function resolve(decision: Decision, editedInput?: unknown, denyMessage?: string) {
     if (disabled) return // already answered -- one decision per request
@@ -53,9 +54,20 @@ export function PermissionCard({ req, onResolve }: {
     <div className="perm-card">
       <div className="perm-head">
         <span className="perm-badge">⚠ Permission requested</span>
-        <span className="perm-summary">{summarizePermissionRequest(req.tool, req.input)}</span>
+        <span className="perm-summary">{req.title ?? summarizePermissionRequest(req.tool, req.input)}</span>
       </div>
-      <pre className="perm-input">{inputJson.slice(0, 8000)}</pre>
+      {req.description !== undefined && <div className="perm-why">{req.description}</div>}
+      {req.reason !== undefined && <div className="perm-why">Why it's asking: {req.reason}</div>}
+      {req.blockedPath !== undefined && <div className="perm-why">Path: <code>{req.blockedPath}</code></div>}
+      {diff !== null
+        ? <div className="perm-diff" aria-label="What this changes">
+            {diff.path !== null && diff.path !== req.blockedPath && <div className="perm-diff-path">{diff.path}</div>}
+            {diff.lines.map((line, i) => (
+              <div key={i} className={`perm-diff-line ${line.kind}`}>{line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}{line.text}</div>
+            ))}
+            {diff.hiddenLines > 0 && <div className="perm-diff-path">{diff.hiddenLines.toLocaleString()} more lines</div>}
+          </div>
+        : <pre className="perm-input">{inputJson.slice(0, 8000)}</pre>}
 
       {editing && !disabled && (
         <div className="perm-edit">

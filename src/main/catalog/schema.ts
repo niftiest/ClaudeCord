@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 // The base (v1) schema. Applied unconditionally on every open (see db.ts) --
 // every statement here has been additive-safe (CREATE ... IF NOT EXISTS)
@@ -133,6 +133,14 @@ function countUsagePerMessage(db: Database.Database): void {
   db.exec('UPDATE sessions SET indexed_offset = 9007199254740991')
 }
 
+/** A chat's name as Claude Code records it. Re-reading every chat picks up the existing ones. */
+function addChatNames(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]
+  if (!cols.some(c => c.name === 'custom_title')) db.exec('ALTER TABLE sessions ADD COLUMN custom_title TEXT')
+  if (!cols.some(c => c.name === 'ai_title')) db.exec('ALTER TABLE sessions ADD COLUMN ai_title TEXT')
+  db.exec('UPDATE sessions SET indexed_offset = 9007199254740991')
+}
+
 function addHiddenColumn(db: Database.Database): void {
   const cols = db.prepare('PRAGMA table_info(channel_meta)').all() as { name: string }[]
   if (!cols.some(c => c.name === 'hidden')) {
@@ -167,5 +175,6 @@ export const MIGRATIONS: Migration[] = [
   // Messages sent mid-turn weren't indexed. An offset past the end of a file reads as
   // rewritten, so the next index pass rebuilds each chat cleanly, picking them up.
   { toVersion: 7, apply: db => db.exec('UPDATE sessions SET indexed_offset = 9007199254740991') },
-  { toVersion: 8, apply: countUsagePerMessage }
+  { toVersion: 8, apply: countUsagePerMessage },
+  { toVersion: 9, apply: addChatNames }
 ]

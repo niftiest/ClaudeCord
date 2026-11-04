@@ -1,3 +1,5 @@
+import type { ModelPrices } from './models'
+import type { AppDialogRequest } from './app-dialog'
 import type { ProjectSearchResult } from './project-search'
 import type { ProjectSummary, SessionSummary, SearchHit, TranscriptPage, IndexProgress, ChannelRow } from './types'
 import type { ChannelIcon, ChannelGroup, AppSettings } from './shell-types'
@@ -29,6 +31,7 @@ export const IPC = {
   // passthroughs (see src/main/ipc.ts).
   listChannels: 'catalog:listChannels',
   totalCost: 'catalog:totalCost',
+  modelPrices: 'catalog:modelPrices',
   listGroups: 'catalog:listGroups',
   setFriendlyName: 'catalog:setFriendlyName',
   setStarred: 'catalog:setStarred',
@@ -57,7 +60,11 @@ export const IPC = {
   isElevated: 'settings:isElevated',
   // Fire-and-forget: the renderer finished its first load -- main reveals the
   // (until then hidden) window and closes the launch splash.
-  appReady: 'app:ready'
+  appReady: 'app:ready',
+  // A question from main, shown in the window: asked, then shown, then answered.
+  appDialogAsk: 'appDialog:ask',
+  appDialogShown: 'appDialog:shown',
+  appDialogAnswer: 'appDialog:answer'
 } as const
 
 export type ClaudeCordApi = {
@@ -74,6 +81,9 @@ export type ClaudeCordApi = {
   runIndex(): Promise<void>
   /** Tells main the first load is done: show the window, close the splash. */
   appReady(): void
+  onAppDialog(cb: (request: AppDialogRequest) => void): () => void
+  appDialogShown(id: number): void
+  appDialogAnswer(id: number, index: number): void
   onIndexProgress(cb: (p: IndexProgress) => void): () => void
 
   /** ProjectSummary rows merged with their ChannelMeta (Plan 3 Task 2) -- the
@@ -81,6 +91,8 @@ export type ClaudeCordApi = {
   listChannels(): Promise<ChannelRow[]>
   /** Total estimated USD cost across all sessions -- the nav header figure. */
   totalCost(): Promise<number>
+  /** Prices from the installed Claude Code, or null if they can't be found. */
+  modelPrices(): Promise<ModelPrices | null>
   listGroups(): Promise<ChannelGroup[]>
   setFriendlyName(dirName: string, name: string | null): Promise<void>
   setStarred(dirName: string, starred: boolean): Promise<void>

@@ -180,7 +180,7 @@ export function ResultDialog({ title, result, note, showBackup = false, onClose 
       ) : result.kind === 'error' ? (
         <p className="dw-error">{result.error}</p>
       ) : (
-        <p className="dw-note">Cancelled.</p>
+        <p className="dw-note">Canceled.</p>
       )}
       <div className="modal-actions"><button type="button" className="btn-primary" autoFocus onClick={onClose}>Close</button></div>
     </Modal>

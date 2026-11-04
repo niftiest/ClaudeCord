@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { MODELS, SAVED_EFFORTS, sortModels } from '../../shared/models'
+import { SAVED_EFFORTS } from '../../shared/models'
+import { useClaudeModels } from './useClaudeModels'
 import {
   PERMISSION_MODES, type ClaudeSettingKey, type ClaudeSettingsPatch, type ClaudeSettingsTarget,
   type ClaudeSettingsView, type SettingSource
@@ -9,7 +10,7 @@ import {
 export type ProjectChoice = { dirName: string; cwd: string | null; name: string }
 
 const SOURCE_LABEL: Record<SettingSource, string> = {
-  managed: 'set by your organisation',
+  managed: 'set by your organization',
   local: 'this project, this computer',
   project: 'this project, shared',
   user: 'all projects',
@@ -41,6 +42,7 @@ export function ClaudeCodeSettings({ projects, initialCwd }: { projects: Project
   const [view, setView] = useState<ClaudeSettingsView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const models = useClaudeModels()
 
   const target: ClaudeSettingsTarget = cwd === null ? { scope: 'user' } : { scope: projectFile, cwd }
 
@@ -145,7 +147,7 @@ export function ClaudeCodeSettings({ projects, initialCwd }: { projects: Project
       {view === null && error === null && <p className="settings-note">Loading…</p>}
       {view !== null && <>
         <h3 className="settings-sub">Model and thinking — {scopeName}</h3>
-        <ChoiceRow k="model" label="Model" options={sortModels(MODELS).map(m => ({ value: m.value, label: m.label }))} />
+        <ChoiceRow k="model" label="Model" options={models.map(m => ({ value: m.value, label: m.label }))} />
         <ChoiceRow k="effortLevel" label="Effort" options={SAVED_EFFORTS.map(v => ({ value: v, label: v }))} />
         <ChoiceRow k="alwaysThinkingEnabled" label="Always think before answering" options={onOff} />
         <TextRow {...rowProps} hint={inheritHint('outputStyle')} k="outputStyle" label="Response style" placeholder="e.g. Explanatory" />
@@ -173,7 +175,7 @@ export function ClaudeCodeSettings({ projects, initialCwd }: { projects: Project
           </select>
         </label>
         <ChoiceRow k="autoMemoryEnabled" label="Auto memory" hint="Claude saves notes about your project as it works" options={onOff} />
-        <ChoiceRow k="autoCompactEnabled" label="Auto compact" hint="Summarise long chats automatically when they fill up" options={onOff} />
+        <ChoiceRow k="autoCompactEnabled" label="Auto compact" hint="Summarize long chats automatically when they fill up" options={onOff} />
         {cwd === null && <ChoiceRow k="remoteControlAtStartup" label="Remote Control for every session" hint="Lets you continue chats from claude.ai or the Claude app" options={onOff} />}
 
         {cwd !== null && <>
@@ -203,6 +205,7 @@ export function ClaudeCodeSettings({ projects, initialCwd }: { projects: Project
               </>}
         </>}
       </>}
+      <RawSettings target={target} onSaved={setView} />
     </>
   )
 }
@@ -260,5 +263,39 @@ function RuleList({ view, readOnly, save, k, title, hint }: RowProps & {
         <button type="button" className="btn-secondary" disabled={readOnly || draft.trim() === ''} onClick={add}>Add</button>
       </div>
     </div>
+  )
+}
+
+/** The file itself: Claude Code has far more settings than there are controls for here, and
+ *  every one it reads can be set this way. */
+function RawSettings({ target, onSaved }: { target: ClaudeSettingsTarget; onSaved: (view: ClaudeSettingsView) => void }) {
+  const [open, setOpen] = useState(false)
+  const [path, setPath] = useState('')
+  const [text, setText] = useState('')
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const key = JSON.stringify(target)
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    setNote(null)
+    void api.claudeSettingsText(target).then(r => { if (alive) { setPath(r.path); setText(r.text) } })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, key])
+  async function save() {
+    const r = await api.claudeSettingsSaveText(target, text)
+    if (r.ok) { onSaved(r.view); setNote({ ok: true, text: 'Saved.' }) }
+    else setNote({ ok: false, text: r.error })
+  }
+  return (
+    <details className="cc-raw" onToggle={e => setOpen(e.currentTarget.open)}>
+      <summary>Edit this settings file directly</summary>
+      <p className="settings-note"><code>{path}</code></p>
+      <textarea className="cc-raw-text" spellCheck={false} rows={14} value={text} aria-label="Settings file" onChange={e => { setText(e.target.value); setNote(null) }} />
+      <div className="cc-raw-actions">
+        <button type="button" className="btn-secondary" onClick={() => void save()}>Save</button>
+        {note !== null && <span className={note.ok ? 'settings-note' : 'perm-edit-error'}>{note.text}</span>}
+      </div>
+    </details>
   )
 }

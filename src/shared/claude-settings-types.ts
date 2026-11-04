@@ -5,6 +5,8 @@
 export const CLAUDE_SETTINGS_IPC = {
   get: 'claudeSettings:get',
   update: 'claudeSettings:update',
+  getText: 'claudeSettings:getText',
+  saveText: 'claudeSettings:saveText',
   retentionStatus: 'retention:status',
   retentionPreview: 'retention:preview',
   retentionRunNow: 'retention:runNow',
@@ -112,6 +114,9 @@ export type AutoCleanPreview = {
 export type ClaudeSettingsApi = {
   claudeSettingsGet(target: ClaudeSettingsTarget): Promise<ClaudeSettingsView>
   claudeSettingsUpdate(target: ClaudeSettingsTarget, patch: ClaudeSettingsPatch): Promise<ClaudeSettingsUpdateResult>
+  /** The file itself, for settings that have no control of their own. */
+  claudeSettingsText(target: ClaudeSettingsTarget): Promise<{ path: string; text: string }>
+  claudeSettingsSaveText(target: ClaudeSettingsTarget, text: string): Promise<ClaudeSettingsUpdateResult>
   retentionStatus(): Promise<RetentionStatus>
   retentionPreview(): Promise<AutoCleanPreview>
   retentionRunNow(): Promise<AutoCleanResult>
