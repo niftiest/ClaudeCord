@@ -11,6 +11,7 @@ import {
 import type { SpawnSpec } from '../src/main/engine/transport'
 import type { LiveEvent, PermissionRequest, PermissionDecision } from '../src/shared/engine-types'
 import type { StreamedRow } from '../src/main/jsonl/stream'
+import type { ContentBlock } from '../src/shared/types'
 
 // ---------------------------------------------------------------------------
 // Fakes -- no real child processes, no real chokidar watch, no real MCP wire.
@@ -19,6 +20,8 @@ import type { StreamedRow } from '../src/main/jsonl/stream'
 class FakePool implements PoolLike {
   sent: Array<{ sessionKey: string; spec: SpawnSpec; msg: object }> = []
   interruptCalls: string[] = []
+  turnRunning = false
+  isTurnRunning(): boolean { return this.turnRunning }
   private subscribers = new Map<string, Array<(e: LiveEvent) => void>>()
 
   send(sessionKey: string, spec: SpawnSpec, msg: object): void {
@@ -130,6 +133,7 @@ function makeCoordinator(opts: {
   rulesStore?: FakeRulesStore
   defaults?: EngineDefaults
   isExternallyLive?: (sessionKey: string) => boolean
+  contextForMessage?: (sessionPk: number) => ContentBlock[]
 } = {}): {
   coordinator: EngineCoordinator
   pool: FakePool
@@ -154,7 +158,8 @@ function makeCoordinator(opts: {
     lookupSession: opts.lookupSession ?? makeLookup(SESSION),
     rulesStore,
     defaults: opts.defaults ?? makeDefaults(),
-    isExternallyLive: opts.isExternallyLive ?? (() => false)
+    isExternallyLive: opts.isExternallyLive ?? (() => false),
+    ...(opts.contextForMessage !== undefined ? { contextForMessage: opts.contextForMessage } : {})
   })
 
   return { coordinator, pool, watchers, bridge, rulesStore }
@@ -621,5 +626,63 @@ describe('EngineCoordinator.watchSession (read-only tailing while locked)', () =
     const { coordinator, watchers } = makeCoordinator()
     expect(coordinator.watchSession(999)).toBe(false)
     expect(watchers).toHaveLength(0)
+  })
+})
+
+describe('EngineCoordinator -- ! output', () => {
+  const OUTPUT: ContentBlock[] = [{ type: 'text', text: '<bash-input>ls</bash-input>' }, { type: 'text', text: '<bash-stdout>a</bash-stdout>' }]
+  /** Hands the output over once, as the shell runner does. */
+  const once = (): (() => ContentBlock[]) => {
+    let left = OUTPUT
+    return () => { const out = left; left = []; return out }
+  }
+  const contentOf = (sent: { msg: object }): unknown => (sent.msg as { message: { content: unknown } }).message.content
+  const result = { kind: 'result', isError: false, text: '' } as unknown as LiveEvent
+
+  it('gives Claude finished output as a message of its own, with no empty text block', () => {
+    const { coordinator, pool } = makeCoordinator({ contextForMessage: once() })
+    coordinator.deliverShellOutput(1)
+    expect(pool.sent).toHaveLength(1)
+    expect(contentOf(pool.sent[0]!)).toEqual(OUTPUT)
+  })
+
+  it('says when output is on its way, and only then', () => {
+    const { coordinator } = makeCoordinator({ contextForMessage: once() })
+    const types: string[] = []
+    coordinator.onEvent((_pk, e) => { if (e.kind === 'other') types.push(e.type) })
+    coordinator.deliverShellOutput(1)
+    coordinator.deliverShellOutput(1)
+    coordinator.send(1, 'hello')
+    expect(types).toEqual(['shell-output-sent'])
+  })
+
+  it('waits for a running turn to end', () => {
+    const { coordinator, pool } = makeCoordinator({ contextForMessage: once() })
+    pool.turnRunning = true
+    coordinator.deliverShellOutput(1)
+    expect(pool.sent).toHaveLength(0)
+    pool.emit('session-1', { kind: 'usage', outputTokens: 1 } as unknown as LiveEvent)
+    expect(pool.sent).toHaveLength(0)
+    pool.turnRunning = false
+    pool.emit('session-1', result)
+    expect(pool.sent).toHaveLength(1)
+    pool.emit('session-1', result)
+    expect(pool.sent).toHaveLength(1)
+  })
+
+  it('sends nothing when a message has already carried the output', () => {
+    const { coordinator, pool } = makeCoordinator({ contextForMessage: once() })
+    coordinator.send(1, 'hello')
+    expect(pool.sent).toHaveLength(1)
+    coordinator.deliverShellOutput(1)
+    expect(pool.sent).toHaveLength(1)
+  })
+
+  it('leaves it for the next message while something else holds the chat', () => {
+    let taken = 0
+    const { coordinator, pool } = makeCoordinator({ isExternallyLive: () => true, contextForMessage: () => { taken++; return OUTPUT } })
+    coordinator.deliverShellOutput(1)
+    expect(pool.sent).toHaveLength(0)
+    expect(taken).toBe(0)
   })
 })

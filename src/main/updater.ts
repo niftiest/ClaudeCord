@@ -1,7 +1,7 @@
 import { app, ipcMain, net, powerMonitor, shell, type BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { autoUpdater } from 'electron-updater'
-import { canRestartForUpdate, UPDATE_IPC, type UpdateState, type UpdateStatus } from '../shared/update-types'
+import { canRestartForUpdate, settleForRestart, UPDATE_IPC, type RestartWork, type UpdateState, type UpdateStatus } from '../shared/update-types'
 import { compareVersions } from '../shared/semver'
 import { downloadPortable, handoffArgs, pickPortableAsset, previousFromArgv, type PortableAsset } from './portable-update'
 
@@ -18,6 +18,7 @@ const RECHECK_EVERY_MS = 6 * 60 * 60 * 1000
 const RETRY_AFTER_MS = 2 * 60 * 1000
 const MAX_RETRIES = 3
 const IDLE_CHECK_EVERY_MS = 60 * 1000
+const WAITING_CHECK_EVERY_MS = 2 * 1000
 /** Set only when building a test copy, to update from a local server. */
 const FEED_OVERRIDE = import.meta.env.MAIN_VITE_UPDATE_FEED as string | undefined
 const LATEST_RELEASE = FEED_OVERRIDE ?? `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`
@@ -29,7 +30,7 @@ declare global {
 
 export type UpdaterHandle = { dispose(): void }
 
-export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; autoInstall: () => boolean; activeWork: () => number }): UpdaterHandle {
+export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => boolean; autoInstall: () => boolean; activeWork: () => number; activeChats: () => string[] }): UpdaterHandle {
   const channel: UpdateStatus['channel'] = !app.isPackaged ? 'dev'
     : process.env.PORTABLE_EXECUTABLE_DIR !== undefined ? 'portable' : 'installer'
   let state: UpdateState = channel === 'dev'
@@ -37,7 +38,10 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
     : { state: 'idle' }
 
   const justUpdated = previousFromArgv(process.argv) !== null
-  const status = (): UpdateStatus => ({ ...state, currentVersion: app.getVersion(), channel, justUpdated })
+  /** The user asked to restart once things finish. Cleared by any restart or by cancelling. */
+  let waiting: RestartWork | null = null
+  let quietSince: number | null = null
+  const status = (): UpdateStatus => ({ ...state, currentVersion: app.getVersion(), channel, justUpdated, restartWaiting: waiting })
   const set = (next: UpdateState): void => {
     state = next
     if (!window.isDestroyed()) window.webContents.send(UPDATE_IPC.status, status())
@@ -62,6 +66,9 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   let portableExe: string | null = null
   /** Something unsent in the window; only a person should lose that. */
   let hold = false
+  const currentWork = (): RestartWork => ({ chats: opts.activeChats(), unsent: hold })
+  const stopWaiting = (): void => { waiting = null; quietSince = null }
+  const broadcast = (): void => set(state)
 
   async function fetchPortable(): Promise<void> {
     const found = await checkPortable()
@@ -95,6 +102,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
 
   function restartIntoUpdate(): void {
     if (state.state !== 'ready') return
+    stopWaiting()
     if (channel === 'installer') {
       // Silent install, then relaunch. The app's before-quit handlers still run.
       setImmediate(() => autoUpdater.quitAndInstall(true, true))
@@ -128,6 +136,14 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   ipcMain.handle(UPDATE_IPC.check, () => check())
   ipcMain.handle(UPDATE_IPC.install, () => { restartIntoUpdate() })
   ipcMain.handle(UPDATE_IPC.setHold, (_e, value: unknown) => { hold = value === true })
+  ipcMain.handle(UPDATE_IPC.work, () => currentWork())
+  ipcMain.handle(UPDATE_IPC.restartWhenFinished, () => {
+    if (state.state !== 'ready') return
+    waiting = currentWork()
+    quietSince = null
+    broadcast()
+  })
+  ipcMain.handle(UPDATE_IPC.cancelRestart, () => { stopWaiting(); broadcast() })
   ipcMain.handle(UPDATE_IPC.openDownload, () => {
     const url = state.state === 'available' && state.url !== null ? state.url : `https://github.com/${OWNER}/${REPO}/releases/latest`
     void shell.openExternal(url)
@@ -135,6 +151,14 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
 
   const timers: NodeJS.Timeout[] = []
   if (channel !== 'dev') {
+    timers.push(setInterval(() => {
+      if (waiting === null) return
+      const work = currentWork()
+      const step = settleForRestart(work, quietSince, Date.now())
+      quietSince = step.quietSince
+      if (step.restart) { restartIntoUpdate(); return }
+      if (JSON.stringify(work) !== JSON.stringify(waiting)) { waiting = work; broadcast() }
+    }, WAITING_CHECK_EVERY_MS))
     // An automatic check that fails (e.g. the network isn't up yet right after
     // login) is retried a few times, a couple of minutes apart, instead of
     // waiting for the next 6-hourly check.
@@ -165,7 +189,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   return {
     dispose() {
       for (const t of timers) clearTimeout(t)
-      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.setHold, UPDATE_IPC.openDownload]) ipcMain.removeHandler(ch)
+      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.setHold, UPDATE_IPC.work, UPDATE_IPC.restartWhenFinished, UPDATE_IPC.cancelRestart, UPDATE_IPC.openDownload]) ipcMain.removeHandler(ch)
     }
   }
 }

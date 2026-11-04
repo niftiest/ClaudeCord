@@ -233,7 +233,8 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   }
   const shellRunner = new ShellRunner({
     storePath: join(app.getPath('userData'), 'pending-shell-runs.json'),
-    onChange: (sessionPk, runs) => { if (!window.isDestroyed()) window.webContents.send(ENGINE_IPC.shellChanged, sessionPk, runs) }
+    onChange: (sessionPk, runs) => { if (!window.isDestroyed()) window.webContents.send(ENGINE_IPC.shellChanged, sessionPk, runs) },
+    onFinished: run => coordinator.deliverShellOutput(run.sessionPk)
   })
   const coordinator = new EngineCoordinator({
     contextForMessage: sessionPk => shellRunBlocks(shellRunner.takeFinished(sessionPk)),

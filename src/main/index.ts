@@ -121,7 +121,11 @@ function createWindow(): void {
   const updater = registerUpdater(win, {
     autoCheck: () => getSettings(db).autoCheckUpdates,
     autoInstall: () => getSettings(db).autoInstallUpdates,
-    activeWork: () => engine?.activeWork() ?? 0
+    activeWork: () => engine?.activeWork() ?? 0,
+    activeChats: () => (engine?.busySessionIds() ?? []).map(id => {
+      const row = db.prepare("SELECT title FROM sessions WHERE LOWER(session_id) = ? AND kind = 'main'").get(id) as { title: string | null } | undefined
+      return row?.title ?? 'Untitled chat'
+    })
   })
 
   // "Close button minimises to tray": hide instead of closing, unless the app

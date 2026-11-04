@@ -2,7 +2,7 @@ import { safeExtraFlags, type SpawnSpec } from './transport'
 import { allowAlwaysRule } from './permission-bridge'
 import type { StreamedRow } from '../jsonl/stream'
 import type { ContentBlock } from '../../shared/types'
-import type { LiveEvent, PermissionRequest, PermissionDecision } from '../../shared/engine-types'
+import { SHELL_OUTPUT_SENT, type LiveEvent, type PermissionRequest, type PermissionDecision } from '../../shared/engine-types'
 
 /** Engine core: ties the primitives built in Tasks 1-5 (pool, watcher,
  *  permission bridge, transport) into the one thing the IPC boundary
@@ -37,6 +37,7 @@ export interface PoolLike {
   send(sessionKey: string, spec: SpawnSpec, msg: object): void
   interrupt(sessionKey: string): void
   on(sessionKey: string, cb: (e: LiveEvent) => void): void
+  isTurnRunning(sessionKey: string): boolean
 }
 
 export interface WatcherLike {
@@ -136,7 +137,8 @@ function buildUserMessage(text: string, images?: ImageBlockInput[], before: Cont
   }
   const blocks: ContentBlock[] = [
     ...before,
-    { type: 'text', text },
+    // Empty for `!` output going by itself, and an empty block would be refused.
+    ...(text.length > 0 ? [{ type: 'text', text } as ContentBlock] : []),
     ...(images ?? []).map((img): ContentBlock => ({
       type: 'image',
       source: { type: 'base64', media_type: img.mediaType, data: img.dataBase64 }
@@ -221,6 +223,8 @@ export class EngineCoordinator {
   private readonly sessionKeyToPk = new Map<string, number>()
   private readonly watchers = new Map<number, WatcherLike>()
   private readonly subscribedKeys = new Set<string>()
+  /** Chats with `!` output to deliver once the running turn ends. */
+  private readonly shellOutputWaiting = new Set<number>()
   private readonly pendingPermissions = new Map<string, PendingPermission>()
   /** Per-chat overrides set by Task 8's New-Chat dialog (model/effort/
    *  skipPermissions chosen at creation time), consulted ahead of the
@@ -269,8 +273,26 @@ export class EngineCoordinator {
       this.deps.permissionRelay, this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
     // A slash command has to be the whole message, or Claude reads it as text.
     const before = text.trimStart().startsWith('/') ? [] : this.deps.contextForMessage?.(sessionPk) ?? []
+    // `!` output that a message has already carried: nothing is left to say.
+    if (text.length === 0 && before.length === 0 && (images === undefined || images.length === 0)) return
     const userMessage = buildUserMessage(text, images, before, uuid)
+    if (text.length === 0) this.emitEvent(sessionPk, { kind: 'other', type: SHELL_OUTPUT_SENT })
     this.deps.pool.send(info.sessionKey, spec, userMessage)
+  }
+
+  /** Gives Claude a finished `!` command's output, which starts a turn as it does in the
+   *  terminal. During a turn it waits for the turn to end. While something outside this
+   *  app holds the chat it can't go at all, so it stays for the next message. */
+  deliverShellOutput(sessionPk: number): void {
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null || this.deps.isExternallyLive(info.sessionKey)) return
+    this.ensureEventSubscription(info.sessionKey, sessionPk)
+    if (this.deps.pool.isTurnRunning(info.sessionKey)) {
+      this.shellOutputWaiting.add(sessionPk)
+      return
+    }
+    this.shellOutputWaiting.delete(sessionPk)
+    this.send(sessionPk, '')
   }
 
   /** Registers per-chat overrides (Task 8) for one sessionPk -- e.g. the
@@ -472,7 +494,10 @@ export class EngineCoordinator {
   private ensureEventSubscription(sessionKey: string, sessionPk: number): void {
     if (this.subscribedKeys.has(sessionKey)) return
     this.subscribedKeys.add(sessionKey)
-    this.deps.pool.on(sessionKey, (e) => this.emitEvent(sessionPk, e))
+    this.deps.pool.on(sessionKey, (e) => {
+      this.emitEvent(sessionPk, e)
+      if (e.kind === 'result' && this.shellOutputWaiting.has(sessionPk)) this.deliverShellOutput(sessionPk)
+    })
   }
 
   /** Starts exactly one watcher per session, from the offset the catalog has

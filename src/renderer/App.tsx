@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
-import type { BackgroundTask, PermissionRequest, ExternalLock, RemoteSession } from '../shared/engine-types'
+import { SHELL_OUTPUT_SENT, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
 import { Nav, SHOW_NAV_STATUS } from './components/Nav'
 import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
@@ -14,6 +14,7 @@ import { Resizer } from './components/Resizer'
 import { Transcript } from './components/Transcript'
 import { IndexProgress } from './components/IndexProgress'
 import { Composer } from './components/Composer'
+import { composeStore } from './compose-store'
 import { NewChatDialog } from './components/NewChatDialog'
 import { LiveIndicator } from './components/LiveIndicator'
 import { ChatHeaderControls } from './components/ChatHeaderControls'
@@ -40,7 +41,7 @@ import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -133,6 +134,21 @@ export function App() {
   const jumpPendingRef = useRef(false)
   const [jumpTarget, setJumpTarget] = useState<{ sessionPk: number; uuid: string; seq: number } | null>(null)
   const updateHoldRef = useRef(false)
+  // Chats with a message on its way: sent, but not in the transcript yet. On a chat with
+  // no running process that can take a few seconds.
+  const [sendingPks, setSendingPks] = useState<ReadonlySet<number>>(new Set())
+  const sendingRef = useRef<ReadonlySet<number>>(sendingPks)
+  const markSending = useCallback((pk: number, on: boolean): void => {
+    if (sendingRef.current.has(pk) === on) return
+    const next = new Set(sendingRef.current)
+    if (on) next.add(pk)
+    else next.delete(pk)
+    sendingRef.current = next
+    setSendingPks(next)
+  }, [])
+  // The open chat whose running state and lock have been read, so the message box can
+  // act on them.
+  const [settledPk, setSettledPk] = useState<number | null>(null)
   // Live-turn reconciliation (Plan 2 Task 10): a transient "typing" preview
   // built from accumulating engine:event deltas, rendered as a temporary
   // bubble at the bottom of Transcript while `running` is true. Cleared
@@ -193,6 +209,25 @@ export function App() {
   const [scrollToBottomTick, setScrollToBottomTick] = useState(0)
   useEffect(() => { channelsRef.current = channels }, [channels])
   useEffect(() => { projectIdRef.current = project?.id ?? null }, [project])
+
+  // Drafts, queued messages and attachments live only in this window, so a restart for
+  // an update waits for them.
+  const refreshUpdateHold = useCallback((): void => {
+    const hold = composeStore.hasUnsent() || [...draftsRef.current.values()].some(d => d.trim().length > 0)
+    if (hold !== updateHoldRef.current) { updateHoldRef.current = hold; void api.setUpdateHold(hold) }
+  }, [])
+  useEffect(() => composeStore.subscribe(refreshUpdateHold), [refreshUpdateHold])
+  // Every chat's queue, whichever chat is on screen.
+  useEffect(() => api.onEvent((pk, ev) => {
+    composeStore.handleEvent(pk, ev, (chat, command) => { void api.shellRun(chat, command) })
+    if (ev.kind === 'other' && ev.type === SHELL_OUTPUT_SENT) markSending(pk, true)
+    // It isn't coming: refused, stopped, or a command that writes no message of its own.
+    if (clearsRunning(ev)) markSending(pk, false)
+  }), [markSending])
+  // Whichever chat is on screen, so one opened later doesn't show it as still on its way.
+  useEffect(() => api.onRows((pk, rows) => {
+    if (sendingRef.current.has(pk) && hasUserRenderItem(renderItemsFromStreamedRows(rows))) markSending(pk, false)
+  }), [markSending])
 
   // Persist panel widths so a drag survives relaunch.
   useEffect(() => { window.localStorage.setItem('cc.width.nav', String(navWidth)) }, [navWidth])
@@ -431,6 +466,7 @@ export function App() {
     setLivePreview(null)
     setQueuedCount(0)
     setExternalLock(null)
+    setSettledPk(null)
     try {
       // Refresh-on-open: if this chat's transcript changed on disk since the
       // catalog last saw it (continued from a terminal, say), re-index it
@@ -447,7 +483,7 @@ export function App() {
       // still streaming (Plan 3 Task 8 / Plan 2 review #6) — otherwise the
       // composer would wrongly allow a direct send into a live transport.
       const [live, lock] = await Promise.all([api.isSessionLive(next.id), api.getLock(next.id).catch(() => null)])
-      if (!isStaleResponse(reqId, sessionReqId.current)) { setRunning(live); setExternalLock(lock) }
+      if (!isStaleResponse(reqId, sessionReqId.current)) { setRunning(live); setExternalLock(lock); setSettledPk(next.id) }
     } finally {
       if (!isStaleResponse(reqId, sessionReqId.current)) setSessionLoading(false)
     }
@@ -893,6 +929,9 @@ export function App() {
     // asks GitHub if the last check is a few minutes old, and a chat that isn't
     // synced goes straight through.
     if (syncChat.info.synced && !syncChat.bypass.current) {
+      const outgoing = buildOutgoingText(text, pastedTexts)
+      const goesToClaude = (outgoing.trim().length > 0 || images.length > 0) && !isClearCommand(outgoing) && terminalOnlyCommand(outgoing) === null
+      if (uuid === undefined && goesToClaude) markSending(session.id, true)
       void api.syncBeforeSend(session.id).then(info => {
         syncChat.setInfo(info)
         const resend = (): void => {
@@ -902,6 +941,7 @@ export function App() {
         }
         if (info.conflict !== null) {
           syncChat.undismiss(info.conflict.sessionId)
+          markSending(session.id, false)
           setSyncHeld(() => resend)
         } else resend()
       }).catch(() => {
@@ -941,8 +981,10 @@ export function App() {
     // as stale and bail rather than wholesale-replacing `items` out from
     // under this turn's own live rows.
     reloadGenRef.current++
+    // A message for Claude's next step shows in the queue instead.
+    if (uuid === undefined) markSending(session.id, true)
     api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
-  }, [session, syncChat.info.synced])
+  }, [session, syncChat.info.synced, markSending])
   onSendRef.current = onSend
 
   // "Open in terminal" (header button, or the prompt for terminal-only
@@ -1237,7 +1279,7 @@ export function App() {
           // session switch, stacking a new .stream under the stale one (each
           // switch leaked one, splitting the chat into 50/50 scroll boxes).
           : <><div style={{ display: findTerms === '' ? 'contents' : 'none' }}><Transcript key={`transcript-${session.id}`} items={items} hasMore={hasMore} loadingOlder={loadingOlder}
-              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview}
+              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview} sending={sendingPks.has(session.id)}
               showToolCalls={toolDisplay !== 'hidden'} groupToolCalls={toolDisplay === 'grouped'} fileMissing={transcriptFileMissing}
               claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
               thinkingExpanded={settings?.thinkingExpanded ?? false}
@@ -1294,10 +1336,10 @@ export function App() {
         {session !== null && <ShellRuns runs={shellRuns} />}
         {session !== null && (
           // Keyed on the session id (same reasoning as Transcript above): a
-          // fresh Composer instance per session, so an in-progress queue/
-          // chips/text never bleeds from one session into another. Only the
-          // plain draft string survives the switch, via draftsRef.
-          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
+          // fresh Composer instance per session, so nothing bleeds from one
+          // session into another. What's in progress survives the switch: text
+          // via draftsRef, chips and the queue in composeStore.
+          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} settled={settledPk === session.id} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
             onShellCommand={command => { void api.shellRun(session.id, command) }}
             onHijack={async () => {
               const r = await api.hijackChat(session.id)
@@ -1308,9 +1350,7 @@ export function App() {
             initialDraft={draftsRef.current.get(session.id) ?? ''}
             onDraftChange={text => {
               draftsRef.current.set(session.id, text)
-              // Drafts live only in this window, so an automatic update waits for them.
-              const hold = [...draftsRef.current.values()].some(d => d.trim().length > 0)
-              if (hold !== updateHoldRef.current) { updateHoldRef.current = hold; void api.setUpdateHold(hold) }
+              refreshUpdateHold()
             }}
             onSend={onSend} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
         )}

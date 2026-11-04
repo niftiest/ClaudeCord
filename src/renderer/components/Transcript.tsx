@@ -20,7 +20,7 @@ const CARD_OPEN_MS = 400
 /** How far above the end the reader has to be before the jump button shows. */
 const JUMP_BUTTON_GAP = 200
 
-export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, livePreview, sending = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -36,6 +36,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   /** Transient "assistant is typing" preview (Plan 2 Task 10) accumulated from
    *  live engine:event deltas, rendered after the messages while a turn streams. */
   livePreview?: LivePreview | null
+  /** A message of the user's is on its way and isn't in `items` yet. */
+  sending?: boolean
   /** When false, tool-call cards are dropped from the transcript (Appearance
    *  setting "Show tool calls") -- for readers who only want the conversation. */
   showToolCalls?: boolean
@@ -157,7 +159,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // has none until it decodes, and text reflows as fonts and highlighting land. So
   // follow the height itself, as well as the chat's own box getting shorter when the
   // composer grows. This runs before the frame is painted, so nothing shows cut off.
-  const hasStream = items.length > 0 || pending.length > 0 || preview !== null
+  const hasStream = items.length > 0 || pending.length > 0 || preview !== null || sending
   useEffect(() => {
     const el = parentRef.current
     const content = contentRef.current
@@ -246,7 +248,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
     reportAtBottom()
   }, [scrollToBottomSignal])
 
-  if (items.length === 0 && pending.length === 0 && preview === null) {
+  if (!hasStream) {
     if (fileMissing) {
       return (
         <div className="empty transcript-archived">
@@ -360,6 +362,14 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
           </Fragment>
         )
       })}
+      {sending && (
+        <div className="turn-user">
+          <div className="turn-user-col">
+            <div className="turn-meta"><span className="turn-author">You</span></div>
+            <div className="bubble-me bubble-sending" role="status">Sending message…</div>
+          </div>
+        </div>
+      )}
       {preview !== null && (
         <div className="turn">
           <ClaudeAvatar icon={claudeIcon} size={28} />

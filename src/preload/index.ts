@@ -178,6 +178,9 @@ const update: UpdateApi = {
   checkForUpdates: () => ipcRenderer.invoke(UPDATE_IPC.check),
   installUpdate: () => ipcRenderer.invoke(UPDATE_IPC.install),
   setUpdateHold: hold => ipcRenderer.invoke(UPDATE_IPC.setHold, hold),
+  updateRestartWork: () => ipcRenderer.invoke(UPDATE_IPC.work),
+  restartWhenFinished: () => ipcRenderer.invoke(UPDATE_IPC.restartWhenFinished),
+  cancelUpdateRestart: () => ipcRenderer.invoke(UPDATE_IPC.cancelRestart),
   openUpdateDownload: () => ipcRenderer.invoke(UPDATE_IPC.openDownload),
   onUpdateStatus: cb => {
     const listener = (_e: IpcRendererEvent, s: UpdateStatus) => cb(s)

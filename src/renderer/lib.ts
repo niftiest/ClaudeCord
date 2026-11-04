@@ -296,6 +296,8 @@ export type QueueAction =
   | { type: 'set'; items: QueuedMessage[] }
   /** Claude Code took this one in. */
   | { type: 'removeUuid'; uuid: string }
+  /** Claude Code dropped this one, so it now waits here. */
+  | { type: 'holdUuid'; uuid: string }
   /** The process is gone, and what it held with it: all of it has to be sent again. */
   | { type: 'holdAll' }
 
@@ -329,6 +331,8 @@ export function queueReducer(state: QueuedMessage[], action: QueueAction): Queue
       return action.items
     case 'removeUuid':
       return state.filter(m => m.uuid !== action.uuid)
+    case 'holdUuid':
+      return state.map(m => m.uuid === action.uuid ? { ...m, uuid: null } : m)
     case 'holdAll':
       return state.map(m => ({ ...m, uuid: null }))
   }
@@ -631,6 +635,11 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'other':
       return prev
   }
+}
+
+/** Whether these items include something the user sent, as opposed to Claude's reply. */
+export function hasUserRenderItem(items: RenderItem[]): boolean {
+  return items.some(it => (it.kind === 'text' || it.kind === 'image') && it.role === 'user')
 }
 
 /** Whether `event` marks the definitive end of a turn for App's `running`

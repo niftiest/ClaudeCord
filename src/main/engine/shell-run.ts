@@ -6,9 +6,10 @@ import { childEnv } from './transport'
 import type { ContentBlock } from '../../shared/types'
 import type { ShellRun } from '../../shared/shell-run-types'
 
-/** Runs `!` commands for a chat: a separate process in its folder, with no Claude
- *  involved, so no tokens and no permission prompts (the user typed it). Finished
- *  runs wait here until the next message carries them to Claude, and survive a
+/** Runs `!` commands for a chat: a separate process in its folder, with no permission
+ *  prompts (the user typed it). As in the terminal, Claude gets the output of one that
+ *  finishes and replies to it, through `onFinished`. One that was stopped gets no reply;
+ *  it waits for the next message, as does anything that couldn't be delivered, surviving a
  *  restart until then. Node-only (no electron), injectable for tests. */
 
 /** Plenty to read, without one noisy command filling memory. */
@@ -64,6 +65,8 @@ export type ShellRunnerDeps = {
   /** The JSON file finished runs wait in, or null to keep them in memory only. */
   storePath: string | null
   onChange: (sessionPk: number, runs: ShellRun[]) => void
+  /** A command ran to its end, successfully or not. Not called for one that was stopped. */
+  onFinished?: (run: ShellRun) => void
   start?: (command: string, cwd: string) => ShellChild
   /** Ends a run and whatever it started. */
   killTree?: (pid: number) => void
@@ -166,6 +169,7 @@ export class ShellRunner {
     this.pids.delete(run.id)
     this.save()
     this.announce(run.sessionPk, true)
+    if (run.state === 'done') this.deps.onFinished?.(run)
   }
 
   /** Output can arrive thousands of times a second; the screen needs a few. */

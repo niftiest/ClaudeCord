@@ -21,16 +21,18 @@ function runner(storePath: string | null = null) {
   const shells: FakeShell[] = []
   const killed: number[] = []
   const changes: ShellRun[][] = []
+  const finished: string[] = []
   let id = 0
   const r = new ShellRunner({
     storePath,
     start: () => { const s = new FakeShell(); shells.push(s); return s as unknown as ShellChild },
     killTree: pid => { killed.push(pid) },
     onChange: (_pk, runs) => changes.push(runs.map(x => ({ ...x }))),
+    onFinished: run => finished.push(run.id),
     makeId: () => `r${++id}`,
     now: () => 1000
   })
-  return { r, shells, killed, changes }
+  return { r, shells, killed, changes, finished }
 }
 
 const run = (over: Partial<ShellRun>): ShellRun => ({ id: 'a', sessionPk: 1, command: 'ls', output: 'a.txt\n', startedAt: 0, state: 'done', exitCode: 0, ...over })
@@ -63,6 +65,18 @@ describe('! commands', () => {
     expect(r.list(1)[0]).toMatchObject({ state: 'stopped', exitCode: null })
     r.stop('r1')
     expect(killed).toEqual([7])
+  })
+
+  it('announces a command that ran to its end, even a failed one, but not a stopped one', () => {
+    const { r, shells, finished } = runner()
+    r.run(1, 'C:\\p', 'ok')
+    shells[0]!.emit('close', 0)
+    r.run(1, 'C:\\p', 'bad')
+    shells[1]!.emit('close', 2)
+    r.run(1, 'C:\\p', 'long')
+    r.stop('r3')
+    shells[2]!.emit('close', 1)
+    expect(finished).toEqual(['r1', 'r2'])
   })
 
   it('hands over only finished runs, once', () => {

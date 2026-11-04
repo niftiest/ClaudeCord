@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type DragEvent, type KeyboardEvent, type SetStateAction } from 'react'
 import { api } from '../api'
 import {
   collapsePastedText, queueReducer, imageFromDataUrl, buildOutgoingText,
   applyCompletion, commandTokenLength, completionAt, fileMention, filterCommands, matchesCommandName, rankFiles,
-  type ComposerImage, type PastedTextChip, type QueuedMessage
+  type ComposerImage, type PastedTextChip, type QueueAction, type QueuedMessage
 } from '../lib'
+import { composeStore, nextHeld, shellCommandOf } from '../compose-store'
 import type { ExternalLock } from '../../shared/engine-types'
 import { HIJACK_WORKING_TEXT, hijackBlock } from '../../shared/hijack'
 import type { ClaudeCommand, CommandSource } from '../../shared/claude-info-types'
@@ -58,10 +59,10 @@ function readImageFile(file: File): Promise<ComposerImage | null> {
  *  message can jump ahead of the queue and be sent immediately.
  *
  *  Keyed by the parent on `sessionPk` (App.tsx passes `key={session.id}`) so
- *  switching sessions remounts this component fresh -- the in-progress
- *  queue/chips/text of session A can never bleed into session B. Plain
- *  in-box draft text alone survives a switch, via the parent-owned
- *  initialDraft/onDraftChange pair.
+ *  switching sessions remounts this component fresh -- nothing of session A can
+ *  bleed into session B. All of it survives a switch: the draft's text through
+ *  the parent-owned initialDraft/onDraftChange pair, chips and the queue in
+ *  composeStore.
  */
 /** "a terminal" / "another Claude app" + pid, for the read-only notice. */
 function lockHolder(lock: ExternalLock): string {
@@ -69,10 +70,12 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ sessionPk, running, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, settled = false, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
+  /** True once `running` and `lock` describe this chat, rather than the moment of opening it. */
+  settled?: boolean
   /** Set while a process outside ClaudeCord holds this chat: the composer
    *  goes read-only (typing/sending disabled, queued messages held, not
    *  drained) until it's released. Any draft text is kept. */
@@ -83,7 +86,8 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
   /** Claude's guess at the next message: a click or Tab fills the box, never sends. */
   suggestion?: string | null
   onHijack?: () => Promise<string | null>
-  /** A message starting with `!`: runs now, even during a turn, without Claude. */
+  /** A message starting with `!`. As in the terminal, during a turn it waits for the
+   *  turn to end. Claude then gets the output and replies, with nothing more to send. */
   onShellCommand?: (command: string) => void
   initialDraft?: string
   onDraftChange?: (text: string) => void
@@ -105,9 +109,20 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
   sessionPk: number
 }) {
   const [text, setText] = useState(initialDraft ?? '')
-  const [pastedChips, setPastedChips] = useState<PastedTextChip[]>([])
-  const [imageChips, setImageChips] = useState<ComposerImage[]>([])
-  const [queue, dispatchQueue] = useReducer(queueReducer, [] as QueuedMessage[])
+  const { pasted: pastedChips, images: imageChips, queue } = useSyncExternalStore(composeStore.subscribe, () => composeStore.get(sessionPk))
+  function setPastedChips(next: SetStateAction<PastedTextChip[]>) {
+    composeStore.update(sessionPk, s => ({ ...s, pasted: typeof next === 'function' ? next(s.pasted) : next }))
+  }
+  function setImageChips(next: SetStateAction<ComposerImage[]>) {
+    composeStore.update(sessionPk, s => ({ ...s, images: typeof next === 'function' ? next(s.images) : next }))
+  }
+  function dispatchQueue(action: QueueAction) {
+    composeStore.dispatch(sessionPk, action)
+  }
+  useEffect(() => {
+    composeStore.setOpen(sessionPk)
+    return () => composeStore.setOpen(null)
+  }, [sessionPk])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
 
@@ -197,16 +212,29 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
   // Messages already in Claude Code's queue reach Claude by themselves. What's held
   // here goes when a turn ends: the transition from running=true to running=false (not
   // merely "is false") is what fires the next send, so a component that mounts already
-  // idle with a (freshly reset, empty) queue doesn't spuriously fire on mount.
+  // idle doesn't spuriously fire on mount.
+  function sendHeld(next: QueuedMessage) {
+    dispatchQueue({ type: 'remove', id: next.id })
+    const command = shellCommandOf(next.text)
+    if (command !== null && onShellCommand !== undefined) onShellCommand(command)
+    else onSend(next.text, next.images, [])
+  }
   const prevRunning = useRef(running)
   useEffect(() => {
-    const next = queue.find(m => !m.uuid)
-    if (prevRunning.current && !running && next !== undefined && lock === null) {
-      dispatchQueue({ type: 'remove', id: next.id })
-      onSend(next.text, next.images, [])
-    }
+    const next = nextHeld(queue)
+    if (prevRunning.current && !running && next !== undefined && lock === null) sendHeld(next)
     prevRunning.current = running
-  }, [running, queue, onSend, lock])
+  }, [running, queue, onSend, lock]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A turn that ended while this chat wasn't on screen left no transition to see, so
+  // what's held is checked once, as soon as it's known whether a turn is running.
+  const checkedOnOpen = useRef(false)
+  useEffect(() => {
+    if (!settled || checkedOnOpen.current) return
+    checkedOnOpen.current = true
+    const next = nextHeld(queue)
+    if (!running && next !== undefined && lock === null) sendHeld(next)
+  }, [settled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follows the queue's messages through Claude Code.
   const queueRef = useRef(queue)
@@ -222,10 +250,7 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
     return () => clearTimeout(timer)
   }, [queueNote])
   useEffect(() => api.onEvent((pk, ev) => {
-    if (pk !== sessionPk) return
-    if (ev.kind === 'exit') dispatchQueue({ type: 'holdAll' })
-    if (ev.kind !== 'commandLifecycle') return
-    if (ev.state === 'started' || ev.state === 'completed') dispatchQueue({ type: 'removeUuid', uuid: ev.uuid })
+    if (pk !== sessionPk || ev.kind !== 'commandLifecycle') return
     if (ev.state === 'cancelled' && !withdrawing.current.has(ev.uuid)) {
       // Dropped by something other than this queue: it mustn't simply vanish.
       const lost = queueRef.current.find(m => m.uuid === ev.uuid)
@@ -344,7 +369,8 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
     if (onShellCommand !== undefined && wouldSend.trimStart().startsWith('!')) {
       const command = wouldSend.trimStart().slice(1).trim()
       if (command.length > 0) {
-        onShellCommand(command)
+        if (running) dispatchQueue({ type: 'add', msg: { id: localId('queued'), text: wouldSend, images: [], uuid: null } })
+        else onShellCommand(command)
         clearCompose()
       }
       return
@@ -495,7 +521,7 @@ export function Composer({ sessionPk, running, lock = null, cwd = null, suggesti
         </button>
       </div>
       {onShellCommand !== undefined && text.trimStart().startsWith('!') && (
-        <div className="composer-hint">Runs in a shell in this folder, without Claude. Claude sees the output with your next message.</div>
+        <div className="composer-hint">{running ? 'Runs in a shell in this folder when Claude finishes. Claude then sees the output and replies.' : 'Runs in a shell in this folder. Claude then sees the output and replies.'}</div>
       )}
       {running && (
         <div className="composer-hint" aria-hidden="true">

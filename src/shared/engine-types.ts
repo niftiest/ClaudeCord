@@ -5,6 +5,9 @@ import type { McpServerStatus } from './claude-info-types'
 /** Typed view of one line of `claude ... --output-format stream-json` stdout.
  *  Produced by src/main/engine/events.ts's tolerant parseEvent(). This module
  *  must stay electron-free: it is imported by both main and renderer. */
+/** `other` event type: `!` output has gone to Claude, as a message nobody typed. */
+export const SHELL_OUTPUT_SENT = 'shell-output-sent'
+
 export type LiveEvent =
   | { kind: 'init'; sessionId: string; cwd: string; model: string; permissionMode: string; mcpServers?: McpServerStatus[] }
   | { kind: 'assistant'; uuid: string; blocks: ContentBlock[]; usage?: Usage }
