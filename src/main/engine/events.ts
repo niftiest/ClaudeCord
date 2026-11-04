@@ -64,7 +64,24 @@ function parseSystem(row: Record<string, unknown>): LiveEvent {
       name: typeof row.hook_name === 'string' ? row.hook_name : 'hook',
       hookEvent: typeof row.hook_event === 'string' ? row.hook_event : '',
       outcome: typeof row.outcome === 'string' ? row.outcome : null,
-      output: output.trim()
+      output: output.trim(),
+      ...(typeof row.exit_code === 'number' ? { exitCode: row.exit_code } : {})
+    }
+  }
+  if (row.subtype === 'informational' && typeof row.content === 'string') {
+    const o = row.prompt_submit_outcome
+    return {
+      kind: 'informational',
+      text: row.content,
+      level: typeof row.level === 'string' ? row.level : 'info',
+      ...(isPlainObject(o) ? { ending: { kind: typeof o.kind === 'string' ? o.kind : null, kept: o.prompt_kept === true, reason: typeof o.reason === 'string' ? o.reason : null } } : {})
+    }
+  }
+  if (row.subtype === 'session_writes_lost') {
+    return {
+      kind: 'writesLost',
+      errorCode: typeof row.error_code === 'string' ? row.error_code : '',
+      lost: Array.isArray(row.lost) ? row.lost.filter((l): l is string => typeof l === 'string') : []
     }
   }
   if (row.subtype !== 'init') return other

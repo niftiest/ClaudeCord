@@ -99,6 +99,8 @@ export type EngineCoordinatorDeps = {
   contextForMessage?: (sessionPk: number) => ContentBlock[]
   /** Whether this chat's next process should ask for prompt suggestions. */
   wantsSuggestions?: (sessionPk: number) => boolean
+  /** Folders outside the project that this chat's process may use. */
+  projectDirs?: (sessionPk: number) => string[]
   /** Keeps each project's model, effort and permission choices, shared by its chats. */
   projectDefaults?: {
     load: (sessionPk: number) => Partial<EngineDefaults>
@@ -326,7 +328,7 @@ export class EngineCoordinator {
     if (d.model !== undefined) flags.push('--model', d.model)
     if (d.effort !== undefined) flags.push('--effort', d.effort)
     if (this.deps.chromeEnabled?.() === true) flags.push('--chrome')
-    return [...flags, ...safeExtraFlags(this.deps.spawnExtras?.().extraFlags ?? [])]
+    return [...flags, ...safeExtraFlags(this.deps.spawnExtras?.().extraFlags ?? []), ...this.dirFlags(sessionPk)]
   }
 
   interrupt(sessionPk: number): void {
@@ -497,9 +499,16 @@ export class EngineCoordinator {
     return this.sessionDefaults.get(sessionPk) ?? {}
   }
 
+  private dirFlags(sessionPk: number): string[] {
+    return (this.deps.projectDirs?.(sessionPk) ?? []).flatMap(dir => ['--add-dir', dir])
+  }
+
   private spawnExtrasFor(sessionPk: number): { maxBudgetUsd: number | null; extraFlags: string[] } {
     const extras = this.deps.spawnExtras?.() ?? { maxBudgetUsd: null, extraFlags: [] }
-    return this.deps.wantsSuggestions?.(sessionPk) === true ? { ...extras, extraFlags: [...extras.extraFlags, '--prompt-suggestions'] } : extras
+    return {
+      ...extras,
+      extraFlags: [...extras.extraFlags, ...this.dirFlags(sessionPk), ...(this.deps.wantsSuggestions?.(sessionPk) === true ? ['--prompt-suggestions'] : [])]
+    }
   }
 
   private cacheSessionInfo(sessionPk: number, info: SessionInfo): void {

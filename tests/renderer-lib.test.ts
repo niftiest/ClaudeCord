@@ -688,9 +688,10 @@ describe('reduceLivePreview', () => {
     expect(reduceLivePreview(prev, event)).toEqual(prev)
   })
 
-  it('clears the preview on result', () => {
-    const prev: LivePreview = { text: 'ok', sealed: true }
-    expect(reduceLivePreview(prev, { kind: 'result', isError: false, costUsd: 0.01, text: 'ok' })).toBeNull()
+  it('on result, clears text still being typed and leaves a finished bubble for its saved row', () => {
+    const sealed: LivePreview = { text: 'ok', sealed: true }
+    expect(reduceLivePreview(sealed, { kind: 'result', isError: false, costUsd: 0.01, text: 'ok' })).toBe(sealed)
+    expect(reduceLivePreview({ text: 'ok', sealed: false }, { kind: 'result', isError: false, costUsd: 0.01, text: 'ok' })).toBeNull()
   })
 
   it('leaves the preview unchanged for init/rate_limit/other', () => {
@@ -754,7 +755,7 @@ describe('reduceLivePreview', () => {
     })
     expect(preview).toEqual({ text: 'Second message', sealed: true })
 
-    expect(reduceLivePreview(preview, { kind: 'result', isError: false, costUsd: 0.01, text: 'Second message' })).toBeNull()
+    expect(reduceLivePreview(preview, { kind: 'result', isError: false, costUsd: 0.01, text: 'Second message' })).toEqual({ text: 'Second message', sealed: true })
   })
 })
 

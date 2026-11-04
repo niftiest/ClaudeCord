@@ -15,6 +15,10 @@ function clean(raw: unknown): ProjectSettings {
   if (typeof r.promptSuggestions === 'boolean') out.promptSuggestions = r.promptSuggestions
   if (typeof r.filesExpanded === 'boolean') out.filesExpanded = r.filesExpanded
   if (TOOL_DISPLAYS.includes(r.toolDisplay as ToolDisplay)) out.toolDisplay = r.toolDisplay as ToolDisplay
+  if (Array.isArray(r.extraDirs)) {
+    const dirs = r.extraDirs.filter((d): d is string => typeof d === 'string' && d.length > 0)
+    if (dirs.length > 0) out.extraDirs = dirs
+  }
   return out
 }
 

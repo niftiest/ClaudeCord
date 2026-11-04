@@ -91,6 +91,19 @@ export function stableItemKeys(items: RenderItem[]): string[] {
   })
 }
 
+/** Fits a freshly loaded newest page into what's on screen. The page takes over from its
+ *  first message on, and everything above stays. Dropping it would change which message
+ *  starts the first turn, and a turn is keyed by that message, so a turn longer than a
+ *  page would be rebuilt on every reload. `keptAbove` is 0 when the page starts the view
+ *  or shares nothing with it, and the page's own paging position then applies. */
+export function mergeReloadedPage(current: RenderItem[], page: RenderItem[]): { items: RenderItem[]; keptAbove: number } {
+  const first = page[0]
+  if (first === undefined) return { items: page, keptAbove: 0 }
+  const at = current.findIndex(item => item.uuid === first.uuid)
+  if (at <= 0) return { items: page, keptAbove: 0 }
+  return { items: [...current.slice(0, at), ...page], keptAbove: at }
+}
+
 /** A contiguous run of render items belonging to one side of the conversation:
  *  a user turn (their text + any pasted images) or a Claude turn (assistant
  *  text, thinking, tool cards, images). `startIndex` is the item's position in
@@ -681,7 +694,9 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
       return text.length > 0 ? { text, sealed: true } : prev
     }
     case 'result':
-      return null
+      // A finished bubble stays until its saved row replaces it, which can land a moment
+      // after the result. Clearing it here makes the reply blink out and back.
+      return prev !== null && prev.sealed ? prev : null
     case 'exit':
       // Task 10 review Fix 1: an `exit` LiveEvent means the transport's
       // process is gone -- whether or not it ever sent its own `result` --
@@ -701,6 +716,8 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'elicitation':
     case 'retry':
     case 'hook':
+    case 'informational':
+    case 'writesLost':
     case 'other':
       return prev
   }
@@ -882,7 +899,7 @@ export function backgroundTaskLabel(task: BackgroundTask, now: number): { title:
   const kind = task.type === 'local_bash' ? 'Bash' : task.type === 'local_agent' ? (task.agent ?? 'Agent') : task.type.replace(/^local_/, '')
   const details = [elapsedLabel(now - task.startedAt)]
   if (task.lastTool !== null) details.push(task.lastTool)
-  if (task.tokens !== null && task.tokens > 0) details.push(`${tokenLabel(task.tokens)} tokens`)
+  if (task.tokens !== null && task.tokens > 0) details.push(`${tokenLabel(task.tokens)} context`)
   return { title: task.description.length > 0 ? `${kind}: ${task.description}` : kind, details }
 }
 
@@ -1196,6 +1213,12 @@ export function sideQuestionOf(text: string): string | null {
 export function renameCommandOf(text: string): string | null {
   const m = /^\s*\/rename\s+([\s\S]+)$/.exec(text)
   return m === null ? null : m[1]!.trim()
+}
+
+/** The folder in `/add-dir folder`, '' for a bare `/add-dir`, or null for anything else. */
+export function addDirCommandOf(text: string): string | null {
+  const m = /^\s*\/add-dir(?:\s+([\s\S]*))?$/.exec(text)
+  return m === null ? null : (m[1] ?? '').trim().replace(/^"(.*)"$/, '$1')
 }
 
 export function isForkCommand(text: string): boolean {

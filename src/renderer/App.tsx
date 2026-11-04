@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { api } from './api'
 import type { ChannelRow, SessionSummary, RenderItem } from '../shared/types'
 import type { IndexProgress as Progress } from '../shared/ipc'
@@ -43,8 +43,8 @@ import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, sideQuestionOf, renameCommandOf, isForkCommand,
-  renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
+  renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
 } from './lib'
@@ -85,6 +85,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [session, setSession] = useState<SessionSummary | null>(null)
   const [items, setItems] = useState<RenderItem[]>([])
+  const itemsRef = useRef(items)
+  itemsRef.current = items
   const [oldestSeq, setOldestSeq] = useState<number | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [sessionLoading, setSessionLoading] = useState(false)
@@ -708,7 +710,8 @@ export function App() {
       if (ev.kind === 'hook' && ev.phase === 'started') setLiveActivity(`Running hook: ${ev.name}`)
       if (ev.kind === 'hook' && ev.phase === 'finished') {
         setLiveActivity(null)
-        if (ev.outcome === 'error') setTerminalNotice(`The ${ev.name} hook failed${ev.output.length > 0 ? `: ${ev.output.slice(0, 400)}` : '.'}`)
+        // Exit code 2 is a hook saying no on purpose, not a hook going wrong.
+        if (ev.outcome === 'error' && ev.exitCode !== 2) setTerminalNotice(`The ${ev.name} hook failed${ev.output.length > 0 ? `: ${ev.output.slice(0, 400)}` : '.'}`)
       }
       if (ev.kind === 'delta' || ev.kind === 'assistant' || clearsRunning(ev)) setLiveActivity(null)
       if (ev.kind === 'other' && ev.type === FOLDER_MISSING) {
@@ -935,8 +938,12 @@ export function App() {
         try {
           const page = await api.loadTranscript(sid)
           if (!shouldApplyReload(reqId, sessionReqId.current, gen, reloadGenRef.current)) return
-          setItems(page.items); setOldestSeq(page.oldestSeq); setHasMore(page.hasMore)
-          setLivePreview(null)
+          // Only what the page covers changes. Earlier messages keep their place on
+          // screen and their paging position, and text still being typed keeps going.
+          const merged = mergeReloadedPage(itemsRef.current, page.items)
+          setItems(merged.items)
+          if (merged.keptAbove === 0) { setOldestSeq(page.oldestSeq); setHasMore(page.hasMore) }
+          setLivePreview(prev => suppressSealedPreview(prev, true))
           // This reload bumped sessionReqId, so an openSession for this same
           // chat still in flight will treat itself as stale and skip clearing
           // its loading flag -- clear it here since this page supersedes it.
@@ -1075,6 +1082,19 @@ export function App() {
     }
     const newName = renameCommandOf(combined)
     if (newName !== null) { renameChatRef.current(newName); return }
+    const addDir = addDirCommandOf(combined)
+    if (addDir !== null) {
+      const pk = session.id
+      void api.addProjectDir(pk, addDir === '' ? null : addDir).then(r => {
+        if (!r.ok) { setTerminalNotice(r.error); return }
+        if (r.added === null) return
+        setProjectSettings(r.settings)
+        const note = `Claude can use ${r.added} in this project from your next message.`
+        setGoodNotice(note)
+        setTerminalNotice(note)
+      })
+      return
+    }
     if (isForkCommand(combined)) { forkChatRef.current(); return }
     // /clear would move Claude to a new session underneath this chat.
     if (isClearCommand(combined)) {
@@ -1103,6 +1123,7 @@ export function App() {
     // under this turn's own live rows.
     reloadGenRef.current++
     lastSentRef.current = combined
+    composeStore.noteSent(session.id, combined, images, uuid)
     // A message for Claude's next step shows in the queue instead.
     if (uuid === undefined) markSending(session.id, true)
     api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
@@ -1114,8 +1135,17 @@ export function App() {
   // then keeps it read-only here until that terminal exits.
   const [terminalPrompt, setTerminalPrompt] = useState<{ command: string; text: string; images: ComposerImage[] } | null>(null)
   const [terminalNotice, setTerminalNotice] = useState<string | null>(null)
+  /** The notice that's good news, so it doesn't read as an error. */
+  const [goodNotice, setGoodNotice] = useState<string | null>(null)
   const bypassTerminalCheck = useRef(false)
   useEffect(() => { setTerminalPrompt(null); setTerminalNotice(null) }, [session?.id])
+  // Declared after the line above, so a notice that waited for this chat outlasts opening it.
+  const waitingNotice = useSyncExternalStore(composeStore.subscribe, () => session === null ? null : composeStore.get(session.id).notice ?? null)
+  useEffect(() => {
+    if (waitingNotice === null || session === null) return
+    composeStore.update(session.id, s => ({ ...s, notice: null }))
+    setTerminalNotice(waitingNotice)
+  }, [waitingNotice, session])
   const openChatInTerminal = useCallback(() => {
     if (session === null) return
     setTerminalNotice(null)
@@ -1387,6 +1417,7 @@ export function App() {
           {session !== null && settings !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
+              onAddDir={() => { void api.addProjectDir(session.id, null).then(r => { if (!r.ok) setTerminalNotice(r.error); else setProjectSettings(r.settings) }) }}
               onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
               session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onRename={renameChat} onFork={forkChat} />
           )}
@@ -1458,7 +1489,7 @@ export function App() {
               </>
             ) : null}
             {terminalNotice !== null && (
-              <span className="term-prompt-error">{terminalNotice}
+              <span className={terminalNotice === goodNotice ? 'term-prompt-good' : 'term-prompt-error'}>{terminalNotice}
                 <button type="button" className="term-prompt-x" aria-label="Dismiss" onClick={() => setTerminalNotice(null)}>✕</button>
               </span>
             )}
@@ -1501,7 +1532,7 @@ export function App() {
               draftsRef.current.set(session.id, text)
               refreshUpdateHold()
             }}
-            onSend={onSend} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
+            onSend={onSend} onSubmit={() => setTerminalNotice(null)} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
         )}
       </main>
       </OpenSubagentContext.Provider>

@@ -6,10 +6,11 @@ import type { SessionSummary } from '../../shared/types'
 const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
 
 /** This project's own choices, for the options Settings leaves to "Choose per project". */
-export function ProjectOptions({ settings, chat, onChange, onOpenSettings, session, sessions, onOpenChat, onRename, onFork }: {
+export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onRename, onFork }: {
   settings: AppSettings
   chat: ProjectSettings
   onChange: (patch: Partial<ProjectSettings>) => void
+  onAddDir: () => void
   onOpenSettings: () => void
   session: SessionSummary
   /** Every chat in this project, to go between them. */
@@ -73,6 +74,17 @@ export function ProjectOptions({ settings, chat, onChange, onOpenSettings, sessi
           ) : (
             <div className="project-option"><span>Prompt suggestions</span><span className="project-option-fixed">{settings.promptSuggestions === 'on' ? 'On' : 'Off'}</span></div>
           )}
+          <div className="project-dirs">
+            <div className="project-option"><span>Other folders Claude can use</span></div>
+            {(chat.extraDirs ?? []).map(dir => (
+              <div className="project-dir" key={dir}>
+                <span title={dir}>{dir}</span>
+                <button type="button" className="term-prompt-x" aria-label={`Remove ${dir}`}
+                  onClick={() => onChange({ extraDirs: (chat.extraDirs ?? []).filter(d => d !== dir) })}>✕</button>
+              </div>
+            ))}
+            <button type="button" className="project-options-link" onClick={onAddDir}>Add a folder…</button>
+          </div>
           {(!tools || !suggestions) && (
             <button type="button" className="project-options-link" onClick={() => { setOpen(false); onOpenSettings() }}>
               Set for all projects. To choose here, pick "Choose per project" in Settings

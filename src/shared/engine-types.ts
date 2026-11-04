@@ -31,6 +31,9 @@ export const SHELL_OUTPUT_SENT = 'shell-output-sent'
 /** `other` event type: nothing was sent, because the project's folder no longer exists. */
 export const FOLDER_MISSING = 'folder-missing'
 
+/** How a submitted message ended before reaching Claude. `kept`: Claude reads it next turn anyway. */
+export type PromptEnding = { kind: string | null; kept: boolean; reason: string | null }
+
 export type LiveEvent =
   | { kind: 'init'; sessionId: string; cwd: string; model: string; permissionMode: string; mcpServers?: McpServerStatus[] }
   | { kind: 'assistant'; uuid: string; blocks: ContentBlock[]; usage?: Usage }
@@ -62,7 +65,11 @@ export type LiveEvent =
   /** An API call failed and is being retried, so a quiet chat isn't simply stuck. */
   | { kind: 'retry'; attempt: number; maxRetries: number; delayMs: number; error: string | null }
   /** A hook from the user's settings starting or finishing. */
-  | { kind: 'hook'; phase: 'started' | 'finished'; name: string; hookEvent: string; outcome: string | null; output: string }
+  | { kind: 'hook'; phase: 'started' | 'finished'; name: string; hookEvent: string; outcome: string | null; output: string; exitCode?: number }
+  /** A line Claude Code has for the user. `ending` is there when it ended a message before Claude saw it. */
+  | { kind: 'informational'; text: string; level: string; ending?: PromptEnding }
+  /** Claude Code couldn't save everything, and sends this as it exits. */
+  | { kind: 'writesLost'; errorCode: string; lost: string[] }
   | { kind: 'other'; type: string }
   /** Synthesized by SessionPool (never parsed off the wire -- see pool.ts's
    *  `transport.onExit` handler) the instant a transport's process exits,

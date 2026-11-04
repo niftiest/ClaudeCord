@@ -78,6 +78,7 @@ export const ENGINE_IPC = {
   /** invoke: the settings saved for a folder, for the New Chat dialog. */
   folderSettings: 'engine:folderSettings',
   setProjectSettings: 'engine:setProjectSettings',
+  addProjectDir: 'engine:addProjectDir',
   /** invoke: run a `!` command in the chat's folder. */
   shellRun: 'engine:shellRun',
   shellStop: 'engine:shellStop',
@@ -160,6 +161,8 @@ export type EngineApi = {
   getProjectSettings(sessionPk: number): Promise<ProjectSettings>
   folderSettings(cwd: string): Promise<ProjectSettings>
   setProjectSettings(sessionPk: number, patch: Partial<ProjectSettings>): Promise<ProjectSettings>
+  /** Lets Claude use a folder outside the project. With no path, asks the user to pick one. */
+  addProjectDir(sessionPk: number, path: string | null): Promise<{ ok: true; added: string | null; settings: ProjectSettings } | { ok: false; error: string }>
   /** Runs a command in the chat's folder, without Claude. */
   shellRun(sessionPk: number, command: string): Promise<void>
   shellStop(id: string): Promise<void>

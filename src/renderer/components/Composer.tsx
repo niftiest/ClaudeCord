@@ -71,7 +71,7 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onInterrupt, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onSubmit, onInterrupt, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
@@ -103,6 +103,8 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
    *  rendering); it's empty for a drained queue entry, since that text was
    *  already combined once at enqueue time. */
   onSend: (text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void
+  /** The user sent something themselves, as opposed to a queued message going by itself. */
+  onSubmit?: () => void
   onInterrupt: () => void
   /** Fires whenever the queued-message count changes, so a parent (App.tsx)
    *  can drive a LiveIndicator badge without owning the queue itself (the
@@ -114,7 +116,7 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
   sessionPk: number
 }) {
   const [text, setText] = useState(initialDraft ?? '')
-  const { pasted: pastedChips, images: imageChips, queue } = useSyncExternalStore(composeStore.subscribe, () => composeStore.get(sessionPk))
+  const { pasted: pastedChips, images: imageChips, queue, returned } = useSyncExternalStore(composeStore.subscribe, () => composeStore.get(sessionPk))
   function setPastedChips(next: SetStateAction<PastedTextChip[]>) {
     composeStore.update(sessionPk, s => ({ ...s, pasted: typeof next === 'function' ? next(s.pasted) : next }))
   }
@@ -262,6 +264,13 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
     const timer = setTimeout(() => setQueueNote(null), 4000)
     return () => clearTimeout(timer)
   }, [queueNote])
+  // A message that never reached Claude comes back ahead of anything typed since.
+  useEffect(() => {
+    if (returned === null || returned === undefined) return
+    composeStore.update(sessionPk, s => ({ ...s, returned: null }))
+    updateText([returned, textRef.current].filter(s => s.trim().length > 0).join('\n'))
+    textareaRef.current?.focus()
+  }, [returned]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => api.onEvent((pk, ev) => {
     if (pk !== sessionPk || ev.kind !== 'commandLifecycle') return
     if (ev.state === 'cancelled' && !withdrawing.current.has(ev.uuid)) {
@@ -380,6 +389,7 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
     const wouldSend = buildOutgoingText(text, pastedChips)
     if (wouldSend.trim().length === 0 && imageChips.length === 0) return
     if (lock !== null) return
+    onSubmit?.()
     if (onShellCommand !== undefined && wouldSend.trimStart().startsWith('!')) {
       const command = wouldSend.trimStart().slice(1).trim()
       if (command.length > 0) {

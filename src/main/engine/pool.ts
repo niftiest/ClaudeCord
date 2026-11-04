@@ -41,7 +41,8 @@ function refusedExternalLive(): LiveEvent {
 /** The parts of a spec the user can change on a running chat. Not the session id,
  *  which legitimately goes from "create" to "resume" after the first process. */
 function settingsKey(spec: SpawnSpec): string {
-  return JSON.stringify([spec.model, spec.effort, spec.permissionMode, spec.skipPermissions, spec.chrome, spec.maxBudgetUsd, spec.extraArgs?.includes('--prompt-suggestions') ?? false])
+  const dirs = (spec.extraArgs ?? []).filter((a, i, all) => all[i - 1] === '--add-dir')
+  return JSON.stringify([spec.model, spec.effort, spec.permissionMode, spec.skipPermissions, spec.chrome, spec.maxBudgetUsd, spec.extraArgs?.includes('--prompt-suggestions') ?? false, dirs])
 }
 
 /** Claude Code's new list, keeping when each task started and how far it has got. */
@@ -381,7 +382,8 @@ export class SessionPool {
       // Guards against a stale transport's late event landing after this
       // entry has been reaped/shut down (and possibly replaced by a fresh
       // spawn under the same key, which has its own Entry/closures).
-      if (entry.disposed) return
+      // Except what a closing process has left to say about its own saving.
+      if (entry.disposed && e.kind !== 'writesLost') return
       entry.lastActivity = this.now()
       // The turn's terminal `result` marks the transport idle again -- it stays
       // pooled (isLive true) but is no longer running a turn (isTurnRunning

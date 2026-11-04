@@ -129,6 +129,7 @@ const api: ClaudeCordApi & EngineApi = {
   getProjectSettings: (sessionPk: number) => ipcRenderer.invoke(ENGINE_IPC.getProjectSettings, sessionPk),
   folderSettings: (cwd: string) => ipcRenderer.invoke(ENGINE_IPC.folderSettings, cwd),
   setProjectSettings: (sessionPk: number, patch) => ipcRenderer.invoke(ENGINE_IPC.setProjectSettings, sessionPk, patch),
+  addProjectDir: (sessionPk: number, path: string | null) => ipcRenderer.invoke(ENGINE_IPC.addProjectDir, sessionPk, path),
   shellRun: (sessionPk: number, command: string) => ipcRenderer.invoke(ENGINE_IPC.shellRun, sessionPk, command),
   shellStop: (id: string) => ipcRenderer.invoke(ENGINE_IPC.shellStop, id),
   shellDismiss: (id: string) => ipcRenderer.invoke(ENGINE_IPC.shellDismiss, id),

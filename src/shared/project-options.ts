@@ -19,6 +19,8 @@ export type ProjectSettings = {
   toolDisplay?: ToolDisplay
   /** Whether the Files panel is open. Unset: whatever was last chosen anywhere. */
   filesExpanded?: boolean
+  /** Folders outside the project that Claude may use, for every chat in it. */
+  extraDirs?: string[]
 }
 
 /** With "per project" selected, a project that hasn't chosen behaves like the app's default. */

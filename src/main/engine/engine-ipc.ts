@@ -2,7 +2,7 @@ import { PlanUsageTracker } from './plan-usage'
 import { app, dialog, ipcMain, type BrowserWindow, shell } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { Catalog } from '../catalog/db'
 import { getEngineSessionInfo } from '../catalog/repos'
 import { getSettings, updateSettings } from '../catalog/settings'
@@ -235,6 +235,8 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     folderExists: existsSync,
     contextForMessage: sessionPk => shellRunBlocks(shellRunner.takeFinished(sessionPk)),
     wantsSuggestions: sessionPk => suggestionsWanted(getSettings(db).promptSuggestions, getProjectSettings(db, sessionPk), claudeAllowsSuggestions()),
+    // A folder that has gone would stop Claude from starting at all.
+    projectDirs: sessionPk => (getProjectSettings(db, sessionPk).extraDirs ?? []).filter(d => existsSync(d)),
     projectDefaults: {
       load: sessionPk => {
         const c = getProjectSettings(db, sessionPk)
@@ -445,8 +447,21 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     updateProjectSettings(db, sessionPk, {
       ...('promptSuggestions' in patch ? { promptSuggestions: patch.promptSuggestions } : {}),
       ...('toolDisplay' in patch ? { toolDisplay: patch.toolDisplay } : {}),
-      ...('filesExpanded' in patch ? { filesExpanded: patch.filesExpanded } : {})
+      ...('filesExpanded' in patch ? { filesExpanded: patch.filesExpanded } : {}),
+      ...('extraDirs' in patch ? { extraDirs: patch.extraDirs } : {})
     }))
+  // `/add-dir` with a folder, or the folder picker with none. A picker closed without choosing adds nothing.
+  ipcMain.handle(ENGINE_IPC.addProjectDir, async (_e, sessionPk: number, path: string | null) => {
+    const current = getProjectSettings(db, sessionPk)
+    const chosen = path ?? await onPickDirectory()
+    if (chosen === null) return { ok: true, added: null, settings: current }
+    const info = getEngineSessionInfo(db, sessionPk)
+    const dir = resolve(info?.cwd ?? '', chosen)
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return { ok: false, error: `Couldn't add ${dir}: that folder doesn't exist.` }
+    const known = current.extraDirs ?? []
+    if (known.some(d => d.toLowerCase() === dir.toLowerCase())) return { ok: true, added: dir, settings: current }
+    return { ok: true, added: dir, settings: updateProjectSettings(db, sessionPk, { extraDirs: [...known, dir] }) }
+  })
   const projectLookup = db.prepare('SELECT dir_name AS dirName, cwd FROM projects WHERE id = ?')
   const projectChats = db.prepare("SELECT id, file_path AS filePath FROM sessions WHERE project_id = ? AND kind = 'main'")
   const projectPaths = (projectId: number): { cwd: string | null; projectDir: string } => {
@@ -771,7 +786,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.mcpLogin)
       ipcMain.removeHandler(ENGINE_IPC.hijackChat)
       for (const channel of [ENGINE_IPC.showProjectFolder, ENGINE_IPC.memoryList, ENGINE_IPC.memoryRead, ENGINE_IPC.memorySave]) ipcMain.removeHandler(channel)
-      for (const channel of [ENGINE_IPC.folderSettings, ENGINE_IPC.contextUsage, ENGINE_IPC.getProjectSettings, ENGINE_IPC.setProjectSettings]) ipcMain.removeHandler(channel)
+      for (const channel of [ENGINE_IPC.folderSettings, ENGINE_IPC.contextUsage, ENGINE_IPC.getProjectSettings, ENGINE_IPC.setProjectSettings, ENGINE_IPC.addProjectDir]) ipcMain.removeHandler(channel)
       for (const channel of [ENGINE_IPC.shellRun, ENGINE_IPC.shellStop, ENGINE_IPC.shellDismiss, ENGINE_IPC.shellList, ENGINE_IPC.folderTrust, ENGINE_IPC.trustFolder]) ipcMain.removeHandler(channel)
       shellRunner.dispose()
       ipcMain.removeHandler(ENGINE_IPC.killEngine)

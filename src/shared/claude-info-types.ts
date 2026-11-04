@@ -50,7 +50,7 @@ export type McpCheckResult = { ok: true; servers: McpServerStatus[] } | { ok: fa
 
 export type ClaudeInfoResult = { ok: true; info: ClaudeInfo } | { ok: false; error: string }
 
-/** Slash commands that need Claude Code's terminal: tested against 2.1.316
+/** Slash commands that need Claude Code's terminal: tested against 2.1.316 and 2.1.318
  *  without a terminal (or, for logins and installers, inherently interactive).
  *  Claude's own command list can't answer this alone: it lists a few of these
  *  and leaves out aliases that do work, such as /cost. */
@@ -59,9 +59,9 @@ export const TERMINAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'desktop', 'diff', 'doctor', 'exit', 'export', 'feedback', 'focus', 'help', 'hooks', 'ide', 'install', 'install-github-app',
   'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'memory', 'mobile', 'passes', 'permissions', 'plugin', 'plugins',
   'powerup', 'privacy-settings', 'quit', 'radio', 'rate-limit-options', 'rc', 'release-notes', 'remote-control', 'remote-env',
-  'restart', 'resume', 'rewind', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
-  'status', 'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'theme', 'todos', 'ultraplan', 'upgrade',
-  'vim', 'web-setup', 'wellbeing', 'workflows'
+  'restart', 'resume', 'rewind', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
+  'status', 'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'theme', 'todos', 'tui', 'ultraplan', 'upgrade',
+  'vim', 'voice', 'web-setup', 'wellbeing', 'workflows'
 ])
 
 /** ClaudeCord runs these itself: Claude would start a new session underneath

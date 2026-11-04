@@ -123,7 +123,7 @@ describe('backgroundTaskLabel', () => {
 
   it('adds an agent\'s latest step and tokens', () => {
     expect(backgroundTaskLabel({ ...base, type: 'local_agent', agent: 'Explore', lastTool: 'Grep', tokens: 21890 }, 3000))
-      .toEqual({ title: 'Explore: Run slow.py', details: ['3s', 'Grep', '21.9k tokens'] })
+      .toEqual({ title: 'Explore: Run slow.py', details: ['3s', 'Grep', '21.9k context'] })
   })
 
   it('copes with an unknown kind and no description', () => {
