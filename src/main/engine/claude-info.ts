@@ -176,14 +176,15 @@ class ControlSession {
 export class ClaudeInfoService {
   private readonly cache = new Map<string, ClaudeInfo>()
   private readonly inFlight = new Map<string, Promise<ClaudeInfo>>()
-  private readonly claudeBin: string
+  private readonly bin: () => string
   private readonly spawnFn: SpawnFn
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly chromeEnabled: () => boolean
 
-  constructor(opts: { claudeBin: string; spawnFn?: SpawnFn; now?: () => number; sleep?: (ms: number) => Promise<void>; chromeEnabled?: () => boolean }) {
-    this.claudeBin = opts.claudeBin
+  constructor(opts: { claudeBin: string | (() => string); spawnFn?: SpawnFn; now?: () => number; sleep?: (ms: number) => Promise<void>; chromeEnabled?: () => boolean }) {
+    const claudeBin = opts.claudeBin
+    this.bin = typeof claudeBin === 'string' ? () => claudeBin : claudeBin
     this.spawnFn = opts.spawnFn ?? defaultSpawn
     this.now = opts.now ?? Date.now
     this.sleep = opts.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
@@ -201,7 +202,7 @@ export class ClaudeInfoService {
   }
 
   private async ask(cwd: string): Promise<ClaudeInfo> {
-    const session = new ControlSession(this.spawnFn, this.claudeBin, INFO_ARGS, cwd)
+    const session = new ControlSession(this.spawnFn, this.bin(), INFO_ARGS, cwd)
     try {
       const answer = await session.request('initialize')
       const a = isObj(answer) ? answer : {}
@@ -218,7 +219,7 @@ export class ClaudeInfoService {
 
   /** The account's plan and limits. No transcript scan: only the limits are wanted. */
   async planUsage(cwd: string): Promise<unknown> {
-    const session = new ControlSession(this.spawnFn, this.claudeBin, PLAN_USAGE_ARGS, cwd)
+    const session = new ControlSession(this.spawnFn, this.bin(), PLAN_USAGE_ARGS, cwd)
     try {
       return await session.request('get_usage', { skip_behaviors: true })
     } finally {
@@ -230,7 +231,7 @@ export class ClaudeInfoService {
    *  Waits for slow ones, up to a limit; any still going are left as 'pending'. */
   async mcpCheck(cwd: string): Promise<McpServerStatus[]> {
     const args = this.chromeEnabled() ? [...MCP_CHECK_ARGS, '--chrome'] : MCP_CHECK_ARGS
-    const session = new ControlSession(this.spawnFn, this.claudeBin, args, cwd)
+    const session = new ControlSession(this.spawnFn, this.bin(), args, cwd)
     try {
       const deadline = this.now() + MCP_SETTLE_MS
       for (;;) {

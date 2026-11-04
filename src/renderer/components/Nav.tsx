@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../api'
 import type { ChannelRow, SessionSummary } from '../../shared/types'
 import type { PlanUsage } from '../../shared/plan-usage'
 import type { ChannelIcon, ChannelGroup } from '../../shared/shell-types'
-import { groupChannels } from '../lib'
+import { CLAUDE_SETUP_URL, groupChannels } from '../lib'
 import { formatCostWhole } from '../../shared/models'
 import { GroupedNav } from './GroupedNav'
 import { UsageFooter } from './UsageFooter'
@@ -11,6 +12,28 @@ import { ChannelContextMenu } from './ChannelContextMenu'
 /** Chats running and elevation level, which used to fill the footer. Hidden for now,
  *  kept in case they're wanted later. */
 export const SHOW_NAV_STATUS: boolean = false
+
+/** Nothing to list, and why. ClaudeCord only shows Claude Code's chats, which a person using
+ *  claude.ai or the desktop app has none of. Looks again when the window comes back, in case
+ *  they've just gone off to install it; chats themselves turn up by themselves. */
+function EmptyProjects() {
+  const [found, setFound] = useState<boolean | null>(null)
+  useEffect(() => {
+    const check = (): void => { void api.claudeFound().then(setFound).catch(() => {}) }
+    check()
+    window.addEventListener('focus', check)
+    return () => window.removeEventListener('focus', check)
+  }, [])
+  if (found === null) return null
+  return (
+    <div className="empty nav-empty">
+      <div className="nav-empty-title">{found ? 'No Claude Code chats yet' : "Claude Code isn't installed, or ClaudeCord can't find it"}</div>
+      <p>{found ? 'Press + above to start one. Chats you have in Claude Code will appear here by themselves.' : 'ClaudeCord shows chats from Claude Code, so it needs that installed.'}</p>
+      <p>Chats on claude.ai or in the Claude desktop app aren't stored on this PC, so they won't appear here.</p>
+      {!found && <a href={CLAUDE_SETUP_URL} onClick={e => { e.preventDefault(); void api.openLink(CLAUDE_SETUP_URL) }}>How to install Claude Code</a>}
+    </div>
+  )
+}
 
 export function Nav({
   channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, planUsage, session, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
@@ -86,7 +109,7 @@ export function Nav({
         <span style={{ flex: 1, textAlign: 'left' }}>Search chats</span>
         <span className="nav-search-key">⌃K</span>
       </button>
-      {channels.length === 0 && <div className="empty">No projects indexed yet.</div>}
+      {channels.length === 0 && <EmptyProjects />}
       <div className="nav-list">
         <GroupedNav sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}
           onContextMenu={(channel, x, y) => setContextMenu({ channel, x, y })} />
@@ -103,10 +126,10 @@ export function Nav({
         </div>
       </button>
       <div className="nav-actions">
+        <button type="button" className="iconrail-btn" title="Collapse chat list" aria-label="Collapse chat list" onClick={onCollapse}>«</button>
         <button type="button" className="iconrail-btn" title="Search (Ctrl+K)" aria-label="Search" onClick={onOpenSearch}>⌕</button>
         <button type="button" className="iconrail-btn" title="Manage Claude data (projects, notes, restore points)" aria-label="Manage" onClick={onOpenManage}>▤</button>
         <button type="button" className="iconrail-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>⚙</button>
-        <button type="button" className="iconrail-collapse" title="Collapse chat list" aria-label="Collapse chat list" onClick={onCollapse}>«</button>
       </div>
       {contextMenu !== null && (
         <ChannelContextMenu

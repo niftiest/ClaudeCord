@@ -112,6 +112,15 @@ export function dropCancelledMessage(items: RenderItem[], uuid: string): RenderI
   return at === -1 ? items : items.slice(0, at)
 }
 
+export const CLAUDE_SETUP_URL = 'https://code.claude.com/docs/en/setup'
+
+/** What to say when Claude Code won't start. */
+export function spawnErrorNotice(detail: string): string {
+  return /ENOENT/.test(detail)
+    ? `Claude Code isn't installed, or ClaudeCord can't find it. Install it from ${CLAUDE_SETUP_URL}, or set its path in Settings under Engine.`
+    : `Claude couldn't start: ${detail}`
+}
+
 /** A message as plain text and web addresses, in order. An address ends before punctuation
  *  that closes the sentence around it, and keeps a bracket that opened inside it. */
 export type TextPart = { text: string; url: boolean }

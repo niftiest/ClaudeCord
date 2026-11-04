@@ -27,6 +27,7 @@ import { SyncChatBanner, SyncConflictDialog, useSyncChat } from './components/Sy
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
 import { UpdateBar, UpdateIcon } from './components/UpdatesPanel'
+import { TextWithLinks } from './components/Markdown'
 import { FONT_SCALE_DEFAULT, fontStack, stepFontScale } from '../shared/font-settings'
 import { RetentionNotice } from './components/RetentionNotice'
 import { ManageView } from './components/manage/ManageView'
@@ -45,7 +46,7 @@ import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -815,7 +816,7 @@ export function App() {
           setTerminalNotice(`That message wasn't sent: this project's folder no longer exists, so Claude can't run here.${copied ? ' Your message is on the clipboard.' : ''}`)
         })
       }
-      if (ev.kind === 'other' && ev.type.startsWith('spawn-error')) setTerminalNotice(`Claude couldn't start: ${ev.type.slice('spawn-error: '.length)}`)
+      if (ev.kind === 'other' && ev.type.startsWith('spawn-error')) setTerminalNotice(spawnErrorNotice(ev.type.slice('spawn-error: '.length)))
       if (ev.kind === 'status') setLiveStatus(ev.status === 'compacting' ? ev.status : null)
       else if (clearsRunning(ev)) setLiveStatus(null)
       // Task 10 review Fix 1: previously only a `result` event cleared
@@ -1606,7 +1607,7 @@ export function App() {
               </>
             ) : null}
             {terminalNotice !== null && (
-              <span className={terminalNotice === goodNotice ? 'term-prompt-good' : 'term-prompt-error'}>{terminalNotice}
+              <span className={terminalNotice === goodNotice ? 'term-prompt-good' : 'term-prompt-error'}><TextWithLinks text={terminalNotice} />
                 <button type="button" className="term-prompt-x" aria-label="Dismiss" onClick={() => setTerminalNotice(null)}>✕</button>
               </span>
             )}

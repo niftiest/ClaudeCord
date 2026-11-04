@@ -1434,4 +1434,8 @@ html[data-custom-font] body *:not(pre):not(pre *):not(code) { font-family:var(--
 .text-menu-word { font-weight:600; color:var(--tx); }
 .bubble-link { color:inherit; text-decoration:underline; }
 .bubble-link:hover { color:var(--tx); opacity:.85; }
+.nav-empty { padding:16px; }
+.nav-empty p { margin:6px 0 0; }
+.nav-empty a { display:inline-block; margin-top:8px; color:var(--accent); }
+.nav-empty-title { color:var(--txt); font-weight:600; }
 .text-menu-none { padding:7px 10px; color:var(--mu); font-style:italic; }

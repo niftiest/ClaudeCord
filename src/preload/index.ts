@@ -94,6 +94,7 @@ const api: ClaudeCordApi & EngineApi = {
   stopTask: (sessionPk, taskId) => ipcRenderer.invoke(ENGINE_IPC.stopTask, sessionPk, taskId),
   chatMode: sessionPk => ipcRenderer.invoke(ENGINE_IPC.chatMode, sessionPk),
   promptHistory: sessionPk => ipcRenderer.invoke(ENGINE_IPC.promptHistory, sessionPk),
+  claudeFound: () => ipcRenderer.invoke(ENGINE_IPC.claudeFound),
   keepInHistory: (sessionPk, text) => ipcRenderer.invoke(ENGINE_IPC.keepInHistory, sessionPk, text),
   indexNow: () => ipcRenderer.invoke(ENGINE_IPC.indexNow),
   renameChat: (sessionPk, title) => ipcRenderer.invoke(ENGINE_IPC.renameChat, sessionPk, title),

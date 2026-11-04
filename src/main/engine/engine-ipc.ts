@@ -10,6 +10,7 @@ import { claudeHome } from '../indexer/discover'
 import { ENGINE_IPC, type ClearChatOutcome, type EngineImageInput, type NewProjectOptions, type NewChatOutcome } from '../../shared/engine-ipc-contract'
 import { EngineCoordinator, type EngineDefaults, type RulesStore, type SessionInfo } from './coordinator'
 import { SessionPool } from './pool'
+import { findClaude } from './find-claude'
 import { SessionWatcher } from './watcher'
 import { ClaudeInfoService, parseContextUsage } from './claude-info'
 import { getProjectSettings, getProjectSettingsByDir, updateProjectSettings } from '../catalog/project-settings'
@@ -168,7 +169,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   // read below into the coordinator's `defaults`; changing the
   // binary takes effect on next app launch, which is fine.
   const s = getSettings(db)
-  const claudeBin = s.claudeBin
+  const claudeBin = (): string => findClaude(s.claudeBin).bin
   const rulesStore = makeClaudeRulesStore(makeJsonRulesStore(join(app.getPath('userData'), 'permission-rules.json')))
 
   // Authoritative two-writers guard (Plan 3 Task 8): a session is externally
@@ -200,7 +201,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
 
   const pool = new SessionPool({
     idleReapMs: () => getSettings(db).idleReapMin * 60 * 1000,
-    transportFactory: (spec) => new Transport(spec, { claudeBin }),
+    transportFactory: (spec) => new Transport(spec, { claudeBin: claudeBin() }),
     isExternallyLive: isSessionExternallyLive
   })
 
@@ -264,7 +265,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       skipPermissions: s.defaultSkipPermissions,
       model: s.defaultModel ?? undefined,
       effort: s.defaultEffort ?? undefined,
-      claudeBin
+      claudeBin: s.claudeBin
     },
     isExternallyLive: isSessionExternallyLive,
     chromeEnabled: () => chromeEnabledFor(getSettings(db).chromeIntegration, () => claudeChromeDefault()),
@@ -405,7 +406,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     }
     try {
       pool.releaseIdle(info.filePath)
-      await openTerminal(terminalCommand(info.cwd, info.resumeId, getSettings(db).claudeBin, findWindowsTerminal(), coordinator.terminalFlags(sessionPk)), info.cwd)
+      await openTerminal(terminalCommand(info.cwd, info.resumeId, findClaude(getSettings(db).claudeBin).bin, findWindowsTerminal(), coordinator.terminalFlags(sessionPk)), info.cwd)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: `Couldn't open a terminal: ${err instanceof Error ? err.message : String(err)}` }
@@ -565,7 +566,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.mcpLogin, async (_e, cwd: string | null, name: string): Promise<{ ok: true } | { ok: false; error: string }> => {
     const folder = folderOrHome(cwd)
     try {
-      await openTerminal(mcpLoginCommand(folder, name, claudeBin, findWindowsTerminal()), folder)
+      await openTerminal(mcpLoginCommand(folder, name, claudeBin(), findWindowsTerminal()), folder)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: `Couldn't open a terminal: ${errorText(err)}` }
@@ -600,6 +601,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     await sweepExternalChanges(db, { skip: fp => pool.isTurnRunning(fp) })
   })
   const historyFile = (): string => join(claudeHome(), 'history.jsonl')
+  ipcMain.handle(ENGINE_IPC.claudeFound, () => findClaude(getSettings(db).claudeBin).found)
   ipcMain.handle(ENGINE_IPC.promptHistory, async (_e, sessionPk: number) => {
     const info = getEngineSessionInfo(db, sessionPk)
     return promptHistory(db, sessionPk, info === null || info.cwd.length === 0 ? [] : await readHistory(historyFile(), info.cwd))
@@ -788,7 +790,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.stopTask)
       ipcMain.removeHandler(ENGINE_IPC.answerElicitation)
       ipcMain.removeHandler(ENGINE_IPC.chatMode)
-      for (const channel of [ENGINE_IPC.indexNow, ENGINE_IPC.promptHistory, ENGINE_IPC.keepInHistory, ENGINE_IPC.renameChat, ENGINE_IPC.forkChat, ENGINE_IPC.sideQuestion]) ipcMain.removeHandler(channel)
+      for (const channel of [ENGINE_IPC.indexNow, ENGINE_IPC.claudeFound, ENGINE_IPC.promptHistory, ENGINE_IPC.keepInHistory, ENGINE_IPC.renameChat, ENGINE_IPC.forkChat, ENGINE_IPC.sideQuestion]) ipcMain.removeHandler(channel)
       ipcMain.removeHandler(ENGINE_IPC.setChatMode)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)

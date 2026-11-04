@@ -46,6 +46,7 @@ export const ENGINE_IPC = {
   answerElicitation: 'engine:answerElicitation',
   chatMode: 'engine:chatMode',
   promptHistory: 'engine:promptHistory',
+  claudeFound: 'engine:claudeFound',
   keepInHistory: 'engine:keepInHistory',
   indexNow: 'engine:indexNow',
   renameChat: 'engine:renameChat',
@@ -222,6 +223,8 @@ export type EngineApi = {
   indexNow(): Promise<void>
   /** What was typed in this chat's project, newest first. */
   promptHistory(sessionPk: number): Promise<string[]>
+  /** Whether Claude Code can be found on this PC. */
+  claudeFound(): Promise<boolean>
   /** Keeps text in Claude Code's history file, for Up here and in the terminal. */
   keepInHistory(sessionPk: number, text: string): Promise<void>
   renameChat(sessionPk: number, title: string): Promise<void>
