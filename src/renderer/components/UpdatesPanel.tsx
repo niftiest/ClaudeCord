@@ -116,43 +116,49 @@ export function UpdatesPanel({ autoInstall }: { autoInstall: boolean }) {
   )
 }
 
-/** Slim bar across the top of the app when an update is ready to install, when a
- *  portable build couldn't fetch one itself, or just after a portable update. */
+/** The corner icon, as in Discord: there's a new version, and a click updates. */
+export function UpdateIcon() {
+  const status = useUpdateStatus()
+  const restart = useRestartRequest()
+  if (status === null) return null
+  // Waiting to restart has its own bar, with a way to change your mind.
+  if (status.restartWaiting !== null) return null
+  const downloading = status.state === 'downloading'
+  const canAct = status.state === 'ready' || status.state === 'available'
+  if (!downloading && !canAct) return null
+  return (
+    <>
+      <button type="button" className={`update-icon${downloading ? ' update-icon-busy' : ''}`} disabled={downloading}
+        title={downloading ? `A new version is downloading (${status.percent}%)` : 'A new version is available, click to update!'}
+        aria-label={downloading ? 'A new version is downloading' : 'A new version is available, click to update'}
+        onClick={() => { if (status.state === 'ready') restart.request(); else void api.openUpdateDownload() }}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.8 8 10.3l3.5-3.5M3 13.5h10" /></svg>
+      </button>
+      {restart.dialog}
+    </>
+  )
+}
+
+/** A slim bar for what the icon can't say: the restart being held for you, or an update
+ *  that just happened. */
 export function UpdateBar() {
   const status = useUpdateStatus()
   const [dismissed, setDismissed] = useState<string | null>(null)
-  const restart = useRestartRequest()
   if (status === null) return null
-  const ready = status.state === 'ready'
-  const portableAvailable = status.state === 'available' && status.channel === 'portable'
-  if (!ready && !portableAvailable) {
-    if (!status.justUpdated || dismissed === status.currentVersion) return null
+  if (status.state === 'ready' && status.restartWaiting !== null) {
     return (
       <div className="update-bar" role="status">
-        <span>Updated to ClaudeCord {status.currentVersion}.</span>
-        <button type="button" className="update-bar-x" aria-label="Dismiss" onClick={() => setDismissed(status.currentVersion)}>✕</button>
-      </div>
-    )
-  }
-  const version = status.state === 'ready' || status.state === 'available' ? status.version : ''
-  if (ready && status.restartWaiting !== null) {
-    return (
-      <div className="update-bar" role="status">
-        <span>ClaudeCord {version}: {describeRestartWait(status.restartWaiting).toLowerCase()}.</span>
+        <span>ClaudeCord {status.version}: {describeRestartWait(status.restartWaiting).toLowerCase()}.</span>
         <button type="button" className="update-bar-btn" onClick={() => void api.installUpdate()}>Restart now</button>
         <button type="button" className="update-bar-btn update-bar-btn-next" onClick={() => void api.cancelUpdateRestart()}>Don’t restart</button>
       </div>
     )
   }
-  if (dismissed === version) return null
+  if (!status.justUpdated || dismissed === status.currentVersion) return null
   return (
     <div className="update-bar" role="status">
-      <span>ClaudeCord {version} is {ready ? 'ready to install' : 'available'}.</span>
-      {ready
-        ? <button type="button" className="update-bar-btn" onClick={restart.request}>Restart to update</button>
-        : <button type="button" className="update-bar-btn" onClick={() => void api.openUpdateDownload()}>Download</button>}
-      <button type="button" className="update-bar-x" aria-label="Dismiss" title="Later" onClick={() => setDismissed(version)}>✕</button>
-      {restart.dialog}
+      <span>Updated to ClaudeCord {status.currentVersion}.</span>
+      <button type="button" className="update-bar-x" aria-label="Dismiss" onClick={() => setDismissed(status.currentVersion)}>✕</button>
     </div>
   )
 }

@@ -25,6 +25,7 @@ import { runIndex } from './indexer/indexer'
 import { syncSessionIfStale } from './engine/external-sync'
 import { streamRange } from './jsonl/stream'
 import { isDisplayRow, type LocalCommandRow } from './jsonl/parse'
+import { rewoundUuids } from './jsonl/rewound'
 import { buildRenderItems } from './jsonl/render'
 import type { MessageRow } from './jsonl/rows'
 import type { TranscriptPage, ChannelRow, IndexProgress, RenderItem } from '../shared/types'
@@ -152,7 +153,8 @@ export async function loadTranscript(
   try {
     const { rows } = await streamRange(session.file_path, start.o, toOffset)
     messages = []
-    for (const { row } of rows) if (isDisplayRow(row)) messages.push(row)
+    const rewound = rewoundUuids(rows.map(r => r.row))
+    for (const { row } of rows) if (isDisplayRow(row) && !rewound.has(row.uuid)) messages.push(row)
   } catch (err) {
     // The catalog knew about messages (nodes were found above) but the JSONL is
     // gone -- almost always Claude Code's cleanupPeriodDays pruning an old chat.

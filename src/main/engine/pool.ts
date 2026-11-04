@@ -53,6 +53,14 @@ function mergeBackgroundTasks(known: BackgroundTask[], incoming: BackgroundTask[
   })
 }
 
+/** A message waiting for an old process to exit. */
+type HeldSend = { uuid: string | null; run: () => void }
+
+function uuidOf(msg: object): string | null {
+  const uuid = (msg as { uuid?: unknown }).uuid
+  return typeof uuid === 'string' ? uuid : null
+}
+
 interface Entry {
   transport: TransportLike
   /** The spec this transport was spawned with (model/effort for the HUD). */
@@ -114,7 +122,9 @@ export class SessionPool {
    *  flood the console. */
   private warnedAfterShutdown = false
 
-  private readonly waitingForExit = new Map<string, Array<() => void>>()
+  private readonly waitingForExit = new Map<string, Array<HeldSend>>()
+  /** Messages Esc stopped before any process had them, so there's nothing to rewind. */
+  private readonly neverSent = new Set<string>()
 
   constructor(opts: {
     /** A function when the limit can change while the app runs. */
@@ -149,7 +159,7 @@ export class SessionPool {
     // Still waiting for an old process to exit: this message goes after the ones ahead of it.
     const waiting = this.waitingForExit.get(sessionKey)
     if (waiting !== undefined) {
-      waiting.push(() => this.send(sessionKey, spec, msg))
+      waiting.push({ uuid: uuidOf(msg), run: () => this.send(sessionKey, spec, msg) })
       return
     }
 
@@ -161,7 +171,7 @@ export class SessionPool {
     // Not while it has background work: replacing it would kill that work, so this
     // message goes to the process as it is.
     if (entry !== undefined && !entry.busy && !entry.disposed && entry.backgroundTasks.length === 0 && (entry.reload === true || settingsKey(entry.spec) !== settingsKey(spec))) {
-      this.closeAndHold(sessionKey, entry).push(() => this.send(sessionKey, spec, msg))
+      this.closeAndHold(sessionKey, entry).push({ uuid: uuidOf(msg), run: () => this.send(sessionKey, spec, msg) })
       return
     }
     if (entry !== undefined) {
@@ -187,8 +197,26 @@ export class SessionPool {
       return
     }
 
+    // Still waiting for an old process to close: what's held simply never goes.
+    const waiting = this.waitingForExit.get(sessionKey)
+    if (waiting !== undefined && waiting.length > 0) {
+      for (const held of waiting.splice(0)) if (held.uuid !== null) this.neverSent.add(held.uuid)
+      this.emitTo(sessionKey, { kind: 'result', isError: false, costUsd: 0, text: '', interrupted: true })
+      return
+    }
+
     const entry = this.live.get(sessionKey)
     if (entry?.busy === true) entry.transport.interrupt()
+  }
+
+  /** Takes the chat back to before a message that was stopped before any reply, so Claude
+   *  forgets it, as Esc does in a terminal. False if that couldn't be done. */
+  async rewind(sessionKey: string, uuid: string): Promise<boolean> {
+    if (this.neverSent.delete(uuid)) return true
+    const answer = this.request(sessionKey, 'rewind_conversation', { target_message_uuid: uuid })
+    if (answer === null) return false
+    const response = await answer.catch(() => null) as { rewound?: unknown } | null
+    return response?.rewound === true
   }
 
   /** Stops one background task, leaving the chat and any others running. */
@@ -444,12 +472,12 @@ export class SessionPool {
   /** Closes a process and returns the list of what has to wait for it to exit. Until
    *  it does, its session lock still stands, and a new process would read as another
    *  program holding the chat. */
-  private closeAndHold(sessionKey: string, entry: Entry): Array<() => void> {
-    const after: Array<() => void> = []
+  private closeAndHold(sessionKey: string, entry: Entry): Array<HeldSend> {
+    const after: Array<HeldSend> = []
     this.waitingForExit.set(sessionKey, after)
     entry.transport.onExit(() => {
       this.waitingForExit.delete(sessionKey)
-      for (const next of after) next()
+      for (const next of after) next.run()
     })
     this.dispose(sessionKey, entry)
     return after

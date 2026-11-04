@@ -34,7 +34,7 @@ import { isExternallyLiveSession, sweepStaleSdkLocks, type OwnedProcess } from '
 import { LockMonitor } from './lock-monitor'
 import { chromeEnabledFor, claudeChromeDefault, findWindowsTerminal, mcpLoginCommand, openTerminal, terminalCommand } from './terminal'
 import { createPeriodicSweep, sweepExternalChanges } from './external-sync'
-import { forkTranscript, promptHistory, titleRow } from './chat-actions'
+import { appendHistory, forkTranscript, promptHistory, readHistory, titleRow } from './chat-actions'
 import { listSessions } from '../catalog/repos'
 import type { SessionSummary } from '../../shared/types'
 import { isCatalogSettled } from '../indexer/indexer'
@@ -599,7 +599,16 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.indexNow, async (): Promise<void> => {
     await sweepExternalChanges(db, { skip: fp => pool.isTurnRunning(fp) })
   })
-  ipcMain.handle(ENGINE_IPC.promptHistory, (_e, sessionPk: number) => promptHistory(db, sessionPk))
+  const historyFile = (): string => join(claudeHome(), 'history.jsonl')
+  ipcMain.handle(ENGINE_IPC.promptHistory, async (_e, sessionPk: number) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    return promptHistory(db, sessionPk, info === null || info.cwd.length === 0 ? [] : await readHistory(historyFile(), info.cwd))
+  })
+  ipcMain.handle(ENGINE_IPC.keepInHistory, async (_e, sessionPk: number, text: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null || info.cwd.length === 0) return
+    await appendHistory(historyFile(), { text, project: info.cwd, sessionId: info.resumeId, at: Date.now() }).catch(err => console.error('Could not keep cleared text', err))
+  })
   ipcMain.handle(ENGINE_IPC.renameChat, async (_e, sessionPk: number, title: string): Promise<void> => {
     const info = getEngineSessionInfo(db, sessionPk)
     const name = title.trim()
@@ -645,6 +654,15 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.withdrawQueued, (_e, sessionPk: number, uuid: string) => {
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? true : pool.withdraw(info.filePath, uuid)
+  })
+  ipcMain.handle(ENGINE_IPC.rewindUnanswered, async (_e, sessionPk: number, uuid: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null) return false
+    const rewound = await pool.rewind(info.filePath, uuid)
+    // A reload from when the turn stopped may be on its way, showing the message as it
+    // was. This one reads the transcript as it is now, and overtakes it.
+    if (rewound && !window.isDestroyed()) window.webContents.send(ENGINE_IPC.indexed, sessionPk)
+    return rewound
   })
   ipcMain.handle(ENGINE_IPC.backgroundTasks, (_e, sessionPk: number) => {
     const info = getEngineSessionInfo(db, sessionPk)
@@ -766,10 +784,11 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.turnInfo)
       ipcMain.removeHandler(ENGINE_IPC.backgroundTasks)
       ipcMain.removeHandler(ENGINE_IPC.withdrawQueued)
+      ipcMain.removeHandler(ENGINE_IPC.rewindUnanswered)
       ipcMain.removeHandler(ENGINE_IPC.stopTask)
       ipcMain.removeHandler(ENGINE_IPC.answerElicitation)
       ipcMain.removeHandler(ENGINE_IPC.chatMode)
-      for (const channel of [ENGINE_IPC.indexNow, ENGINE_IPC.promptHistory, ENGINE_IPC.renameChat, ENGINE_IPC.forkChat, ENGINE_IPC.sideQuestion]) ipcMain.removeHandler(channel)
+      for (const channel of [ENGINE_IPC.indexNow, ENGINE_IPC.promptHistory, ENGINE_IPC.keepInHistory, ENGINE_IPC.renameChat, ENGINE_IPC.forkChat, ENGINE_IPC.sideQuestion]) ipcMain.removeHandler(channel)
       ipcMain.removeHandler(ENGINE_IPC.setChatMode)
       ipcMain.removeHandler(ENGINE_IPC.getLock)
       ipcMain.removeHandler(ENGINE_IPC.openInTerminal)

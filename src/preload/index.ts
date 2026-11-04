@@ -63,6 +63,7 @@ const api: ClaudeCordApi & EngineApi = {
 
   send: (sessionPk, text, images, uuid) => { ipcRenderer.send(ENGINE_IPC.send, sessionPk, text, images, uuid) },
   withdrawQueued: (sessionPk, uuid) => ipcRenderer.invoke(ENGINE_IPC.withdrawQueued, sessionPk, uuid),
+  rewindUnanswered: (sessionPk, uuid) => ipcRenderer.invoke(ENGINE_IPC.rewindUnanswered, sessionPk, uuid),
   interrupt: sessionPk => { ipcRenderer.send(ENGINE_IPC.interrupt, sessionPk) },
   resolvePermission: (id, decision, editedInput, denyMessage) => {
     ipcRenderer.send(ENGINE_IPC.resolvePermission, id, decision, editedInput, denyMessage)
@@ -86,6 +87,7 @@ const api: ClaudeCordApi & EngineApi = {
   stopTask: (sessionPk, taskId) => ipcRenderer.invoke(ENGINE_IPC.stopTask, sessionPk, taskId),
   chatMode: sessionPk => ipcRenderer.invoke(ENGINE_IPC.chatMode, sessionPk),
   promptHistory: sessionPk => ipcRenderer.invoke(ENGINE_IPC.promptHistory, sessionPk),
+  keepInHistory: (sessionPk, text) => ipcRenderer.invoke(ENGINE_IPC.keepInHistory, sessionPk, text),
   indexNow: () => ipcRenderer.invoke(ENGINE_IPC.indexNow),
   renameChat: (sessionPk, title) => ipcRenderer.invoke(ENGINE_IPC.renameChat, sessionPk, title),
   forkChat: sessionPk => ipcRenderer.invoke(ENGINE_IPC.forkChat, sessionPk),

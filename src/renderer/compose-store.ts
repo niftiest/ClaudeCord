@@ -18,7 +18,15 @@ export type ComposeState = {
 
 const EMPTY: ComposeState = { pasted: [], images: [], queue: [] }
 
-type SentMessage = { text: string; images: ComposerImage[] }
+export type SentMessage = {
+  text: string
+  images: ComposerImage[]
+  uuid?: string
+  /** Claude has said or done something in answer. */
+  replied?: boolean
+  /** It was read part way through a turn, so there's no going back to before it. */
+  midTurn?: boolean
+}
 
 const ENDINGS: Record<string, string> = {
   blocked_by_hook: 'A hook blocked this message.',
@@ -68,6 +76,10 @@ export class ComposeStore {
   private readonly current = new Map<number, SentMessage>()
   /** Messages given to Claude Code during a turn, until each one starts. */
   private readonly waiting = new Map<string, SentMessage>()
+  /** Chats where a turn is under way, as far as messages going through it can tell. */
+  private readonly turnOpen = new Set<number>()
+  /** The message Esc was pressed on, until its turn has stopped. */
+  private readonly cancelling = new Map<number, SentMessage>()
 
   get = (sessionPk: number): ComposeState => this.states.get(sessionPk) ?? EMPTY
 
@@ -89,10 +101,38 @@ export class ComposeStore {
     this.open = sessionPk
   }
 
-  /** A message going to Claude Code. With a uuid it waits its turn there. */
-  noteSent(sessionPk: number, text: string, images: ComposerImage[], uuid?: string): void {
-    if (uuid === undefined) this.current.set(sessionPk, { text, images })
-    else this.waiting.set(uuid, { text, images })
+  /** A message going to Claude Code. With a `uuid` it waits its turn there. `ownId` names
+   *  one that starts a turn straight away. */
+  noteSent(sessionPk: number, text: string, images: ComposerImage[], uuid?: string, ownId?: string): void {
+    if (uuid !== undefined) { this.waiting.set(uuid, { text, images, uuid }); return }
+    this.current.set(sessionPk, { text, images, ...(ownId === undefined ? {} : { uuid: ownId }) })
+    this.turnOpen.add(sessionPk)
+  }
+
+  /** Esc is stopping this chat's turn. */
+  beginCancel(sessionPk: number): void {
+    const sent = this.current.get(sessionPk)
+    if (sent !== undefined) this.cancelling.set(sessionPk, sent)
+  }
+
+  /** Once the turn has stopped: the message to take back, if nothing had come of it. A
+   *  command is left out, since what it did may not be something a rewind can undo. */
+  settleCancel(sessionPk: number, ev: LiveEvent): SentMessage | null {
+    if (!clearsRunning(ev)) return null
+    const sent = this.cancelling.get(sessionPk)
+    this.cancelling.delete(sessionPk)
+    if (sent === undefined || ev.kind !== 'result') return null
+    if (sent.replied === true || sent.midTurn === true || sent.uuid === undefined) return null
+    return sent.text.trimStart().startsWith('/') ? null : sent
+  }
+
+  /** Puts a message back for this chat's box to pick up, ahead of what's there. */
+  returnMessage(sessionPk: number, sent: Pick<SentMessage, 'text' | 'images'>): void {
+    this.update(sessionPk, s => ({
+      ...s,
+      returned: [sent.text, s.returned ?? ''].filter(t => t.length > 0).join('\n'),
+      images: [...sent.images, ...s.images]
+    }))
   }
 
   /** Anything that exists only in this window, in any chat. */
@@ -108,11 +148,20 @@ export class ComposeStore {
     if (ev.kind === 'exit') this.dispatch(sessionPk, { type: 'holdAll' })
     if (ev.kind === 'informational') this.handleInformational(sessionPk, ev.text, ev.level, ev.ending)
     if (ev.kind === 'writesLost') this.update(sessionPk, s => ({ ...s, notice: writesLostNotice(ev.errorCode, ev.lost) }))
-    if (clearsRunning(ev)) this.current.delete(sessionPk)
+    if (ev.kind === 'delta' || (ev.kind === 'assistant' && ev.blocks.some(b => b.type !== 'thinking'))) {
+      const sent = this.current.get(sessionPk)
+      if (sent !== undefined) sent.replied = true
+      this.turnOpen.add(sessionPk)
+    }
+    if (clearsRunning(ev)) { this.current.delete(sessionPk); this.turnOpen.delete(sessionPk) }
     if (ev.kind === 'commandLifecycle') {
       if (ev.state === 'started') {
         const sent = this.waiting.get(ev.uuid)
-        if (sent !== undefined) this.current.set(sessionPk, sent)
+        if (sent !== undefined) {
+          if (this.turnOpen.has(sessionPk)) sent.midTurn = true
+          this.current.set(sessionPk, sent)
+          this.turnOpen.add(sessionPk)
+        }
       }
       if (ev.state !== 'queued') this.waiting.delete(ev.uuid)
       if (ev.state === 'started' || ev.state === 'completed') this.dispatch(sessionPk, { type: 'removeUuid', uuid: ev.uuid })

@@ -14,7 +14,7 @@ import { downloadPortable, handoffArgs, pickPortableAsset, previousFromArgv, typ
 const OWNER = 'niftiest'
 const REPO = 'ClaudeCord'
 const FIRST_CHECK_DELAY_MS = 15_000
-const RECHECK_EVERY_MS = 6 * 60 * 60 * 1000
+const RECHECK_EVERY_MS = 60 * 60 * 1000
 const RETRY_AFTER_MS = 2 * 60 * 1000
 const MAX_RETRIES = 3
 const IDLE_CHECK_EVERY_MS = 60 * 1000
@@ -161,7 +161,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
     }, WAITING_CHECK_EVERY_MS))
     // An automatic check that fails (e.g. the network isn't up yet right after
     // login) is retried a few times, a couple of minutes apart, instead of
-    // waiting for the next 6-hourly check.
+    // waiting for the next hourly check.
     let retries = 0
     const auto = (): void => {
       if (!opts.autoCheck()) return

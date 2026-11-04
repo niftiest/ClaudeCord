@@ -5,7 +5,7 @@ import type { SessionSummary } from '../../shared/types'
 import { EFFORTS, costOfSession, formatCost } from '../../shared/models'
 import { PERMISSION_MODES } from '../../shared/engine-types'
 
-/** The mode / model / effort / cost strip in the chat header (above the transcript).
+/** The mode / model / effort / cost rows in Project options.
  *  Mode and model apply to a running process straight away, even mid-turn. Effort
  *  applies on the session's NEXT turn, which starts a new process. The cost chip
  *  is a read-only list-price estimate of the tokens the session has already
@@ -70,17 +70,17 @@ export function ChatHeaderControls({ session, liveModel, mode, onChangeMode }: {
   const effortOptions: readonly string[] = efforts.length > 0 ? efforts : EFFORTS
 
   return (
-    <div className="chead-controls">
-      <label className="chead-control">
-        <span className="chead-control-label">Mode</span>
+    <div className="project-controls">
+      <label className="project-option">
+        <span>Mode</span>
         <select className="chead-select" value={mode} onChange={e => onChangeMode(e.target.value)}
           title="What Claude can do without asking. Applies straight away. Shift+Tab in the message box changes it too.">
           {PERMISSION_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           {!PERMISSION_MODES.some(m => m.value === mode) && <option value={mode}>{mode}</option>}
         </select>
       </label>
-      <label className="chead-control">
-        <span className="chead-control-label">Model</span>
+      <label className="project-option">
+        <span>Model</span>
         <select className="chead-select" value={shown} onChange={e => changeModel(e.target.value)}
           title="Applies straight away, even if Claude is working">
           <option value="">Default</option>
@@ -88,8 +88,8 @@ export function ChatHeaderControls({ session, liveModel, mode, onChangeMode }: {
           {!hasModel && <option value={shown}>{shown}</option>}
         </select>
       </label>
-      <label className="chead-control">
-        <span className="chead-control-label">Effort</span>
+      <label className="project-option">
+        <span>Effort</span>
         <select className="chead-select" value={effort} onChange={e => changeEffort(e.target.value)}
           title="Reasoning effort for the next turn">
           <option value="">Default</option>
@@ -97,9 +97,10 @@ export function ChatHeaderControls({ session, liveModel, mode, onChangeMode }: {
           {effort !== '' && !effortOptions.includes(effort) && <option value={effort}>{effort}</option>}
         </select>
       </label>
-      <span className="chead-cost" title="Estimated list-price cost of this chat's token usage">
-        {formatCost(cost)}
-      </span>
+      <div className="project-option" title="Estimated list-price cost of this chat's token usage">
+        <span>This chat's cost</span>
+        <span className="chead-cost">{formatCost(cost)}</span>
+      </div>
     </div>
   )
 }

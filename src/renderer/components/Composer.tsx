@@ -11,8 +11,13 @@ import type { ExternalLock } from '../../shared/engine-types'
 import { HIJACK_WORKING_TEXT, hijackBlock } from '../../shared/hijack'
 import type { ClaudeCommand, CommandSource } from '../../shared/claude-info-types'
 import { CompletionMenu, useClaudeCommands, useProjectFiles, type MenuItem } from './ComposerMenu'
+import { ComposerThumbnail } from './ChatImage'
 
 const MAX_TEXTAREA_PX = 200
+/** How long after one Esc a second one clears the box. */
+const CLEAR_WINDOW_MS = 1000
+/** How long Shift+Tab's new mode stays on show. */
+const MODE_NOTE_MS = 2500
 
 const SOURCE_TAG: Record<CommandSource, string | null> = { project: 'project', user: 'personal', plugin: null, synced: 'synced', mcp: 'MCP', builtin: null }
 
@@ -54,10 +59,10 @@ function readImageFile(file: File): Promise<ComposerImage | null> {
 /** The message input at the bottom of an open chat: multiline textarea
  *  (Enter sends, Shift+Enter newlines), large pastes collapse to a chip,
  *  pasted/dropped images become chips, and typing while a turn is running
- *  queues the message instead of sending it. Esc is a two-step "fast-track":
- *  the first Esc pulls the newest queued message back into the box to edit,
- *  and Esc with nothing queued interrupts the running turn -- so an urgent
- *  message can jump ahead of the queue and be sent immediately.
+ *  queues the message instead of sending it. Esc takes the newest queued message
+ *  back into the box, leaving Claude working. With nothing queued it stops the turn, and
+ *  a message Claude hadn't answered yet comes back too. With Claude idle, Esc Esc clears
+ *  the box and Up brings the text back.
  *
  *  Keyed by the parent on `sessionPk` (App.tsx passes `key={session.id}`) so
  *  switching sessions remounts this component fresh -- nothing of session A can
@@ -71,14 +76,14 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onSubmit, onInterrupt, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onSubmit, onInterrupt, onCancelSending, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
   /** True once `running` and `lock` describe this chat, rather than the moment of opening it. */
   settled?: boolean
-  /** Shift+Tab, as in the terminal. */
-  onCycleMode?: () => void
+  /** Shift+Tab, as in the terminal. Answers with the mode it moved to. */
+  onCycleMode?: () => string
   /** Goes up each time a `!` in this chat is stopped, which is a chance to send what's next. */
   shellStops?: number
   /** Set while a process outside ClaudeCord holds this chat: the composer
@@ -106,6 +111,8 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
   /** The user sent something themselves, as opposed to a queued message going by itself. */
   onSubmit?: () => void
   onInterrupt: () => void
+  /** A message that hasn't gone anywhere yet: calls it off. False if there's none. */
+  onCancelSending?: () => boolean
   /** Fires whenever the queued-message count changes, so a parent (App.tsx)
    *  can drive a LiveIndicator badge without owning the queue itself (the
    *  queue's add/remove/reorder state stays fully internal to Composer,
@@ -285,7 +292,11 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
     if (!m.uuid) return true
     withdrawing.current.add(m.uuid)
     const ok = await api.withdrawQueued(sessionPk, m.uuid)
-    if (!ok) setQueueNote('Too late to change that one: Claude already has it.')
+    if (!ok) {
+      // If Claude Code drops it after all, it still has to come back.
+      withdrawing.current.delete(m.uuid)
+      setQueueNote('Too late to change that one: Claude already has it.')
+    }
     return ok
   }
 
@@ -296,10 +307,15 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
     textareaRef.current?.focus()
   }
 
+  const editingQueued = useRef(false)
   async function editQueued(m: QueuedMessage) {
+    // A second Esc mustn't reach for the same message while it's on its way back.
+    if (editingQueued.current) return
+    editingQueued.current = true
     setQueueBusy(true)
     if (await withdraw(m)) putInBox(m)
     setQueueBusy(false)
+    editingQueued.current = false
   }
 
   async function removeQueued(m: QueuedMessage) {
@@ -326,6 +342,38 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
     })
     dispatchQueue({ type: 'set', items: [...after.slice(0, from), ...resent] })
     setQueueBusy(false)
+  }
+
+  const [modeNote, setModeNote] = useState<string | null>(null)
+  useEffect(() => {
+    if (modeNote === null) return
+    const timer = setTimeout(() => setModeNote(null), MODE_NOTE_MS)
+    return () => clearTimeout(timer)
+  }, [modeNote])
+
+  // Esc Esc clears the box, as in the terminal: the first press only says so.
+  const [clearHint, setClearHint] = useState(false)
+  const clearArmedAt = useRef(0)
+  useEffect(() => {
+    if (!clearHint) return
+    const timer = setTimeout(() => setClearHint(false), CLEAR_WINDOW_MS)
+    return () => clearTimeout(timer)
+  }, [clearHint])
+  function escClears() {
+    const now = Date.now()
+    if (now - clearArmedAt.current > CLEAR_WINDOW_MS) {
+      clearArmedAt.current = now
+      setClearHint(true)
+      return
+    }
+    clearArmedAt.current = 0
+    setClearHint(false)
+    const cleared = buildOutgoingText(text, pastedChips).trim()
+    if (cleared.length > 0) {
+      void api.keepInHistory(sessionPk, cleared)
+      setHistory(prev => prev === null ? prev : [cleared, ...prev.filter(t => t !== cleared)])
+    }
+    clearCompose()
   }
 
   function updateText(next: string) {
@@ -454,7 +502,7 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Tab' && e.shiftKey && onCycleMode !== undefined) { e.preventDefault(); onCycleMode(); return }
+    if (e.key === 'Tab' && e.shiftKey && onCycleMode !== undefined) { e.preventDefault(); setModeNote(`Mode: ${onCycleMode()}`); return }
     if (e.key === 'r' && e.ctrlKey) {
       e.preventDefault()
       void loadHistory().then(() => { setSearching(''); setSearchSelected(0) })
@@ -492,12 +540,13 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
       return
     }
     if (e.key === 'Escape') {
-      // As in Claude Code: a running turn stops first, whatever is queued, and Claude
-      // Code then runs what's queued by itself. Only with nothing running does Esc
-      // pull a queued message back to edit.
-      if (running) { e.preventDefault(); onInterrupt(); return }
+      // Unlike the terminal, what's queued comes back first and Claude keeps working, so
+      // fixing a typo doesn't cost the work under way. Then Esc stops the turn.
       const last = queue[queue.length - 1]
-      if (last !== undefined) { e.preventDefault(); void editQueued(last) }
+      if (last !== undefined) { e.preventDefault(); void editQueued(last); return }
+      if (running) { e.preventDefault(); onInterrupt(); return }
+      if (onCancelSending?.() === true) { e.preventDefault(); return }
+      if (text.length > 0 || pastedChips.length > 0 || imageChips.length > 0) { e.preventDefault(); escClears() }
     }
   }
 
@@ -555,11 +604,10 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
             </span>
           ))}
           {imageChips.map(img => (
-            <span key={img.id} className="chip chip-image">
-              🖼 {img.name ?? 'image'}
-              <button type="button" className="chip-x" title="Remove image"
-                onClick={() => setImageChips(prev => prev.filter(p => p.id !== img.id))}>✕</button>
-            </span>
+            <ComposerThumbnail key={img.id} image={img} onRemove={() => {
+              setImageChips(prev => prev.filter(p => p.id !== img.id))
+              textareaRef.current?.focus()
+            }} />
           ))}
         </div>
       )}
@@ -605,7 +653,7 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
             disabled={lock !== null}
             value={text}
             rows={1}
-            onChange={e => { setCaret(e.target.selectionStart); updateText(e.target.value) }}
+            onChange={e => { setCaret(e.target.selectionStart); clearArmedAt.current = 0; setClearHint(false); updateText(e.target.value) }}
             onSelect={e => setCaret(e.currentTarget.selectionStart)}
             onScroll={e => { if (highlightRef.current !== null) highlightRef.current.scrollTop = e.currentTarget.scrollTop }}
             onPaste={handlePaste}
@@ -623,10 +671,12 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
       {running && (
         <div className="composer-hint" aria-hidden="true">
           {queueNote ?? (queue.length > 0
-            ? 'Claude reads queued messages at its next step · Esc stops now and sends them'
+            ? 'Claude reads queued messages at its next step · Esc takes the last one back'
             : 'Enter queues for Claude\'s next step · Esc stops')}
         </div>
       )}
+      {clearHint && <div className="composer-hint" role="status">Esc again to clear</div>}
+      {modeNote !== null && <div className="composer-hint" role="status">{modeNote}</div>}
     </div>
   )
 }

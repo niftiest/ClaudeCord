@@ -21,6 +21,7 @@ import { FOLDER_MISSING, PERMISSION_MODES, type BackgroundTask, type LiveEvent, 
 // pattern engine-ipc-contract.ts already uses.
 import type { StreamedRow } from '../main/jsonl/stream'
 import { isDisplayRow } from '../main/jsonl/parse'
+import { rewoundUuids } from '../main/jsonl/rewound'
 import { CLEAR_COMMANDS, TERMINAL_ONLY_COMMANDS, type ClaudeCommand, type CommandSource, type McpServerStatus } from '../shared/claude-info-types'
 import { buildRenderItems, collectToolResults } from '../main/jsonl/render'
 
@@ -102,6 +103,13 @@ export function mergeReloadedPage(current: RenderItem[], page: RenderItem[]): { 
   const at = current.findIndex(item => item.uuid === first.uuid)
   if (at <= 0) return { items: page, keptAbove: 0 }
   return { items: [...current.slice(0, at), ...page], keptAbove: at }
+}
+
+/** The chat once a message stopped before any reply has been taken back: nothing can
+ *  follow it but the note that it was interrupted. */
+export function dropCancelledMessage(items: RenderItem[], uuid: string): RenderItem[] {
+  const at = items.findIndex(item => item.uuid === uuid)
+  return at === -1 ? items : items.slice(0, at)
 }
 
 /** A contiguous run of render items belonging to one side of the conversation:
@@ -502,6 +510,11 @@ export function summarizePermissionRequest(tool: string, input: unknown): string
 }
 
 /** The next mode Shift+Tab goes to. From a mode outside the list, it starts again. */
+/** A mode's name for people. A mode we don't list goes by what Claude Code calls it. */
+export function permissionModeLabel(mode: string): string {
+  return PERMISSION_MODES.find(m => m.value === mode)?.label ?? mode
+}
+
 export function nextPermissionMode(mode: string): string {
   const at = PERMISSION_MODES.findIndex(m => m.value === mode)
   return PERMISSION_MODES[(at + 1) % PERMISSION_MODES.length]!.value
@@ -833,7 +846,9 @@ export function suppressSealedPreview(prev: LivePreview | null, hasDurableAssist
  *  the SAME `rows` array. A result normally lands in a later batch than its
  *  call: applyStreamedToolResults fills those in. */
 export function renderItemsFromStreamedRows(rows: StreamedRow[]): RenderItem[] {
-  return buildRenderItems(rows.map(r => r.row).filter(isDisplayRow))
+  const all = rows.map(r => r.row)
+  const rewound = rewoundUuids(all)
+  return buildRenderItems(all.filter(isDisplayRow).filter(row => !rewound.has(row.uuid)))
 }
 
 /** Fills in results that arrived after their tool call was already showing.

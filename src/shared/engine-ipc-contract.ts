@@ -41,10 +41,12 @@ export const ENGINE_IPC = {
   turnInfo: 'engine:turnInfo',
   backgroundTasks: 'engine:backgroundTasks',
   withdrawQueued: 'engine:withdrawQueued',
+  rewindUnanswered: 'engine:rewindUnanswered',
   stopTask: 'engine:stopTask',
   answerElicitation: 'engine:answerElicitation',
   chatMode: 'engine:chatMode',
   promptHistory: 'engine:promptHistory',
+  keepInHistory: 'engine:keepInHistory',
   indexNow: 'engine:indexNow',
   renameChat: 'engine:renameChat',
   forkChat: 'engine:forkChat',
@@ -178,6 +180,8 @@ export type EngineApi = {
   send(sessionPk: number, text: string, images?: EngineImageInput[], uuid?: string): void
   /** Takes back a queued message. False if Claude already has it. */
   withdrawQueued(sessionPk: number, uuid: string): Promise<boolean>
+  /** Makes Claude forget a message stopped before any reply. False if it couldn't. */
+  rewindUnanswered(sessionPk: number, uuid: string): Promise<boolean>
   interrupt(sessionPk: number): void
   resolvePermission(
     id: string,
@@ -218,6 +222,8 @@ export type EngineApi = {
   indexNow(): Promise<void>
   /** What was typed in this chat's project, newest first. */
   promptHistory(sessionPk: number): Promise<string[]>
+  /** Keeps text in Claude Code's history file, for Up here and in the terminal. */
+  keepInHistory(sessionPk: number, text: string): Promise<void>
   renameChat(sessionPk: number, title: string): Promise<void>
   forkChat(sessionPk: number): Promise<{ ok: true; session: SessionSummary } | { ok: false; error: string }>
   sideQuestion(sessionPk: number, question: string): Promise<{ ok: true; answer: string } | { ok: false; error: string }>

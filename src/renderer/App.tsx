@@ -26,7 +26,7 @@ import { BlockedBanner } from './components/BlockedBanner'
 import { SyncChatBanner, SyncConflictDialog, useSyncChat } from './components/SyncChat'
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
-import { UpdateBar } from './components/UpdatesPanel'
+import { UpdateBar, UpdateIcon } from './components/UpdatesPanel'
 import { RetentionNotice } from './components/RetentionNotice'
 import { ManageView } from './components/manage/ManageView'
 import type { DeleteTarget } from '../shared/manage-types'
@@ -43,8 +43,8 @@ import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
-  renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
+  renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
 } from './lib'
@@ -255,6 +255,17 @@ export function App() {
   useEffect(() => composeStore.subscribe(refreshUpdateHold), [refreshUpdateHold])
   // Every chat's queue, whichever chat is on screen.
   useEffect(() => api.onEvent((pk, ev) => {
+    // Esc before any reply: Claude forgets the message and it goes back in the box. Read
+    // before the store moves on, since the turn is over once this event has been handled.
+    const takenBack = composeStore.settleCancel(pk, ev)
+    if (takenBack !== null && takenBack.uuid !== undefined) {
+      const uuid = takenBack.uuid
+      void api.rewindUnanswered(pk, uuid).then(rewound => {
+        if (!rewound) return
+        composeStore.returnMessage(pk, takenBack)
+        setItems(prev => dropCancelledMessage(prev, uuid))
+      })
+    }
     composeStore.handleEvent(pk, ev, (chat, command) => { void api.shellRun(chat, command) })
     if (ev.kind === 'elicitation') setChatElicitations(pk, list => [...list, ev.request])
     if (ev.kind === 'permissionGone') {
@@ -1036,6 +1047,7 @@ export function App() {
 
   const syncChat = useSyncChat(session?.id ?? null)
   const onSendRef = useRef<(text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void>(() => {})
+  const checkingSyncRef = useRef(new Map<number, { text: string; images: ComposerImage[]; cancelled: boolean }>())
   const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
 
   const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => {
@@ -1049,9 +1061,15 @@ export function App() {
       const outgoing = buildOutgoingText(text, pastedTexts)
       const goesToClaude = (outgoing.trim().length > 0 || images.length > 0) && !isClearCommand(outgoing) && terminalOnlyCommand(outgoing) === null
       if (uuid === undefined && goesToClaude) markSending(session.id, true)
+      // Nothing has gone anywhere yet, so Esc can simply call it off.
+      const pk = session.id
+      const pending = { text: outgoing, images, cancelled: false }
+      if (uuid === undefined && goesToClaude) checkingSyncRef.current.set(pk, pending)
       void api.syncBeforeSend(session.id).then(info => {
         syncChat.setInfo(info)
         const resend = (): void => {
+          if (pending.cancelled) return
+          checkingSyncRef.current.delete(pk)
           syncChat.bypass.current = true
           onSendRef.current(text, images, pastedTexts, uuid)
           syncChat.bypass.current = false
@@ -1062,6 +1080,8 @@ export function App() {
           setSyncHeld(() => resend)
         } else resend()
       }).catch(() => {
+        if (pending.cancelled) return
+        checkingSyncRef.current.delete(pk)
         syncChat.bypass.current = true
         onSendRef.current(text, images, pastedTexts, uuid)
         syncChat.bypass.current = false
@@ -1123,10 +1143,12 @@ export function App() {
     // under this turn's own live rows.
     reloadGenRef.current++
     lastSentRef.current = combined
-    composeStore.noteSent(session.id, combined, images, uuid)
+    // Every message is named, so one stopped before any reply can be taken back.
+    const ownId = uuid === undefined ? crypto.randomUUID() : undefined
+    composeStore.noteSent(session.id, combined, images, uuid, ownId)
     // A message for Claude's next step shows in the queue instead.
     if (uuid === undefined) markSending(session.id, true)
-    api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid)
+    api.send(session.id, combined, images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })), uuid ?? ownId)
   }, [session, syncChat.info.synced, markSending])
   onSendRef.current = onSend
 
@@ -1157,8 +1179,22 @@ export function App() {
 
   const onInterrupt = useCallback(() => {
     if (session === null) return
+    composeStore.beginCancel(session.id)
     api.interrupt(session.id)
   }, [session])
+
+  // Esc while a message is still waiting on the sync check: it comes straight back.
+  const onCancelSending = useCallback((): boolean => {
+    if (session === null) return false
+    const pending = checkingSyncRef.current.get(session.id)
+    if (pending === undefined) return false
+    pending.cancelled = true
+    checkingSyncRef.current.delete(session.id)
+    setSyncHeld(null)
+    markSending(session.id, false)
+    composeStore.returnMessage(session.id, pending)
+    return true
+  }, [session, markSending])
 
   // ── Nav metadata editing (Plan 3 Task 2) ──────────────────────────────────
   // Every handler below is OPTIMISTIC: it updates `channels` (and, for group
@@ -1408,20 +1444,18 @@ export function App() {
             <div className="path">{project?.cwd ?? `${channels.length} projects indexed`}</div>
           </div>
           {session !== null && <ProjectSearchBox ref={findInputRef} value={findQuery} onChange={setFindQuery} />}
-          {session !== null && channels.find(c => c.id === project?.id)?.archived !== true && (
-            <button type="button" className="chead-term" onClick={openChatInTerminal}
-              title="Open this chat in Claude Code in a terminal: for /mcp, logins, reconnecting tools, and anything else the app can't do">
-              ›_ Open in terminal
-            </button>
-          )}
-          {session !== null && settings !== null && (
+          {session !== null && settings !== null && project !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
               onAddDir={() => { void api.addProjectDir(session.id, null).then(r => { if (!r.ok) setTerminalNotice(r.error); else setProjectSettings(r.settings) }) }}
               onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
-              session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onRename={renameChat} onFork={forkChat} />
+              session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onFork={forkChat}
+              onOpenTerminal={channels.find(c => c.id === project.id)?.archived === true ? null : openChatInTerminal}
+              summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}>
+              <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />
+            </ProjectOptions>
           )}
-          {session !== null && <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />}
+          {(manageOpen || !(settings?.showContextRail ?? true)) && <UpdateIcon />}
         </header>
         {session !== null && <SyncChatBanner info={syncChat.info} onOpenSettings={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />}
         {session === null
@@ -1502,11 +1536,17 @@ export function App() {
         {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} />}
         {session !== null && <ShellRuns runs={shellRuns} />}
         {sideQuestion !== null && (
-          <div className="side-question" role="status">
-            <div className="side-question-head"><span className="perm-badge">Side question</span><span className="side-question-q">{sideQuestion.question}</span>
-              <button type="button" className="update-bar-x" aria-label="Close" onClick={() => setSideQuestion(null)}>✕</button></div>
+          // Keyed on the question, so a new one starts open however the last was left.
+          <details key={sideQuestion.question} className={`tool side-question${sideQuestion.error !== null ? ' err' : ''}`} role="status" open>
+            <summary>
+              <span className="caret" aria-hidden="true">▸</span>
+              <span className="nm">/btw</span>
+              <span className="tool-args" title={sideQuestion.question}>{sideQuestion.question}</span>
+              <span className="meta">{sideQuestion.error !== null ? 'error' : sideQuestion.answer === null ? 'asking…' : `${sideQuestion.answer.length} chars`}</span>
+              <button type="button" className="update-bar-x" aria-label="Close" onClick={e => { e.preventDefault(); setSideQuestion(null) }}>✕</button>
+            </summary>
             <div className="side-question-a">{sideQuestion.error ?? sideQuestion.answer ?? 'Asking…'}</div>
-          </div>
+          </details>
         )}
         {subagentOpen !== null && <SubagentViewer toolUseId={subagentOpen} onClose={closeSubagent} />}
         {session !== null && channels.find(c => c.id === project?.id)?.archived === true && (
@@ -1519,7 +1559,7 @@ export function App() {
           // fresh Composer instance per session, so nothing bleeds from one
           // session into another. What's in progress survives the switch: text
           // via draftsRef, chips and the queue in composeStore.
-          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} settled={settledPk === session.id} shellStops={shellStops} onCycleMode={() => changeChatMode(nextPermissionMode(chatMode))} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
+          <Composer key={`composer-${session.id}`} sessionPk={session.id} running={running} settled={settledPk === session.id} shellStops={shellStops} onCycleMode={() => { const next = nextPermissionMode(chatMode); changeChatMode(next); return permissionModeLabel(next) }} lock={externalLock} cwd={project?.cwd ?? null} suggestion={suggestion}
             onShellCommand={command => { void api.shellRun(session.id, command) }}
             onHijack={async () => {
               const r = await api.hijackChat(session.id)
@@ -1532,7 +1572,7 @@ export function App() {
               draftsRef.current.set(session.id, text)
               refreshUpdateHold()
             }}
-            onSend={onSend} onSubmit={() => setTerminalNotice(null)} onInterrupt={onInterrupt} onQueueLengthChange={setQueuedCount} />
+            onSend={onSend} onSubmit={() => setTerminalNotice(null)} onInterrupt={onInterrupt} onCancelSending={onCancelSending} onQueueLengthChange={setQueuedCount} />
         )}
       </main>
       </OpenSubagentContext.Provider>

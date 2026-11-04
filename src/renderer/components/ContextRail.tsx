@@ -1,3 +1,4 @@
+import { UpdateIcon } from './UpdatesPanel'
 import type { ContextUsage } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
 import type { FsEntry } from '../../shared/ipc'
@@ -44,6 +45,7 @@ export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCrea
         <button type="button" className="crail-collapse" title="Collapse rail" aria-label="Collapse context rail"
           onClick={onCollapse}>»</button>
         <span className="crail-title">Files</span>
+        <UpdateIcon />
         <button type="button" className="crail-add" disabled={!hasKey || !canCreateImage}
           title={!hasKey ? 'Set an OpenRouter key in Settings to generate images'
             : !canCreateImage ? 'Open a chat with a working directory first'
@@ -109,6 +111,7 @@ export function ContextRailStrip({ fsEntries, onExpand }: {
     <aside className="crail-collapsed" aria-label="Files & usage (collapsed)">
       <button type="button" className="crail-strip-expand" title="Expand rail" aria-label="Expand context rail"
         onClick={onExpand}>«</button>
+      <UpdateIcon />
       <div className="crail-strip-div" />
       <button type="button" className="crail-strip-icon active" title="Files" aria-label="Files" onClick={onExpand}>🗀</button>
       {dirty && <span className="crail-strip-dot" title="Uncommitted changes" aria-hidden="true" style={{ marginTop: 'auto' }} />}

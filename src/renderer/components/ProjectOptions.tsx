@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AppSettings } from '../../shared/shell-types'
 import type { ProjectSettings, ToolDisplay } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
 
 const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
 
-/** This project's own choices, for the options Settings leaves to "Choose per project". */
-export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onRename, onFork }: {
+/** Everything about the open chat and its project that doesn't need to sit in the header:
+ *  mode, model, effort and cost, the terminal, and the choices Settings leaves to
+ *  "Choose per project". */
+export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onFork, onOpenTerminal, summary, children }: {
   settings: AppSettings
   chat: ProjectSettings
   onChange: (patch: Partial<ProjectSettings>) => void
@@ -16,11 +18,14 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
   /** Every chat in this project, to go between them. */
   sessions: SessionSummary[]
   onOpenChat: (chat: SessionSummary) => void
-  onRename: (title: string) => void
   onFork: () => void
+  /** Null when there's no folder to open a terminal in. */
+  onOpenTerminal: (() => void) | null
+  /** Mode and model, on hover, since they're out of sight until this opens. */
+  summary: string
+  /** Mode, model, effort and cost. */
+  children: ReactNode
 }) {
-  const [name, setName] = useState(session.title ?? '')
-  useEffect(() => { setName(session.title ?? '') }, [session.id, session.title])
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -35,15 +40,14 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
 
   return (
     <div className="project-options" ref={rootRef}>
-      <button type="button" className="chead-term" aria-expanded={open} title="Options for this project, shared by all its chats" onClick={() => setOpen(o => !o)}>Project options</button>
-      {open && (
-        <div className="mcp-pop project-options-pop" role="dialog" aria-label="Project options">
-          <label className="project-option project-option-name">
-            <span>This chat's name</span>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} aria-label="This chat's name"
-              onKeyDown={e => { if (e.key === 'Enter' && name.trim().length > 0) { onRename(name); setOpen(false) } }}
-              onBlur={() => { if (name.trim().length > 0 && name.trim() !== (session.title ?? '')) onRename(name) }} />
-          </label>
+      <button type="button" className="chead-term" aria-expanded={open} title={summary} onClick={() => setOpen(o => !o)}>Project options</button>
+      {/* Stays mounted while closed: mode and model follow the running chat from in here. */}
+      <div className="mcp-pop project-options-pop" role="dialog" aria-label="Project options" hidden={!open}>
+          {children}
+          {onOpenTerminal !== null && (
+            <button type="button" className="project-options-link" title="Open this chat in Claude Code in a terminal: for /mcp, logins, reconnecting tools, and anything else the app can't do"
+              onClick={() => { setOpen(false); onOpenTerminal() }}>›_ Open in terminal</button>
+          )}
           <button type="button" className="project-options-link" onClick={() => { setOpen(false); onFork() }}>Fork this chat, to try something else from here</button>
           {sessions.length > 1 && (
             <div className="project-chats">
@@ -90,8 +94,7 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
               Set for all projects. To choose here, pick "Choose per project" in Settings
             </button>
           )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
