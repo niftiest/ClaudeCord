@@ -50,7 +50,8 @@ export type ToolResult = { text: string; isError: boolean }
 
 export type RenderItem =
   /** `literal`: shell output, shown exactly as printed rather than as markdown. */
-  | { kind: 'text'; uuid: string; role: 'user' | 'assistant'; ts: string | null; model: string | null; text: string; literal?: boolean }
+  /** `command`: a slash command as typed ('echo') or what it printed ('output'). */
+  | { kind: 'text'; uuid: string; role: 'user' | 'assistant'; ts: string | null; model: string | null; text: string; literal?: boolean; command?: 'echo' | 'output' }
   | { kind: 'thinking'; uuid: string; ts: string | null; text: string }
   | { kind: 'notice'; uuid: string; ts: string | null; text: string; label?: string }
   | { kind: 'tool'; uuid: string; toolUseId: string; ts?: string | null; name: string; input: unknown; result: ToolResult | null; subagentToolUseId: string | null }

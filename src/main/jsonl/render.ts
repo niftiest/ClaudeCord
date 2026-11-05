@@ -54,13 +54,15 @@ function isCompactReceipt(output: string): boolean {
 
 /** The display form of a slash-command echo or output, or null for plain text. */
 function commandItem(uuid: string, ts: string | null, text: string): RenderItem[] | null {
-  const typed = commandEcho(text) ?? bashEcho(text)
-  if (typed !== null) return [{ kind: 'text', uuid, role: 'user', ts, model: null, text: typed }]
+  const slash = commandEcho(text)
+  if (slash !== null) return [{ kind: 'text', uuid, role: 'user', ts, model: null, text: slash, command: 'echo' }]
+  const shell = bashEcho(text)
+  if (shell !== null) return [{ kind: 'text', uuid, role: 'user', ts, model: null, text: shell }]
   const output = commandOutput(text)
   if (output === null) return null
   if (output.length === 0 || isCompactReceipt(output)) return []
   const item: RenderItem = { kind: 'text', uuid, role: 'assistant', ts, model: null, text: output }
-  return [text.trimStart().startsWith('<bash-') ? { ...item, literal: true } : item]
+  return [text.trimStart().startsWith('<bash-') ? { ...item, literal: true } : { ...item, command: 'output' }]
 }
 
 function localCommandItems(row: LocalCommandRow): RenderItem[] {
@@ -69,7 +71,10 @@ function localCommandItems(row: LocalCommandRow): RenderItem[] {
   const items = commandItem(row.uuid, ts, text)
   if (items !== null) return items
   // A refused command is echoed bare ("/export"); anything else is its output.
-  return text.length === 0 ? [] : [{ kind: 'text', uuid: row.uuid, role: text.startsWith('/') ? 'user' : 'assistant', ts, model: null, text }]
+  if (text.length === 0) return []
+  return [text.startsWith('/')
+    ? { kind: 'text', uuid: row.uuid, role: 'user', ts, model: null, text, command: 'echo' }
+    : { kind: 'text', uuid: row.uuid, role: 'assistant', ts, model: null, text, command: 'output' }]
 }
 
 /** `rows` may include local-command `system` rows, which have no entry in the

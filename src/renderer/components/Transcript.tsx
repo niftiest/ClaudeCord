@@ -11,7 +11,7 @@ import { parseQuestions } from '../question-form'
 import type { Elicitation, ElicitationAnswer } from '../../shared/engine-types'
 import { ElicitationCard, QuestionCard } from './QuestionCard'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { groupToolRuns, toolRunSummary, thoughtRuns, thoughtsLabel, stableItemKeys, groupIntoTurns, userMessageParts, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
+import { groupToolRuns, toolRunSummary, thoughtRuns, thoughtsLabel, stableItemKeys, groupIntoTurns, hideAnsweredCommands,userMessageParts, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
 
 type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
@@ -83,10 +83,10 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   const preview = livePreview ?? null
   // Filter tool cards out here (not upstream) so the durable render model is
   // untouched and toggling the setting re-shows them without a reload.
-  const items = useMemo(
-    () => (showToolCalls && showThinking ? allItems : allItems.filter(it => (showToolCalls || it.kind !== 'tool') && (showThinking || it.kind !== 'thinking'))),
-    [allItems, showToolCalls, showThinking]
-  )
+  const items = useMemo(() => {
+    const shown = hideAnsweredCommands(allItems)
+    return showToolCalls && showThinking ? shown : shown.filter(it => (showToolCalls || it.kind !== 'tool') && (showThinking || it.kind !== 'thinking'))
+  }, [allItems, showToolCalls, showThinking])
   const parentRef = useRef<HTMLDivElement>(null)
   // Stable React keys so a loadOlder prepend reconciles the existing message
   // DOM in place (no remount), which is what keeps the scroll-preservation

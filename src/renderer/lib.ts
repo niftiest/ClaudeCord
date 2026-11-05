@@ -189,6 +189,17 @@ function itemRole(item: RenderItem): 'user' | 'assistant' | 'notice' {
  *  Claude turn's text + thinking + tool cards render as a single unit, and a
  *  user turn's text + images stay together). Order is preserved; a single uuid
  *  emitting several items (text + tool) lands them in the same turn. */
+/** Drops a slash command as typed when its reply comes right after it ("/model x"
+ *  then "Set model to x"): the reply says what happened. A command with no reply
+ *  of its own stays, so the chat still shows it ran. */
+export function hideAnsweredCommands(items: RenderItem[]): RenderItem[] {
+  const answered = (i: number): boolean => {
+    const it = items[i]!, next = items[i + 1]
+    return it.kind === 'text' && it.command === 'echo' && next?.kind === 'text' && next.command === 'output'
+  }
+  return items.some((_, i) => answered(i)) ? items.filter((_, i) => !answered(i)) : items
+}
+
 export function groupIntoTurns(items: RenderItem[]): Turn[] {
   const turns: Turn[] = []
   items.forEach((item, i) => {

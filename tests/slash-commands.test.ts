@@ -12,7 +12,7 @@ import { mcpLoginCommand } from '../src/main/engine/terminal'
 import { ClaudeInfoService, INFO_ARGS, parseCommands } from '../src/main/engine/claude-info'
 import type { ChildLike } from '../src/main/engine/transport'
 import { listProjectFiles } from '../src/main/project-files'
-import { applyCompletion, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpProblems, rankFiles } from '../src/renderer/lib'
+import { applyCompletion, hideAnsweredCommands, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpProblems, rankFiles } from '../src/renderer/lib'
 import type { ClaudeCommand, McpServerStatus } from '../src/shared/claude-info-types'
 
 class FakeProcess extends EventEmitter {
@@ -70,6 +70,30 @@ describe('rows Claude Code stores but never typed by anyone', () => {
       user('<bash-input>ls</bash-input>'),
       user('<bash-stdout>a.txt\u001b[0m</bash-stdout><bash-stderr></bash-stderr>')
     ])).toEqual(['assistant: ## Context Usage', 'user: /export', "assistant: /export isn't available", 'user: !ls', 'assistant: a.txt'])
+  })
+
+  it('shows only the reply to a command that has one', () => {
+    const shown = (rows: Parameters<typeof buildRenderItems>[0]) =>
+      hideAnsweredCommands(buildRenderItems(rows)).map(i => i.kind === 'text' ? `${i.role}: ${i.text}` : i.kind)
+    const system = (content: string, uuid: string) => ({ type: 'system', subtype: 'local_command', uuid, content }) as never
+    expect(shown([
+      user('<command-name>/model</command-name><command-args>claude-opus-5</command-args>'),
+      user('<local-command-stdout>Set model to claude-opus-5</local-command-stdout>'),
+      system('/export', 's2'),
+      system("<local-command-stdout>/export isn't available</local-command-stdout>", 's3'),
+      // No reply of its own: it stays, so the chat shows it ran
+      user('<command-name>/compact</command-name>'),
+      user('<local-command-stdout>Compacted </local-command-stdout>'),
+      // A skill is a message to Claude, answered by Claude
+      user('<command-name>/probe-skill</command-name>'),
+      { type: 'assistant', uuid: 'a1', parentUuid: null, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } } as MessageRow,
+      // Shell commands keep what was run
+      user('<bash-input>ls</bash-input>'),
+      user('<bash-stdout>a.txt</bash-stdout>')
+    ])).toEqual([
+      'assistant: Set model to claude-opus-5', "assistant: /export isn't available", 'user: /compact',
+      'user: /probe-skill', 'assistant: Done.', 'user: !ls', 'assistant: a.txt'
+    ])
   })
 
   it('keeps ordinary messages that merely mention the tags', () => {
