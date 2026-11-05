@@ -1,3 +1,4 @@
+import { rewoundUuids } from '../jsonl/rewound'
 import type { Catalog } from '../catalog/db'
 import { upsertProject, setProjectCwd, upsertSession } from '../catalog/repos'
 import { streamRows } from '../jsonl/stream'
@@ -25,6 +26,13 @@ function toolNamesOf(row: MessageRow): string | null {
     .filter((b): b is { type: 'tool_use'; id: string; name: string; input: unknown } => b.type === 'tool_use')
     .map(b => b.name)
   return names.length > 0 ? names.join(',') : null
+}
+
+/** Something a person wrote, rather than Claude Code's own notes or a tool's output. */
+function isTypedText(text: string | null): boolean {
+  if (text === null) return false
+  const t = text.trimStart()
+  return t.length > 0 && !t.startsWith('<') && !t.startsWith('[Request interrupted by user') && !t.startsWith('[Image:')
 }
 
 export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<IndexFileResult> {
@@ -96,6 +104,11 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
   let lastUsage = rewritten ? null : parseLastUsage(state.last_usage)
   if (lastUsage !== null) usageById.set(lastUsage.id, lastUsage.counts)
 
+  const leafOf = db.prepare('SELECT seq, role FROM messages WHERE session_pk = ? AND uuid = ?')
+  const firstAfter = db.prepare('SELECT seq, role, text FROM messages WHERE session_pk = ? AND seq > ? AND is_sidechain = 0 ORDER BY seq LIMIT 1')
+  const markFrom = db.prepare('UPDATE messages SET rewound = 1 WHERE session_pk = ? AND seq > ? AND seq < ? AND is_sidechain = 0')
+  const markRow = db.prepare('UPDATE messages SET rewound = 1 WHERE session_pk = ? AND uuid = ?')
+
   const write = db.transaction(() => {
     // Apply the rewritten-file reset atomically with the rebuild that follows:
     // drop the stale messages and the aggregates rolled up from them (token
@@ -118,6 +131,18 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
     for (const { row, byteOffset, seq } of rows) {
       if (row.type === 'custom-title' && typeof (row as { customTitle?: unknown }).customTitle === 'string') customTitle = (row as unknown as { customTitle: string }).customTitle
       if (row.type === 'ai-title' && typeof (row as { aiTitle?: unknown }).aiTitle === 'string') aiTitle = (row as unknown as { aiTitle: string }).aiTitle
+      if (row.type === 'last-prompt') {
+        // Claude Code saying where the chat now resumes from. Pointing back at a reply with
+        // a typed message after it, the chat went back to there. Only a typed message: a
+        // tool's result after the reply is an ordinary turn, and real chats do have those.
+        const leaf = (row as { leafUuid?: unknown }).leafUuid
+        const from = typeof leaf === 'string' ? leafOf.get(sessionPk, leaf) as { seq: number; role: string } | undefined : undefined
+        if (from?.role === 'assistant') {
+          const next = firstAfter.get(sessionPk, from.seq) as { seq: number; role: string; text: string | null } | undefined
+          if (next !== undefined && next.seq < seq && next.role === 'user' && isTypedText(next.text)) markFrom.run(sessionPk, from.seq, seq)
+        }
+        continue
+      }
       if (!isMessageRow(row)) continue
       const text = textOf(row)
       const info = insert.run({
@@ -156,6 +181,9 @@ export async function indexFile(db: Catalog, file: DiscoveredFile): Promise<Inde
         }
       }
     }
+
+    // The same, for a chat's first message, which has no earlier reply to point back at.
+    for (const uuid of rewoundUuids(rows.map(r => r.row))) markRow.run(sessionPk, uuid)
 
     db.prepare(`
       UPDATE sessions SET

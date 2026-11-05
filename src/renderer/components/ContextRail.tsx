@@ -1,3 +1,5 @@
+import { formatClock, plainPreview } from '../lib'
+import type { PinnedMessage } from '../../shared/engine-ipc-contract'
 import { UpdateIcon } from './UpdatesPanel'
 import type { ContextUsage } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
@@ -17,7 +19,43 @@ function fmtTokens(n: number): string {
 /** Claude compacts by itself near the limit; this is the point to think about it. */
 const CONTEXT_WARN_PERCENT = 80
 
-export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCreateImage, onCollapse, context = null, onCompact }: {
+export type RailView = 'files' | 'pins'
+
+/** A pin, as an icon: the rail's way to its pinned messages. */
+function PinIcon() {
+  return <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9.8 1.3a.8.8 0 0 1 1.1 0l3.8 3.8a.8.8 0 0 1 0 1.1l-.5.5a1.5 1.5 0 0 1-1.6.3l-2.3 2.7.2 2.3a.8.8 0 0 1-.2.6l-.6.6a.8.8 0 0 1-1.1 0L6.2 10.4l-3.7 3.7-.6-.6 3.7-3.7L3.2 7.4a.8.8 0 0 1 0-1.1l.6-.6a.8.8 0 0 1 .6-.2l2.3.2 2.7-2.3a1.5 1.5 0 0 1 .3-1.6z" /></svg>
+}
+
+/** One project's pinned messages. Clicking one goes to it, in whichever chat it's in. */
+function PinsList({ pins, openChatId, onJump, onUnpin }: { pins: PinnedMessage[]; openChatId: number | null; onJump: (pin: PinnedMessage) => void; onUnpin: (pin: PinnedMessage) => void }) {
+  if (pins.length === 0) return <p className="settings-note" style={{ padding: '8px 10px' }}>No pinned messages yet. Right-click a message in the chat and choose Pin Message.</p>
+  return (
+    <div className="pins-list">
+      {pins.map(pin => (
+        <div className="pin-row" key={`${pin.sessionPk}:${pin.uuid}`}>
+          <button type="button" className="pin-open" title={pin.text ?? ''} onClick={() => onJump(pin)}>
+            <span className="pin-meta">
+              <span className="pin-author">{pin.role === 'user' ? 'You' : 'Claude'}</span>
+              {pin.sessionPk !== openChatId && pin.chatTitle !== null && <span className="pin-chat">{pin.chatTitle}</span>}
+              <time className="pin-time">{formatClock(pin.ts)}</time>
+            </span>
+            <span className="pin-text">{plainPreview(pin.text ?? '')}</span>
+          </button>
+          <button type="button" className="term-prompt-x" aria-label="Unpin message" title="Unpin" onClick={() => onUnpin(pin)}>✕</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCreateImage, onCollapse, context = null, onCompact, view, onView, pins, openChatId, onJumpToPin, onUnpin }: {
+  /** Which list the rail shows. */
+  view: RailView
+  onView: (view: RailView) => void
+  pins: PinnedMessage[]
+  openChatId: number | null
+  onJumpToPin: (pin: PinnedMessage) => void
+  onUnpin: (pin: PinnedMessage) => void
   /** How full the chat is, while it has a process running. */
   context?: ContextUsage | null
   /** Offered once the chat is getting full; undefined while it can't be done. */
@@ -44,7 +82,9 @@ export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCrea
       <div className="crail-head">
         <button type="button" className="crail-collapse" title="Collapse rail" aria-label="Collapse context rail"
           onClick={onCollapse}>»</button>
-        <span className="crail-title">Files</span>
+        <span className="crail-title">{view === 'pins' ? 'Pinned' : 'Files'}</span>
+        <button type="button" className={`crail-view${view === 'pins' ? ' active' : ''}`} title={view === 'pins' ? 'Show files' : 'Pinned messages'}
+          aria-label={view === 'pins' ? 'Show files' : 'Pinned messages'} aria-pressed={view === 'pins'} onClick={() => onView(view === 'pins' ? 'files' : 'pins')}><PinIcon /></button>
         <UpdateIcon />
         <button type="button" className="crail-add" disabled={!hasKey || !canCreateImage}
           title={!hasKey ? 'Set an OpenRouter key in Settings to generate images'
@@ -54,7 +94,9 @@ export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCrea
       </div>
 
       <div className="crail-body">
-        {fsEntries.length === 0
+        {view === 'pins'
+          ? <PinsList pins={pins} openChatId={openChatId} onJump={onJumpToPin} onUnpin={onUnpin} />
+          : fsEntries.length === 0
           ? <p className="settings-note" style={{ padding: '8px 10px' }}>No files{session ? '' : ' — open a chat'} to show.</p>
           : <div className="crail-tree">
               {fsEntries.map(e => (
@@ -102,9 +144,12 @@ export function ContextRail({ session, fsEntries, hasKey, canCreateImage, onCrea
 
 /** 46px collapsed strip: expand button, a Files icon, and an amber dot when the
  *  project has uncommitted changes. */
-export function ContextRailStrip({ fsEntries, onExpand }: {
+export function ContextRailStrip({ fsEntries, view, pinCount, onExpand, onOpenView }: {
   fsEntries: FsEntry[]
+  view: RailView
+  pinCount: number
   onExpand: () => void
+  onOpenView: (view: RailView) => void
 }) {
   const dirty = fsEntries.some(e => e.git)
   return (
@@ -113,7 +158,8 @@ export function ContextRailStrip({ fsEntries, onExpand }: {
         onClick={onExpand}>«</button>
       <UpdateIcon />
       <div className="crail-strip-div" />
-      <button type="button" className="crail-strip-icon active" title="Files" aria-label="Files" onClick={onExpand}>🗀</button>
+      <button type="button" className={`crail-strip-icon${view === 'pins' ? ' active' : ''}`} title={pinCount > 0 ? `Pinned messages (${pinCount})` : 'Pinned messages'} aria-label="Pinned messages" onClick={() => onOpenView('pins')}><PinIcon /></button>
+      <button type="button" className={`crail-strip-icon${view === 'files' ? ' active' : ''}`} title="Files" aria-label="Files" onClick={() => onOpenView('files')}>🗀</button>
       {dirty && <span className="crail-strip-dot" title="Uncommitted changes" aria-hidden="true" style={{ marginTop: 'auto' }} />}
     </aside>
   )

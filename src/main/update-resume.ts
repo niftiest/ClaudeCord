@@ -62,11 +62,17 @@ export function takeResume(file: string, now: number): UpdateResume | null {
 export function usableBounds(bounds: Bounds, workAreas: Bounds[]): Bounds | null {
   const width = Math.max(bounds.width, MIN_WIDTH)
   const height = Math.max(bounds.height, MIN_HEIGHT)
-  const onScreen = workAreas.find(a => {
+  // The screen holding most of the window, which is the one its size has to fit.
+  let onScreen: Bounds | null = null
+  let most = 0
+  for (const a of workAreas) {
     const across = Math.min(bounds.x + width, a.x + a.width) - Math.max(bounds.x, a.x)
     const down = Math.min(bounds.y + height, a.y + a.height) - Math.max(bounds.y, a.y)
-    return across >= MIN_ON_SCREEN && down >= MIN_ON_SCREEN
-  })
-  if (onScreen === undefined) return null
+    if (across >= MIN_ON_SCREEN && down >= MIN_ON_SCREEN && across * down > most) {
+      onScreen = a
+      most = across * down
+    }
+  }
+  if (onScreen === null) return null
   return { x: bounds.x, y: bounds.y, width: Math.min(width, onScreen.width), height: Math.min(height, onScreen.height) }
 }

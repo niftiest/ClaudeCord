@@ -10,6 +10,11 @@ export const TOOL_DISPLAY_SETTINGS: readonly ToolDisplaySetting[] = [...TOOL_DIS
 export type SuggestionsSetting = 'off' | 'on' | 'perProject'
 export const SUGGESTIONS_SETTINGS: readonly SuggestionsSetting[] = ['off', 'on', 'perProject']
 
+export type ThinkingDisplay = 'show' | 'hidden'
+export const THINKING_DISPLAYS: readonly ThinkingDisplay[] = ['show', 'hidden']
+export type ThinkingDisplaySetting = ThinkingDisplay | 'perProject'
+export const THINKING_DISPLAY_SETTINGS: readonly ThinkingDisplaySetting[] = [...THINKING_DISPLAYS, 'perProject']
+
 /** What one project remembers, shared by every chat in its folder. */
 export type ProjectSettings = {
   model?: string
@@ -17,6 +22,7 @@ export type ProjectSettings = {
   skipPermissions?: boolean
   promptSuggestions?: boolean
   toolDisplay?: ToolDisplay
+  thinkingDisplay?: ThinkingDisplay
   /** Whether the Files panel is open. Unset: whatever was last chosen anywhere. */
   filesExpanded?: boolean
   /** Folders outside the project that Claude may use, for every chat in it. */
@@ -26,6 +32,10 @@ export type ProjectSettings = {
 /** With "per project" selected, a project that hasn't chosen behaves like the app's default. */
 export function effectiveToolDisplay(setting: ToolDisplaySetting, project: ProjectSettings | null): ToolDisplay {
   return setting === 'perProject' ? project?.toolDisplay ?? 'grouped' : setting
+}
+
+export function effectiveThinkingDisplay(setting: ThinkingDisplaySetting, project: ProjectSettings | null): ThinkingDisplay {
+  return setting === 'perProject' ? project?.thinkingDisplay ?? 'show' : setting
 }
 
 /** `claudeAllows` is false when the user's Claude Code settings turn suggestions off,

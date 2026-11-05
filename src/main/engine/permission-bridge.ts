@@ -61,6 +61,7 @@ export function parsePermissionArgs(args: unknown, id: string, sessionKey: strin
     ...text('title'),
     ...text('description'),
     ...(typeof obj.decision_reason === 'string' && obj.decision_reason.length > 0 ? { reason: obj.decision_reason } : {}),
+    ...(typeof obj.decision_reason_type === 'string' && obj.decision_reason_type.length > 0 ? { reasonType: obj.decision_reason_type } : {}),
     ...(typeof obj.blocked_path === 'string' && obj.blocked_path.length > 0 ? { blockedPath: obj.blocked_path } : {}),
     ...(Array.isArray(obj.permission_suggestions) ? { suggestions: obj.permission_suggestions.filter(isPlainObject) as PermissionSuggestion[] } : {})
   }

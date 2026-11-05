@@ -12,6 +12,7 @@ import { UpdatesPanel } from './UpdatesPanel'
 import { ClaudeCodeSettings, type ProjectChoice } from './ClaudeCodeSettings'
 import { ChatHistorySettings } from './ChatHistorySettings'
 import { SyncSettings } from './SyncSettings'
+import { ThemeControls } from './ThemeControls'
 
 export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'sync' | 'mcp' | 'skills' | 'openrouter' | 'engine'
 type Section = SettingsSection
@@ -136,9 +137,7 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           )}
           {section === 'appearance' && (
             <Group title="Appearance">
-              <Select label="Theme" value={settings.theme}
-                options={[{ value: 'discord', label: 'Discord (default)' }, { value: 'terminal', label: 'Terminal (Claude Code)' }, { value: 'midnight', label: 'Midnight (darker)' }]}
-                on={v => patch({ theme: v as AppSettings['theme'] })} />
+              <ThemeControls settings={settings} patch={patch} onChanged={s => { setSettings(s); onSettingsChanged?.(s) }} />
               {settings.theme === 'terminal' && (
                 <Select label="Apply theme to" value={settings.themeScope}
                   options={[{ value: 'chat', label: 'Chat window only' }, { value: 'app', label: 'Sidebar + chat (whole app)' }]}
@@ -164,10 +163,13 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
               <Select label="Tool calls" hint={PER_PROJECT_HINT} value={settings.toolDisplay}
                 options={[{ value: 'grouped', label: 'Grouped into one line' }, { value: 'all', label: 'Show all' }, { value: 'hidden', label: 'Hide' }, { value: 'perProject', label: 'Choose per project' }]}
                 on={v => patch({ toolDisplay: v as AppSettings['toolDisplay'] })} />
+              <Select label="Claude's thoughts" hint={`Hiding them doesn't change what Claude does or what it costs. ${PER_PROJECT_HINT}`} value={settings.thinkingDisplay}
+                options={[{ value: 'show', label: 'Show' }, { value: 'hidden', label: 'Hide' }, { value: 'perProject', label: 'Choose per project' }]}
+                on={v => patch({ thinkingDisplay: v as AppSettings['thinkingDisplay'] })} />
               <Select label="Prompt suggestions" hint={`Claude predicts your next message as a chip above the box. Each one uses a small amount of your plan or API budget. ${PER_PROJECT_HINT}`} value={settings.promptSuggestions}
                 options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }, { value: 'perProject', label: 'Choose per project' }]}
                 on={v => patch({ promptSuggestions: v as AppSettings['promptSuggestions'] })} />
-              <Toggle label="Show session blade" hint="Add a separate per-session picker column for channels with more than one session." value={settings.showBlade} on={v => patch({ showBlade: v })} />
+              <Toggle label="Show session blade" hint="A column listing a project's sessions, for projects with more than one." value={settings.showBlade} on={v => patch({ showBlade: v })} />
               <Toggle label="Show context rail" hint="The right-hand Files / Context / Usage panel." value={settings.showContextRail} on={v => patch({ showContextRail: v })} />
               <Toggle label="Expand thinking by default" value={settings.thinkingExpanded} on={v => patch({ thinkingExpanded: v })} />
               <Toggle label="Expand tool cards by default" value={settings.toolCardsExpanded} on={v => patch({ toolCardsExpanded: v })} />
@@ -306,9 +308,11 @@ function FontSelect({ value, on }: { value: string; on: (v: string) => void }) {
     return () => { alive = false }
   }, [])
   const names = fonts ?? []
+  // Only when the list could be read: a theme's font that isn't here shows the default instead.
+  const missing = names.length > 0 ? ' (not on this PC, using the default)' : ''
   return (
     <Select label="Font" hint="Used everywhere except code, which stays monospaced so it lines up." value={value}
-      options={[{ value: '', label: 'Default' }, ...(value !== '' && !names.includes(value) ? [{ value, label: value }] : []), ...names.map(n => ({ value: n, label: n }))]}
+      options={[{ value: '', label: 'Default' }, ...(value !== '' && !names.includes(value) ? [{ value, label: `${value}${missing}` }] : []), ...names.map(n => ({ value: n, label: n }))]}
       on={on} />
   )
 }

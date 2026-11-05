@@ -51,6 +51,12 @@ describe('where the window goes', () => {
     expect(usableBounds({ x: 2000, y: 100, width: 1500, height: 900 }, [screen, second])).toEqual({ x: 2000, y: 100, width: 1500, height: 900 })
   })
 
+  it('fits the screen holding most of it, whichever is listed first', () => {
+    const small = { x: 0, y: 0, width: 1000, height: 600 }
+    const tall = { x: 1000, y: 0, width: 1000, height: 1400 }
+    expect(usableBounds({ x: 850, y: 0, width: 900, height: 1200 }, [small, tall])).toEqual({ x: 850, y: 0, width: 900, height: 1200 })
+  })
+
   it('gives up if that screen has gone', () => {
     expect(usableBounds({ x: 2000, y: 100, width: 1500, height: 900 }, [screen])).toBeNull()
   })

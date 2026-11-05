@@ -26,7 +26,7 @@ function setup(entry: Partial<LiveSessionEntry> | null, end: { failures?: Array<
 describe('processes ClaudeCord starts', () => {
   it('do not inherit the session that launched ClaudeCord, but keep the settings of the user', () => {
     const env = childEnv({ CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_EFFORT: 'medium', CLAUDECODE: '1', CLAUDE_CODE_BRIDGE_SESSION_ID: 'y', CLAUDE_CONFIG_DIR: 'C:\c', ENABLE_LSP_TOOL: '1', PATH: 'p' })
-    expect(env).toEqual({ CLAUDE_CONFIG_DIR: 'C:\c', ENABLE_LSP_TOOL: '1', PATH: 'p' })
+    expect(env).toEqual({ CLAUDE_CONFIG_DIR: 'C:\c', ENABLE_LSP_TOOL: '1', PATH: 'p', CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' })
   })
 })
 

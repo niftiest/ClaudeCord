@@ -47,7 +47,7 @@ export function searchProject(db: Catalog, projectId: number, query: string, lim
     FROM messages m JOIN sessions s ON s.id = m.session_pk
     WHERE s.project_id = ? AND s.kind = 'main' AND m.is_sidechain = 0 AND m.role IN ('user', 'assistant')
       AND m.text NOT LIKE '<task-notification>%'
-      AND m.text NOT LIKE '[Request interrupted by user%'
+      AND m.rewound = 0 AND m.text NOT LIKE '[Request interrupted by user%'
       AND m.text <> 'No response requested.'
       AND COALESCE(m.model, '') <> '<synthetic>'
       ${terms.map(() => `AND m.text LIKE ? ESCAPE '\\'`).join(' ')}`
@@ -76,7 +76,7 @@ export function search(db: Catalog, query: string, limit = 100): SearchHit[] {
     JOIN sessions s ON s.id = m.session_pk
     JOIN sessions chat ON chat.project_id = s.project_id AND chat.session_id = s.session_id AND chat.kind = 'main'
     JOIN projects p ON p.id = s.project_id
-    WHERE messages_fts MATCH ?
+    WHERE messages_fts MATCH ? AND m.rewound = 0
     ORDER BY rank
     LIMIT ?
   `).all(match, limit) as SearchHit[]

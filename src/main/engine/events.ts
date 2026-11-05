@@ -1,3 +1,4 @@
+import { stepLabel, textStep } from '../../shared/subagent-activity'
 import type { PlanReading, PlanWindow } from '../../shared/plan-usage'
 import type { Usage } from '../../shared/types'
 import type { BackgroundTask, Elicitation, LiveEvent } from '../../shared/engine-types'
@@ -43,6 +44,10 @@ function parseSystem(row: Record<string, unknown>): LiveEvent {
   const other: LiveEvent = { kind: 'other', type: 'system' }
   if (row.subtype === 'status') return { kind: 'status', status: typeof row.status === 'string' ? row.status : null, ...(typeof row.permissionMode === 'string' ? { permissionMode: row.permissionMode } : {}) }
   if (row.subtype === 'background_tasks_changed') return { kind: 'background', tasks: parseBackgroundTasks(row.tasks) }
+  if (row.subtype === 'task_started' && row.task_type === 'local_agent' && typeof row.tool_use_id === 'string') {
+    return { kind: 'taskStarted', toolUseId: row.tool_use_id, description: typeof row.description === 'string' ? row.description : '' }
+  }
+  if (row.subtype === 'task_notification' && typeof row.tool_use_id === 'string') return { kind: 'taskEnded', toolUseId: row.tool_use_id }
   if (row.subtype === 'task_progress' && typeof row.task_id === 'string') {
     const tokens = isPlainObject(row.usage) && typeof row.usage.total_tokens === 'number' ? row.usage.total_tokens : null
     return { kind: 'taskProgress', taskId: row.task_id, lastTool: typeof row.last_tool_name === 'string' ? row.last_tool_name : null, tokens }
@@ -110,6 +115,19 @@ function parseAssistant(row: Record<string, unknown>): LiveEvent {
   return usage === undefined ? { kind: 'assistant', uuid, blocks } : { kind: 'assistant', uuid, blocks, usage }
 }
 
+/** A subagent's message, as one line for showing what it's doing. */
+function parseSubagentStep(row: Record<string, unknown>, parent: string): LiveEvent | null {
+  const message = row.message
+  const content = isPlainObject(message) ? message.content : null
+  if (!Array.isArray(content)) return null
+  for (const block of content) {
+    if (!isPlainObject(block)) continue
+    if (block.type === 'tool_use' && typeof block.name === 'string') return { kind: 'subagentStep', parent, label: stepLabel(block.name, block.input) }
+    if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) return { kind: 'subagentStep', parent, label: textStep(block.text) }
+  }
+  return null
+}
+
 function parseStreamEvent(row: Record<string, unknown>): LiveEvent {
   const other: LiveEvent = { kind: 'other', type: 'stream_event' }
   const inner = row.event
@@ -120,6 +138,7 @@ function parseStreamEvent(row: Record<string, unknown>): LiveEvent {
   if (inner.type !== 'content_block_delta') return other
   const delta = inner.delta
   if (!isPlainObject(delta)) return other
+  if (delta.type === 'thinking_delta') return typeof delta.thinking === 'string' && delta.thinking.length > 0 ? { kind: 'thinkingDelta', text: delta.thinking } : other
   if (delta.type !== 'text_delta') return other
   const text = delta.text
   if (typeof text !== 'string') return other
@@ -247,7 +266,9 @@ export function parseEvent(line: string): LiveEvent | null {
 
   // A subagent's own messages and tokens share this stream. It reports through its
   // task; showing them as Claude's would put its words in the chat's reply.
-  if ((type === 'assistant' || type === 'stream_event') && typeof value.parent_tool_use_id === 'string') return { kind: 'other', type }
+  if ((type === 'assistant' || type === 'stream_event') && typeof value.parent_tool_use_id === 'string') {
+    return (type === 'assistant' ? parseSubagentStep(value, value.parent_tool_use_id) : null) ?? { kind: 'other', type }
+  }
 
   switch (type) {
     case 'system':

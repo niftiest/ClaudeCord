@@ -1,6 +1,6 @@
 import type { Catalog } from './db'
-import type { ProjectSettings, ToolDisplay } from '../../shared/project-options'
-import { TOOL_DISPLAYS } from '../../shared/project-options'
+import type { ProjectSettings, ThinkingDisplay, ToolDisplay } from '../../shared/project-options'
+import { THINKING_DISPLAYS, TOOL_DISPLAYS } from '../../shared/project-options'
 
 /** One set of settings per project: every chat in a folder shares them, because a
  *  folder is one row in the chat list. A stored value that doesn't validate is
@@ -15,6 +15,7 @@ function clean(raw: unknown): ProjectSettings {
   if (typeof r.promptSuggestions === 'boolean') out.promptSuggestions = r.promptSuggestions
   if (typeof r.filesExpanded === 'boolean') out.filesExpanded = r.filesExpanded
   if (TOOL_DISPLAYS.includes(r.toolDisplay as ToolDisplay)) out.toolDisplay = r.toolDisplay as ToolDisplay
+  if (THINKING_DISPLAYS.includes(r.thinkingDisplay as ThinkingDisplay)) out.thinkingDisplay = r.thinkingDisplay as ThinkingDisplay
   if (Array.isArray(r.extraDirs)) {
     const dirs = r.extraDirs.filter((d): d is string => typeof d === 'string' && d.length > 0)
     if (dirs.length > 0) out.extraDirs = dirs

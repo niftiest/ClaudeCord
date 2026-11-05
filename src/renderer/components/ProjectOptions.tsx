@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AppSettings } from '../../shared/shell-types'
-import type { ProjectSettings, ToolDisplay } from '../../shared/project-options'
+import type { ProjectSettings, ThinkingDisplay, ToolDisplay } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
 
 const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
@@ -8,11 +8,10 @@ const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all'
 /** Everything about the open chat and its project that doesn't need to sit in the header:
  *  mode, model, effort and cost, and the choices Settings leaves to
  *  "Choose per project". */
-export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSettings, session, sessions, onOpenChat, onFork, summary, children }: {
+export function ProjectOptions({ settings, chat, onChange, onOpenSettings, session, sessions, onOpenChat, onFork, summary, children }: {
   settings: AppSettings
   chat: ProjectSettings
   onChange: (patch: Partial<ProjectSettings>) => void
-  onAddDir: () => void
   onOpenSettings: () => void
   session: SessionSummary
   /** Every chat in this project, to go between them. */
@@ -34,6 +33,7 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
   }, [open])
 
   const tools = settings.toolDisplay === 'perProject'
+  const thoughts = settings.thinkingDisplay === 'perProject'
   const suggestions = settings.promptSuggestions === 'perProject'
 
   return (
@@ -64,6 +64,17 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
           ) : (
             <div className="project-option"><span>Tool calls</span><span className="project-option-fixed">{TOOL_LABEL[settings.toolDisplay] ?? ''}</span></div>
           )}
+          {thoughts ? (
+            <label className="project-option">
+              <span>Claude's thoughts</span>
+              <select value={chat.thinkingDisplay ?? 'show'} onChange={e => onChange({ thinkingDisplay: e.target.value as ThinkingDisplay })}>
+                <option value="show">Show</option>
+                <option value="hidden">Hide</option>
+              </select>
+            </label>
+          ) : (
+            <div className="project-option"><span>Claude's thoughts</span><span className="project-option-fixed">{settings.thinkingDisplay === 'hidden' ? 'Hide' : 'Show'}</span></div>
+          )}
           {suggestions ? (
             <label className="project-option">
               <span>Prompt suggestions</span>
@@ -72,7 +83,8 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
           ) : (
             <div className="project-option"><span>Prompt suggestions</span><span className="project-option-fixed">{settings.promptSuggestions === 'on' ? 'On' : 'Off'}</span></div>
           )}
-          <div className="project-dirs">
+          {/* Added with /add-dir. The way back out is here, so one is never stuck on. */}
+          {(chat.extraDirs ?? []).length > 0 && <div className="project-dirs">
             <div className="project-option"><span>Other folders Claude can use</span></div>
             {(chat.extraDirs ?? []).map(dir => (
               <div className="project-dir" key={dir}>
@@ -81,9 +93,8 @@ export function ProjectOptions({ settings, chat, onChange, onAddDir, onOpenSetti
                   onClick={() => onChange({ extraDirs: (chat.extraDirs ?? []).filter(d => d !== dir) })}>✕</button>
               </div>
             ))}
-            <button type="button" className="project-options-link" onClick={onAddDir}>Add a folder…</button>
-          </div>
-          {(!tools || !suggestions) && (
+          </div>}
+          {(!tools || !thoughts || !suggestions) && (
             <button type="button" className="project-options-link" onClick={() => { setOpen(false); onOpenSettings() }}>
               Set for all projects. To choose here, pick "Choose per project" in Settings
             </button>

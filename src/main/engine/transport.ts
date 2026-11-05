@@ -129,6 +129,9 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   for (const name of Object.keys(clean)) {
     if (INHERITED_SESSION_VARS.includes(name.toUpperCase())) delete clean[name]
   }
+  // Keeps the file copies Rewind restores from, as the terminal always does. Off by default
+  // for a process run this way.
+  clean.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING ??= '1'
   return clean
 }
 

@@ -1,6 +1,7 @@
 import type { TextMenuAction, TextMenuRequest } from './text-menu'
 import type { ModelPrices } from './models'
 import type { AppDialogRequest } from './app-dialog'
+import type { CustomTheme, ExportThemeResult, ImportThemeResult, SaveThemeResult, ThemeValues } from './themes'
 import type { ProjectSearchResult } from './project-search'
 import type { ProjectSummary, SessionSummary, SearchHit, TranscriptPage, IndexProgress, ChannelRow } from './types'
 import type { ChannelIcon, ChannelGroup, AppSettings } from './shell-types'
@@ -58,6 +59,12 @@ export const IPC = {
   // App settings (Plan 3 Task 4/5)
   getSettings: 'settings:get',
   updateSettings: 'settings:update',
+  listThemes: 'themes:list',
+  saveTheme: 'themes:save',
+  applyTheme: 'themes:apply',
+  deleteTheme: 'themes:delete',
+  exportTheme: 'themes:export',
+  importTheme: 'themes:import',
   isElevated: 'settings:isElevated',
   // Fire-and-forget: the renderer finished its first load -- main reveals the
   // (until then hidden) window and closes the launch splash.
@@ -137,5 +144,16 @@ export type ClaudeCordApi = {
   saveImage(cwd: string, relPath: string, dataUrl: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
   getSettings(): Promise<AppSettings>
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>
+  listThemes(): Promise<CustomTheme[]>
+  /** Saves the app's current look, or `values` from a file, under this name. Asks before
+   *  replacing a saved theme, and refuses a built-in's name. */
+  saveTheme(name: string, values: ThemeValues | null): Promise<SaveThemeResult>
+  applyTheme(name: string): Promise<AppSettings | null>
+  /** Asks first. Null if the user said no. */
+  deleteTheme(name: string): Promise<{ settings: AppSettings; themes: CustomTheme[] } | null>
+  /** The app's current look, to a file the user picks. */
+  exportTheme(suggestedName: string): Promise<ExportThemeResult>
+  /** Reads a file the user picks. Saving it is a separate step, through saveTheme. */
+  importTheme(): Promise<ImportThemeResult>
   isElevated(): Promise<boolean>
 }

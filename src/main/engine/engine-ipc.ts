@@ -1,3 +1,5 @@
+import { listPins, pinMessage, unpinMessage } from '../catalog/pins'
+import { markRewoundFrom } from './chat-actions'
 import { PlanUsageTracker } from './plan-usage'
 import { app, dialog, ipcMain, type BrowserWindow, shell } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -7,10 +9,11 @@ import type { Catalog } from '../catalog/db'
 import { getEngineSessionInfo } from '../catalog/repos'
 import { getSettings, updateSettings } from '../catalog/settings'
 import { claudeHome } from '../indexer/discover'
-import { ENGINE_IPC, type ClearChatOutcome, type EngineImageInput, type NewProjectOptions, type NewChatOutcome } from '../../shared/engine-ipc-contract'
+import { ENGINE_IPC, type RewindMode, type ClearChatOutcome, type EngineImageInput, type NewProjectOptions, type NewChatOutcome } from '../../shared/engine-ipc-contract'
 import { EngineCoordinator, type EngineDefaults, type RulesStore, type SessionInfo } from './coordinator'
 import { SessionPool } from './pool'
-import { findClaude } from './find-claude'
+import { findClaude, LIVE_DETAIL_FLAGS, supportsLiveDetail } from './find-claude'
+import { execFile } from 'node:child_process'
 import { SessionWatcher } from './watcher'
 import { ClaudeInfoService, parseContextUsage } from './claude-info'
 import { getProjectSettings, getProjectSettingsByDir, updateProjectSettings } from '../catalog/project-settings'
@@ -35,7 +38,7 @@ import { isExternallyLiveSession, sweepStaleSdkLocks, type OwnedProcess } from '
 import { LockMonitor } from './lock-monitor'
 import { chromeEnabledFor, claudeChromeDefault, findWindowsTerminal, mcpLoginCommand, openTerminal, terminalCommand } from './terminal'
 import { createPeriodicSweep, sweepExternalChanges } from './external-sync'
-import { appendHistory, forkTranscript, promptHistory, readHistory, titleRow } from './chat-actions'
+import { appendHistory, forkTranscript, promptHistory, readHistory, rewindPoints, titleRow } from './chat-actions'
 import { listSessions } from '../catalog/repos'
 import type { SessionSummary } from '../../shared/types'
 import { isCatalogSettled } from '../indexer/indexer'
@@ -170,6 +173,15 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   // binary takes effect on next app launch, which is fine.
   const s = getSettings(db)
   const claudeBin = (): string => findClaude(s.claudeBin).bin
+  // Thinking text and subagent steps need flags an older Claude Code would refuse to start
+  // with, so they're only passed to a version known to have them.
+  let liveDetail: boolean | null = null
+  const checkLiveDetail = (): void => {
+    execFile(claudeBin(), ['--version'], { windowsHide: true, timeout: 20_000 }, (err, stdout) => {
+      if (err === null) liveDetail = supportsLiveDetail(String(stdout))
+    })
+  }
+  checkLiveDetail()
   const rulesStore = makeClaudeRulesStore(makeJsonRulesStore(join(app.getPath('userData'), 'permission-rules.json')))
 
   // Authoritative two-writers guard (Plan 3 Task 8): a session is externally
@@ -238,6 +250,12 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     wantsSuggestions: sessionPk => suggestionsWanted(getSettings(db).promptSuggestions, getProjectSettings(db, sessionPk), claudeAllowsSuggestions()),
     // A folder that has gone would stop Claude from starting at all.
     projectDirs: sessionPk => (getProjectSettings(db, sessionPk).extraDirs ?? []).filter(d => existsSync(d)),
+    addProjectDir: (sessionPk, dir) => {
+      if (!existsSync(dir) || !statSync(dir).isDirectory()) return false
+      const known = getProjectSettings(db, sessionPk).extraDirs ?? []
+      if (!known.some(d => d.toLowerCase() === dir.toLowerCase())) updateProjectSettings(db, sessionPk, { extraDirs: [...known, dir] })
+      return true
+    },
     projectDefaults: {
       load: sessionPk => {
         const c = getProjectSettings(db, sessionPk)
@@ -269,6 +287,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     },
     isExternallyLive: isSessionExternallyLive,
     chromeEnabled: () => chromeEnabledFor(getSettings(db).chromeIntegration, () => claudeChromeDefault()),
+    liveDetailFlags: () => {
+      if (liveDetail === null) checkLiveDetail()
+      return liveDetail === true ? LIVE_DETAIL_FLAGS : []
+    },
     spawnExtras: () => {
       const cur = getSettings(db)
       return { maxBudgetUsd: cur.defaultBudgetUsd, extraFlags: cur.extraFlags }
@@ -321,7 +343,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   const onResolvePermission = (
     _e: unknown,
     id: string,
-    decision: 'allow' | 'allow_always' | 'deny',
+    decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny',
     editedInput?: unknown,
     denyMessage?: string
   ): void => {
@@ -448,6 +470,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     updateProjectSettings(db, sessionPk, {
       ...('promptSuggestions' in patch ? { promptSuggestions: patch.promptSuggestions } : {}),
       ...('toolDisplay' in patch ? { toolDisplay: patch.toolDisplay } : {}),
+      ...('thinkingDisplay' in patch ? { thinkingDisplay: patch.thinkingDisplay } : {}),
       ...('filesExpanded' in patch ? { filesExpanded: patch.filesExpanded } : {}),
       ...('extraDirs' in patch ? { extraDirs: patch.extraDirs } : {})
     }))
@@ -666,6 +689,47 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     if (rewound && !window.isDestroyed()) window.webContents.send(ENGINE_IPC.indexed, sessionPk)
     return rewound
   })
+  ipcMain.handle(ENGINE_IPC.taskOutput, (_e, sessionPk: number, taskId: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    return info === null ? null : pool.taskOutput(info.filePath, taskId)
+  })
+  ipcMain.handle(ENGINE_IPC.rewindPoints, (_e, sessionPk: number) => rewindPoints(db, sessionPk))
+  ipcMain.handle(ENGINE_IPC.pinMessage, async (_e, sessionPk: number, uuid: string) => {
+    if (pinMessage(db, sessionPk, uuid, Date.now())) return true
+    // It may have only just arrived, and not reached the catalog yet.
+    await syncSessionToCatalog(db, sessionPk).catch(err => console.error('Could not index before pinning', err))
+    return pinMessage(db, sessionPk, uuid, Date.now())
+  })
+  ipcMain.handle(ENGINE_IPC.unpinMessage, (_e, sessionPk: number, uuid: string) => unpinMessage(db, sessionPk, uuid))
+  ipcMain.handle(ENGINE_IPC.listPins, (_e, projectId: number) => listPins(db, projectId))
+  const NO_REWIND = { canRewind: false, files: [], insertions: 0, deletions: 0 }
+  ipcMain.handle(ENGINE_IPC.rewindCheck, async (_e, sessionPk: number, uuid: string) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null || pool.isTurnRunning(info.filePath) || !coordinator.wake(sessionPk)) return { ...NO_REWIND, error: "this chat can't be reached right now" }
+    return await pool.rewindFiles(info.filePath, uuid, true) ?? { ...NO_REWIND, error: "this chat can't be reached right now" }
+  })
+  ipcMain.handle(ENGINE_IPC.rewindTo, async (_e, sessionPk: number, uuid: string, mode: RewindMode) => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null) return { ok: false, error: 'That chat is no longer available.' }
+    if (pool.isTurnRunning(info.filePath)) return { ok: false, error: 'Claude is still replying here. Press Esc to stop it, then try again.' }
+    if (!coordinator.wake(sessionPk)) return { ok: false, error: "This chat can't be reached right now. It may be open in a terminal." }
+    // Files first: if they can't go back, the conversation stays as it is too.
+    if (mode !== 'conversation') {
+      const files = await pool.rewindFiles(info.filePath, uuid, false)
+      if (files === null || !files.canRewind) return { ok: false, error: `The files couldn't be restored${files?.error != null ? `: ${files.error.replace(/\.+$/, '')}.` : '.'}` }
+    }
+    let prefill: string | null = null
+    if (mode !== 'code') {
+      const back = await pool.rewindConversation(info.filePath, uuid)
+      if (back === null) return { ok: false, error: mode === 'both' ? "The files were restored, but the conversation couldn't go back." : "The conversation couldn't go back." }
+      prefill = back.prefill
+      await syncSessionToCatalog(db, sessionPk).catch(err => console.error('Could not index the rewind', err))
+      // The transcript says this by itself, except going back to a chat's first message.
+      markRewoundFrom(db, sessionPk, uuid)
+      if (!window.isDestroyed()) window.webContents.send(ENGINE_IPC.indexed, sessionPk)
+    }
+    return { ok: true, prefill }
+  })
   ipcMain.handle(ENGINE_IPC.backgroundTasks, (_e, sessionPk: number) => {
     const info = getEngineSessionInfo(db, sessionPk)
     return info === null ? [] : pool.backgroundTasks(info.filePath)
@@ -787,6 +851,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.backgroundTasks)
       ipcMain.removeHandler(ENGINE_IPC.withdrawQueued)
       ipcMain.removeHandler(ENGINE_IPC.rewindUnanswered)
+      for (const channel of [ENGINE_IPC.rewindPoints, ENGINE_IPC.rewindCheck, ENGINE_IPC.rewindTo, ENGINE_IPC.taskOutput, ENGINE_IPC.pinMessage, ENGINE_IPC.unpinMessage, ENGINE_IPC.listPins]) ipcMain.removeHandler(channel)
       ipcMain.removeHandler(ENGINE_IPC.stopTask)
       ipcMain.removeHandler(ENGINE_IPC.answerElicitation)
       ipcMain.removeHandler(ENGINE_IPC.chatMode)

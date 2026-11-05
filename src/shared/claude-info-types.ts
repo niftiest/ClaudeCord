@@ -59,7 +59,7 @@ export const TERMINAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'desktop', 'diff', 'doctor', 'exit', 'export', 'feedback', 'focus', 'help', 'hooks', 'ide', 'install', 'install-github-app',
   'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'memory', 'mobile', 'passes', 'permissions', 'plugin', 'plugins',
   'powerup', 'privacy-settings', 'quit', 'radio', 'rate-limit-options', 'rc', 'release-notes', 'remote-control', 'remote-env',
-  'restart', 'resume', 'rewind', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
+  'restart', 'resume', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
   'status', 'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'theme', 'todos', 'tui', 'ultraplan', 'upgrade',
   'vim', 'voice', 'web-setup', 'wellbeing', 'workflows'
 ])

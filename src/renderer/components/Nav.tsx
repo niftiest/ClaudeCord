@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { ChannelRow, SessionSummary } from '../../shared/types'
 import type { PlanUsage } from '../../shared/plan-usage'
@@ -7,6 +7,7 @@ import { CLAUDE_SETUP_URL, groupChannels } from '../lib'
 import { formatCostWhole } from '../../shared/models'
 import { GroupedNav } from './GroupedNav'
 import { UsageFooter } from './UsageFooter'
+import { useRevealChannel } from './useRevealChannel'
 import { ChannelContextMenu } from './ChannelContextMenu'
 
 /** Chats running and elevation level, which used to fill the footer. Hidden for now,
@@ -36,10 +37,13 @@ function EmptyProjects() {
 }
 
 export function Nav({
-  channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, planUsage, session, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
+  reveal = null, onRevealed, channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, planUsage, session, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
   onRename, onToggleStar, onMoveToGroup, onCreateGroup, onDeleteGroup, onRenameGroup, onSetGroupIcon, onSetIcon,
   onToggleHidden, onDeleteChannel, onDeleteChat
 }: {
+  /** A project to bring into view, opened from outside this list. */
+  reveal?: number | null
+  onRevealed?: () => void
   channels: ChannelRow[]
   groups: ChannelGroup[]
   selectedId: number | null
@@ -89,6 +93,8 @@ export function Nav({
   const totalSessions = channels.reduce((sum, c) => sum + c.sessionCount, 0)
   const sections = useMemo(() => groupChannels(channels, groups), [channels, groups])
   const [contextMenu, setContextMenu] = useState<{ channel: ChannelRow; x: number; y: number } | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  useRevealChannel(listRef, reveal, onRevealed)
 
   return (
     <nav className="nav" aria-label="Channels" style={{ width }}>
@@ -110,8 +116,8 @@ export function Nav({
         <span className="nav-search-key">⌃K</span>
       </button>
       {channels.length === 0 && <EmptyProjects />}
-      <div className="nav-list">
-        <GroupedNav sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}
+      <div className="nav-list" ref={listRef}>
+        <GroupedNav reveal={reveal} sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}
           onContextMenu={(channel, x, y) => setContextMenu({ channel, x, y })} />
       </div>
       <button type="button" className="nav-foot" onClick={onOpenPool} title="Open the list of running Claude processes">

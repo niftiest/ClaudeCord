@@ -1,4 +1,5 @@
 import { safeExtraFlags, type SpawnSpec } from './transport'
+import { alwaysAllowChanges, outsideFolder, sessionRuleStrings } from '../../shared/permission-scope'
 import { allowAlwaysRule } from './permission-bridge'
 import type { StreamedRow } from '../jsonl/stream'
 import type { ContentBlock } from '../../shared/types'
@@ -36,10 +37,13 @@ export type ImageBlockInput = { mediaType: string; dataBase64: string }
 export interface PoolLike {
   send(sessionKey: string, spec: SpawnSpec, msg: object): void
   interrupt(sessionKey: string): void
+  wake(sessionKey: string, spec: SpawnSpec): void
   on(sessionKey: string, cb: (e: LiveEvent) => void): void
   isTurnRunning(sessionKey: string): boolean
   respond?(sessionKey: string, requestId: string, response: unknown): void
   changeLive?(sessionKey: string, subtype: 'set_model' | 'set_permission_mode', extra: object, spec: Partial<SpawnSpec>): Promise<boolean>
+  /** This chat's process was given a folder while running, so it needs no restart for it. */
+  noteDirAdded?(sessionKey: string, dir: string): void
 }
 
 export interface WatcherLike {
@@ -92,6 +96,8 @@ export type EngineCoordinatorDeps = {
   chromeEnabled?: () => boolean
   /** Spending cap and extra CLI flags from the app settings, read at spawn
    *  time so a change applies to the next process. */
+  /** Flags for this app's own processes only, never handed on to a terminal. */
+  liveDetailFlags?: () => string[]
   spawnExtras?: () => { maxBudgetUsd: number | null; extraFlags: string[] }
   /** Whether a project's folder is there, since Claude can't start without it. */
   folderExists?: (cwd: string) => boolean
@@ -101,6 +107,8 @@ export type EngineCoordinatorDeps = {
   wantsSuggestions?: (sessionPk: number) => boolean
   /** Folders outside the project that this chat's process may use. */
   projectDirs?: (sessionPk: number) => string[]
+  /** "Always allow" on a folder: adds it to the project, as `/add-dir` does. False if it can't be. */
+  addProjectDir?: (sessionPk: number, dir: string) => boolean
   /** Keeps each project's model, effort and permission choices, shared by its chats. */
   projectDefaults?: {
     load: (sessionPk: number) => Partial<EngineDefaults>
@@ -163,7 +171,8 @@ function buildSpawnSpec(
   defaults: EngineDefaults,
   rulesStore: RulesStore,
   chrome = false,
-  extras: { maxBudgetUsd: number | null; extraFlags: string[] } = { maxBudgetUsd: null, extraFlags: [] }
+  extras: { maxBudgetUsd: number | null; extraFlags: string[] } = { maxBudgetUsd: null, extraFlags: [] },
+  sessionRules: string[] = []
 ): SpawnSpec {
   const spec: SpawnSpec = {
     cwd: info.cwd,
@@ -184,7 +193,7 @@ function buildSpawnSpec(
   // offers Claude its question and plan-mode tools, so it applies when skipping permissions too.
   spec.permissionPromptTool = 'stdio'
   if (!defaults.skipPermissions) {
-    const rules = rulesStore.get(info.cwd)
+    const rules = [...rulesStore.get(info.cwd), ...sessionRules]
     if (rules.length > 0) spec.extraArgs = ['--allowedTools', rules.join(',')]
   }
   const userFlags = safeExtraFlags(extras.extraFlags)
@@ -193,11 +202,7 @@ function buildSpawnSpec(
   return spec
 }
 
-/** What "don't ask again" applies from Claude Code's suggestions: rules and folders. One may
- *  also offer a change of mode, which is the user's own choice in the header, not a side effect. */
-export function alwaysAllowChanges(suggestions: PermissionSuggestion[]): PermissionSuggestion[] {
-  return suggestions.filter(s => s.type !== 'setMode')
-}
+export { alwaysAllowChanges }
 
 type PendingPermission = { req: PermissionRequest; sessionPk: number; cwd: string }
 
@@ -228,6 +233,8 @@ export class EngineCoordinator {
    *  default for it -- see effectiveDefaults, which spreads this object
    *  directly over `deps.defaults`. */
   private readonly sessionDefaults = new Map<number, Partial<EngineDefaults>>()
+  /** What each chat was allowed "for this session". Gone when the app closes. */
+  private readonly sessionGrants = new Map<number, { rules: string[]; dirs: string[] }>()
 
   private readonly eventListeners: Array<(sessionPk: number, e: LiveEvent) => void> = []
   private readonly rowsListeners: Array<(sessionPk: number, rows: StreamedRow[]) => void> = []
@@ -269,7 +276,7 @@ export class EngineCoordinator {
     this.ensureWatcher(sessionPk, info)
 
     const spec = buildSpawnSpec(info, this.effectiveDefaults(sessionPk), this.deps.rulesStore,
-      this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk))
+      this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk), this.sessionRulesFor(sessionPk))
     // A slash command has to be the whole message, or Claude reads it as text.
     const before = text.trimStart().startsWith('/') ? [] : this.deps.contextForMessage?.(sessionPk) ?? []
     // `!` output that a message has already carried: nothing is left to say.
@@ -277,6 +284,19 @@ export class EngineCoordinator {
     const userMessage = buildUserMessage(text, images, before, uuid)
     if (text.length === 0) this.emitEvent(sessionPk, { kind: 'other', type: SHELL_OUTPUT_SENT })
     this.deps.pool.send(info.sessionKey, spec, userMessage)
+  }
+
+  /** Makes sure this chat has a process, with no message sent. False if it can't have one. */
+  wake(sessionPk: number): boolean {
+    const info = this.deps.lookupSession(sessionPk)
+    if (info === null || this.deps.isExternallyLive(info.sessionKey)) return false
+    if (info.cwd.length > 0 && this.deps.folderExists?.(info.cwd) === false) return false
+    this.cacheSessionInfo(sessionPk, info)
+    this.ensureEventSubscription(info.sessionKey, sessionPk)
+    this.ensureWatcher(sessionPk, info)
+    this.deps.pool.wake(info.sessionKey, buildSpawnSpec(info, this.effectiveDefaults(sessionPk), this.deps.rulesStore,
+      this.deps.chromeEnabled?.() ?? false, this.spawnExtrasFor(sessionPk), this.sessionRulesFor(sessionPk)))
+    return true
   }
 
   /** Gives Claude a finished `!` command's output, which starts a turn as it does in the
@@ -347,7 +367,7 @@ export class EngineCoordinator {
    *  -- e.g. a stale renderer retry) still forwards to `bridge.resolve` (a
    *  documented no-op for an unrecognized id) but never leaves a pending
    *  entry behind either way, since the `delete` below runs unconditionally. */
-  resolvePermission(id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string): void {
+  resolvePermission(id: string, decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny', editedInput?: unknown, denyMessage?: string): void {
     const pending = this.pendingPermissions.get(id)
     this.pendingPermissions.delete(id)
 
@@ -355,6 +375,19 @@ export class EngineCoordinator {
       this.deps.bridge.resolve(id, { behavior: 'deny', message: denyMessage ?? 'Denied by user' })
       return
     }
+
+    if (decision === 'allow_folder') {
+      const folder = pending === undefined ? null : outsideFolder(pending.req)
+      if (pending !== undefined && folder !== null && this.deps.addProjectDir?.(pending.sessionPk, folder) === true) {
+        // The running process gets it now, so this chat carries on with no restart.
+        this.deps.pool.noteDirAdded?.(pending.req.sessionKey, folder)
+        this.deps.bridge.resolve(id, { behavior: 'allow', updatedInput: editedInput ?? pending.req.input, updatedPermissions: [{ type: 'addDirectories', directories: [folder], destination: 'session' }] })
+        return
+      }
+      decision = 'allow_always' // A folder that can't be saved still gets what the session can have.
+    }
+
+    if (decision === 'allow_always' && pending !== undefined && pending.req.tool !== 'ExitPlanMode') this.rememberSessionGrants(pending)
 
     // Claude Code says what "don't ask again" means for this request, and applies it now.
     // For a plan, the same button means "and accept edits from here on".
@@ -500,14 +533,41 @@ export class EngineCoordinator {
   }
 
   private dirFlags(sessionPk: number): string[] {
-    return (this.deps.projectDirs?.(sessionPk) ?? []).flatMap(dir => ['--add-dir', dir])
+    const dirs = [...(this.deps.projectDirs?.(sessionPk) ?? [])]
+    for (const dir of this.sessionGrants.get(sessionPk)?.dirs ?? []) {
+      if (!dirs.some(d => d.toLowerCase() === dir.toLowerCase())) dirs.push(dir)
+    }
+    return dirs.flatMap(dir => ['--add-dir', dir])
+  }
+
+  /** A chat's process closes when idle and comes back on the next message. To the user that's
+   *  the same session, so what they allowed for it comes back too, until the app closes. */
+  private rememberSessionGrants(pending: PendingPermission): void {
+    const changes = alwaysAllowChanges(pending.req.suggestions ?? [])
+    const grants = this.sessionGrants.get(pending.sessionPk) ?? { rules: [], dirs: [] }
+    for (const rule of sessionRuleStrings(changes)) {
+      if (!grants.rules.includes(rule)) grants.rules.push(rule)
+    }
+    for (const s of changes) {
+      if (s.type !== 'addDirectories' || s.destination !== 'session') continue
+      for (const dir of s.directories ?? []) {
+        if (grants.dirs.includes(dir)) continue
+        grants.dirs.push(dir)
+        this.deps.pool.noteDirAdded?.(pending.req.sessionKey, dir)
+      }
+    }
+    this.sessionGrants.set(pending.sessionPk, grants)
+  }
+
+  private sessionRulesFor(sessionPk: number): string[] {
+    return this.sessionGrants.get(sessionPk)?.rules ?? []
   }
 
   private spawnExtrasFor(sessionPk: number): { maxBudgetUsd: number | null; extraFlags: string[] } {
     const extras = this.deps.spawnExtras?.() ?? { maxBudgetUsd: null, extraFlags: [] }
     return {
       ...extras,
-      extraFlags: [...extras.extraFlags, ...this.dirFlags(sessionPk), ...(this.deps.wantsSuggestions?.(sessionPk) === true ? ['--prompt-suggestions'] : [])]
+      extraFlags: [...extras.extraFlags, ...(this.deps.liveDetailFlags?.() ?? []), ...this.dirFlags(sessionPk), ...(this.deps.wantsSuggestions?.(sessionPk) === true ? ['--prompt-suggestions'] : [])]
     }
   }
 

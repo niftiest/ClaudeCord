@@ -30,6 +30,27 @@ const HISTORY_LIMIT = 500
 /** Text Claude Code stores as the user's that nobody typed. */
 const NOT_TYPED = ['<', '[Request interrupted by user', 'Base directory for this skill:', 'This session is being continued from a previous conversation', 'Caveat:']
 
+/** A message of the user's the chat can go back to. */
+export type RewindPointRow = { uuid: string; text: string; ts: string | null }
+
+const REWIND_POINTS = 100
+
+/** The messages typed in this chat, newest first. */
+export function rewindPoints(db: Catalog, sessionPk: number): RewindPointRow[] {
+  const rows = db.prepare(`
+    SELECT uuid, text, ts FROM messages
+    WHERE session_pk = ? AND role = 'user' AND is_sidechain = 0 AND rewound = 0 AND text IS NOT NULL AND text <> ''
+    ORDER BY seq DESC LIMIT 2000
+  `).all(sessionPk) as RewindPointRow[]
+  return rows.filter(r => !NOT_TYPED.some(start => r.text.trim().startsWith(start)) && !r.text.startsWith('[Image:')).slice(0, REWIND_POINTS)
+}
+
+/** Records that the chat went back to before this message: it and all that followed. */
+export function markRewoundFrom(db: Catalog, sessionPk: number, uuid: string): void {
+  const target = db.prepare('SELECT seq FROM messages WHERE session_pk = ? AND uuid = ?').get(sessionPk, uuid) as { seq: number } | undefined
+  if (target !== undefined) db.prepare('UPDATE messages SET rewound = 1 WHERE session_pk = ? AND seq >= ? AND is_sidechain = 0').run(sessionPk, target.seq)
+}
+
 /** Something typed, and when (ms), from Claude Code's own history file. */
 export type HistoryEntry = { text: string; at: number }
 

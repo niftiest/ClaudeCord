@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Markdown } from '../src/renderer/components/Markdown'
 import { buildRenderItems } from '../src/main/jsonl/render'
-import { elapsedLabel, groupToolRuns, plainPreview, tokenLabel, toolRunSummary } from '../src/renderer/lib'
+import { elapsedLabel, groupToolRuns, plainPreview, thoughtRuns, thoughtsLabel, tokenLabel, toolRunSummary } from '../src/renderer/lib'
 import { pickVerb } from '../src/renderer/components/WorkingLine'
 import { parseEvent } from '../src/main/engine/events'
 import type { RenderItem } from '../src/shared/types'
@@ -128,6 +128,29 @@ describe('working line and tool runs', () => {
       { group: false, index: 0 }, { group: true, indices: [1, 2, 3] }, { group: false, index: 4 }, { group: false, index: 5 }, { group: false, index: 6 }
     ])
     expect(toolRunSummary([tool('Bash'), think, tool('Bash'), tool('Read')])).toBe('4 steps · Bash ×2, thought, Read')
+  })
+
+  it('treats thoughts in a row as one thing', () => {
+    expect(groupToolRuns([think, think, think])).toEqual([{ group: 'thoughts', indices: [0, 1, 2] }])
+    expect(groupToolRuns([say, think, think, say])).toEqual([{ group: false, index: 0 }, { group: 'thoughts', indices: [1, 2] }, { group: false, index: 3 }])
+    expect(groupToolRuns([think])).toEqual([{ group: false, index: 0 }])
+    // With a tool beside them it's still a run of steps, with those thoughts counted once.
+    expect(groupToolRuns([think, think, tool('Bash')])).toEqual([{ group: true, indices: [0, 1, 2] }])
+    expect(toolRunSummary([think, think, tool('Bash')])).toBe('2 steps · thought, Bash')
+    expect(toolRunSummary([think, tool('Bash'), think, think])).toBe('3 steps · thought ×2, Bash')
+  })
+
+  it('only joins thoughts with nothing between them', () => {
+    const items = [think, think, tool('Bash'), think, say, think, think, think]
+    expect(thoughtRuns(items.map((_, i) => i), items)).toEqual([[0, 1], [2], [3], [4], [5, 6, 7]])
+    expect(thoughtRuns([], [])).toEqual([])
+    expect(thoughtRuns([0, 1], [tool('A'), tool('B')])).toEqual([[0], [1]])
+  })
+
+  it('labels one thought and several', () => {
+    expect(thoughtsLabel(['x'.repeat(494)])).toBe('thought · 494 chars')
+    expect(thoughtsLabel(['x'.repeat(300), 'y'.repeat(194)])).toBe('thoughts · 2 · 494 chars')
+    expect(thoughtsLabel(['x'.repeat(1500), 'y'.repeat(750)])).toBe(`thoughts · 2 · ${(2250).toLocaleString()} chars`)
   })
 
   it('reads token use, and keeps the same word for a whole turn', () => {

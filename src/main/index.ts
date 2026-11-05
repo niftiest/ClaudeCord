@@ -88,6 +88,10 @@ function createWindow(): void {
     }
   })
 
+  // Created on a monitor whose scaling differs from the main one, a window comes out scaled
+  // by the difference. It's on the right monitor by now, so the same size sticks.
+  if (resumedBounds !== null) win.setBounds(resumedBounds)
+
   mainWindow = win
   registerTextMenu(win)
 
@@ -157,7 +161,8 @@ function createWindow(): void {
 
   registerIpc(db, win, {
     onIndexProgress: p => splash?.showIndexProgress(p),
-    onSettingsChanged: () => desktop?.syncTray()
+    onSettingsChanged: () => desktop?.syncTray(),
+    ask: request => dialogs!.ask(request)
   })
   engine = registerEngineIpc(db, win, {
     onEvent: (pk, e) => {

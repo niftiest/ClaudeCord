@@ -1,6 +1,6 @@
 import { clampFontScale, FONT_SCALE_DEFAULT, validFontName } from '../../shared/font-settings'
 import type { Catalog } from './db'
-import { SUGGESTIONS_SETTINGS, TOOL_DISPLAY_SETTINGS, type SuggestionsSetting, type ToolDisplaySetting } from '../../shared/project-options'
+import { SUGGESTIONS_SETTINGS, THINKING_DISPLAY_SETTINGS, TOOL_DISPLAY_SETTINGS, type SuggestionsSetting, type ThinkingDisplaySetting, type ToolDisplaySetting } from '../../shared/project-options'
 import { APP_THEMES, APP_THEME_SCOPES, CLOSE_ACTIONS, type AppSettings, type ChannelIcon, type CloseAction } from '../../shared/shell-types'
 
 /** Validate an unknown value as a ChannelIcon (settings persist it as JSON).
@@ -26,8 +26,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultSkipPermissions: true, defaultBudgetUsd: null,
   notifyTurnComplete: true, notifyInputNeeded: true, notifyPermission: true, notifyError: true,
   doNotDisturb: false, quietHoursStart: null, quietHoursEnd: null,
-  theme: 'discord', themeScope: 'chat', autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', navDensity: 'comfortable', chatFontScale: FONT_SCALE_DEFAULT, sidebarFontScale: FONT_SCALE_DEFAULT, appFont: '', thinkingExpanded: false, toolCardsExpanded: false,
-  toolDisplay: 'grouped', promptSuggestions: 'off', showBlade: false, showContextRail: true,
+  theme: 'discord', themeScope: 'chat', activeTheme: null, autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', navDensity: 'comfortable', chatFontScale: FONT_SCALE_DEFAULT, sidebarFontScale: FONT_SCALE_DEFAULT, appFont: '', thinkingExpanded: false, toolCardsExpanded: false,
+  toolDisplay: 'grouped', thinkingDisplay: 'show', promptSuggestions: 'off', showBlade: true, showContextRail: true,
   openRouterKey: '', avatarModel: 'openai/gpt-image-1', claudeIcon: { kind: 'initials' },
   claudeBin: 'claude', idleReapMin: 10, extraFlags: [],
   confirmBeforeBypass: false,
@@ -47,11 +47,12 @@ function validDays(v: unknown): boolean {
 
 /** Coerce/validate one stored or patched field into its typed value; returns
  *  `undefined` when the value is invalid (caller keeps the default / prior). */
-function coerce<K extends keyof AppSettings>(key: K, value: unknown): AppSettings[K] | undefined {
+export function coerce<K extends keyof AppSettings>(key: K, value: unknown): AppSettings[K] | undefined {
   const def = DEFAULT_SETTINGS[key]
   // Enums
   if (key === 'closeAction') return (CLOSE_ACTIONS.includes(value as CloseAction) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'toolDisplay') return (TOOL_DISPLAY_SETTINGS.includes(value as ToolDisplaySetting) ? value : undefined) as AppSettings[K] | undefined
+  if (key === 'thinkingDisplay') return (THINKING_DISPLAY_SETTINGS.includes(value as ThinkingDisplaySetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'promptSuggestions') return (SUGGESTIONS_SETTINGS.includes(value as SuggestionsSetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'theme') return (typeof value === 'string' && THEMES.has(value) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'chromeIntegration') return (value === 'auto' || value === 'on' || value === 'off' ? value : undefined) as AppSettings[K] | undefined

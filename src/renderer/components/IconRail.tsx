@@ -1,5 +1,6 @@
 import { RemoteBadge } from './RemoteBadge'
-import { useMemo, useState } from 'react'
+import { useRevealChannel } from './useRevealChannel'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChannelRow } from '../../shared/types'
 import type { ChannelGroup } from '../../shared/shell-types'
 import { resolveChannelName, resolveChannelIcon, resolveIconValue, groupChannels, type ResolvedIcon } from '../lib'
@@ -23,9 +24,12 @@ function railIconInner(icon: ResolvedIcon): React.ReactNode {
 }
 
 export function IconRail({
-  channels, groups, selectedId, unread, remote = new Set<number>(), sidebarExpanded,
+  reveal = null, onRevealed, channels, groups, selectedId, unread, remote = new Set<number>(), sidebarExpanded,
   onSelect, onToggleSidebar, onNewChat, onOpenSearch, onOpenSettings, onOpenManage, manageOpen = false
 }: {
+  /** A project to bring into view, opened from outside this list. */
+  reveal?: number | null
+  onRevealed?: () => void
   channels: ChannelRow[]
   groups: ChannelGroup[]
   selectedId: number | null
@@ -46,13 +50,20 @@ export function IconRail({
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleGroup = (id: number): void =>
     setCollapsed(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useRevealChannel(scrollRef, reveal, onRevealed)
+  useEffect(() => {
+    if (reveal === null) return
+    const home = sections.find(s => s.kind === 'group' && s.channels.some(c => c.id === reveal))
+    if (home?.kind === 'group') setCollapsed(prev => { if (!prev.has(home.groupId)) return prev; const n = new Set(prev); n.delete(home.groupId); return n })
+  }, [reveal])
 
   const avatar = (c: ChannelRow, starred: boolean): React.ReactNode => {
     const name = resolveChannelName(c.meta, c.cwd, c.dirName)
     const icon = resolveChannelIcon(c.meta, name)
     const active = c.id === selectedId
     return (
-      <button key={c.id} type="button"
+      <button key={c.id} type="button" data-channel={c.id}
         className={`iconrail-item${active ? ' active' : ''}${icon.kind === 'emoji' ? ' ch-avatar-emoji' : ''}${remote.has(c.id) ? ' has-rc' : ''}`}
         style={railIconStyle(icon)} title={name} aria-label={name} aria-current={active}
         onClick={() => onSelect(c)}>
@@ -66,7 +77,7 @@ export function IconRail({
 
   return (
     <nav className="iconrail" aria-label="Projects">
-      <div className="iconrail-scroll">
+      <div className="iconrail-scroll" ref={scrollRef}>
         {sections.map((s, si) => {
           if (s.kind === 'hidden' || s.kind === 'archived') return null
           const divider = si > 0 ? <div key={`d${si}`} className="iconrail-div" aria-hidden="true" /> : null

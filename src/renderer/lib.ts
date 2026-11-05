@@ -784,6 +784,10 @@ export function reduceLivePreview(prev: LivePreview | null, event: LiveEvent): L
     case 'hook':
     case 'informational':
     case 'writesLost':
+    case 'thinkingDelta':
+    case 'taskStarted':
+    case 'subagentStep':
+    case 'taskEnded':
     case 'other':
       return prev
   }
@@ -1289,6 +1293,29 @@ export function addDirCommandOf(text: string): string | null {
   return m === null ? null : (m[1] ?? '').trim().replace(/^"(.*)"$/, '$1')
 }
 
+/** /rewind, and the name it also goes by in the terminal. */
+export function isRewindCommand(text: string): boolean {
+  return /^\s*\/(rewind|checkpoint)\s*$/.test(text)
+}
+
+/** Whether a background task has output the app can read: shell commands and monitors. */
+export function taskHasOutput(type: string): boolean {
+  return /bash|shell|monitor/i.test(type)
+}
+
+/** A command's output as plain text: colors and cursor codes removed, as the screen would show it. */
+export function plainTerminalText(text: string): string {
+  return text
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b[@-_]/g, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n').map(line => { const at = line.lastIndexOf('\r'); return at === -1 ? line : line.slice(at + 1) }).join('\n')
+}
+
 export function isForkCommand(text: string): boolean {
   return /^\s*\/(fork|branch)\s*$/.test(text)
 }
@@ -1453,15 +1480,42 @@ export function tokenLabel(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
-export type TurnPart = { group: false; index: number } | { group: true; indices: number[] }
+/** Where to scroll a list so that this item sits in the middle, or as near as the list's ends
+ *  allow. `itemTop` is measured from the top of the list's content. */
+export function centeredScrollTop(itemTop: number, itemHeight: number, viewHeight: number, contentHeight: number): number {
+  const wanted = itemTop - (viewHeight - itemHeight) / 2
+  return Math.max(0, Math.min(Math.max(0, contentHeight - viewHeight), wanted))
+}
+
+export type TurnPart = { group: false; index: number } | { group: true; indices: number[] } | { group: 'thoughts'; indices: number[] }
+
+/** These items in order, with each unbroken stretch of thoughts as one entry. */
+export function thoughtRuns(indices: number[], items: RenderItem[]): number[][] {
+  const runs: number[][] = []
+  indices.forEach((index, at) => {
+    const last = runs.at(-1)
+    if (at > 0 && items[index]?.kind === 'thinking' && items[indices[at - 1]!]?.kind === 'thinking' && last !== undefined) last.push(index)
+    else runs.push([index])
+  })
+  return runs
+}
+
+/** "thought · 494 chars" for one, "thoughts · 6 · 2,250 chars" for several together. */
+export function thoughtsLabel(texts: string[]): string {
+  const chars = texts.reduce((sum, t) => sum + t.length, 0).toLocaleString()
+  return texts.length === 1 ? `thought · ${chars} chars` : `thoughts · ${texts.length} · ${chars} chars`
+}
 
 /** Splits a Claude turn so that each run of two or more tool calls and thoughts can
- *  collapse into one line. The text between them stays visible. */
+ *  collapse into one line. The text between them stays visible. Thoughts in a row count as
+ *  one thing, so they alone are never "steps". */
 export function groupToolRuns(items: RenderItem[]): TurnPart[] {
   const parts: TurnPart[] = []
   let run: number[] = []
   const flush = (): void => {
-    if (run.length >= 2) parts.push({ group: true, indices: run })
+    const merged = thoughtRuns(run, items)
+    if (merged.length >= 2) parts.push({ group: true, indices: run })
+    else if (run.length >= 2) parts.push({ group: 'thoughts', indices: run })
     else for (const index of run) parts.push({ group: false, index })
     run = []
   }
@@ -1475,11 +1529,12 @@ export function groupToolRuns(items: RenderItem[]): TurnPart[] {
 
 /** "14 steps · Bash ×6, Write ×5, thought ×3", most used first. */
 export function toolRunSummary(items: RenderItem[]): string {
+  const steps = thoughtRuns(items.map((_, i) => i), items).map(run => items[run[0]!]!)
   const counts = new Map<string, number>()
-  for (const item of items) {
+  for (const item of steps) {
     const name = item.kind === 'tool' ? item.name : item.kind === 'thinking' ? 'thought' : null
     if (name !== null) counts.set(name, (counts.get(name) ?? 0) + 1)
   }
   const list = [...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => n > 1 ? `${name} ×${n}` : name)
-  return `${items.length} steps · ${list.join(', ')}`
+  return `${steps.length} steps · ${list.join(', ')}`
 }

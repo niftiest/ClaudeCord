@@ -1,3 +1,4 @@
+import { compareVersions } from '../../shared/semver'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
@@ -32,4 +33,16 @@ export function findClaude(configured: string, look: Look = {}): FoundClaude {
   const installed = join(look.home ?? homedir(), '.local', 'bin', 'claude.exe')
   if (exists(installed)) return { bin: installed, found: true }
   return { bin: DEFAULT_CLAUDE_BIN, found: false }
+}
+
+/** Thinking text as it comes, and what subagents are doing. */
+export const LIVE_DETAIL_FLAGS = ['--thinking-display', 'summarized', '--forward-subagent-text']
+
+/** The oldest Claude Code these were tried on. */
+const LIVE_DETAIL_FROM = '2.1.318'
+
+/** Whether `claude --version` names a version these flags work on. */
+export function supportsLiveDetail(versionOutput: string): boolean {
+  const found = /(\d+\.\d+\.\d+)/.exec(versionOutput)?.[1]
+  return found !== undefined && compareVersions(found, LIVE_DETAIL_FROM) >= 0
 }

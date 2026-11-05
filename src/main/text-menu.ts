@@ -9,8 +9,9 @@ export function registerTextMenu(win: BrowserWindow): () => void {
   let offered: TextMenuRequest | null = null
 
   const onContextMenu = (_e: Electron.Event, details: Electron.ContextMenuParams): void => {
-    offered = textMenuRequest(details)
-    if (offered !== null) contents.send(IPC.textMenuOpen, offered)
+    // Even with nothing here to offer: the window may have something, like pinning a message.
+    offered = textMenuRequest(details) ?? { x: details.x, y: details.y, linkUrl: null, editable: false, canCut: false, canCopy: false, canPaste: false, misspelled: null, suggestions: [] }
+    contents.send(IPC.textMenuOpen, offered)
   }
   contents.on('context-menu', onContextMenu)
 

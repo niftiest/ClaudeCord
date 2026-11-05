@@ -1,5 +1,5 @@
 import { RemoteBadge } from './RemoteBadge'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ChannelRow } from '../../shared/types'
 import { plainPreview, resolveChannelName, resolveChannelIcon, relativeTime, type NavSection, type ResolvedIcon } from '../lib'
 
@@ -43,7 +43,7 @@ function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, on
   const name = resolveChannelName(channel.meta, channel.cwd, channel.dirName)
   const icon = resolveChannelIcon(channel.meta, name)
   return (
-    <div className={`ch${unread ? ' unread' : ''}`} role="option" tabIndex={0} title={name}
+    <div className={`ch${unread ? ' unread' : ''}`} role="option" tabIndex={0} title={name} data-channel={channel.id}
       aria-selected={selected}
       onClick={() => onSelect(channel)}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(channel) } }}
@@ -71,7 +71,8 @@ function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, on
 /** One collapsible section (Starred / a named group / Ungrouped). Section
  *  collapse state is purely local UI state (not persisted) -- reopening the
  *  app always shows every section expanded. */
-function Section({ section, selectedId, unread, remote, showRepos, onSelect, onContextMenu, defaultCollapsed = false }: {
+function Section({ reveal, section, selectedId, unread, remote, showRepos, onSelect, onContextMenu, defaultCollapsed = false }: {
+  reveal: number | null
   showRepos: boolean
   section: NavSection
   selectedId: number | null
@@ -82,6 +83,10 @@ function Section({ section, selectedId, unread, remote, showRepos, onSelect, onC
   defaultCollapsed?: boolean
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
+  // Can't be brought into view while its section is shut.
+  useEffect(() => {
+    if (reveal !== null && section.channels.some(c => c.id === reveal)) setCollapsed(false)
+  }, [reveal])
   return (
     <div className="nav-section">
       <button type="button" className="nav-section-head" aria-expanded={!collapsed}
@@ -108,7 +113,8 @@ function Section({ section, selectedId, unread, remote, showRepos, onSelect, onC
  *  and an Ungrouped section last -- exactly what `groupChannels`
  *  (src/renderer/lib.ts) computes. Right-clicking a row surfaces
  *  `onContextMenu`, which Nav.tsx wires to ChannelContextMenu. */
-export function GroupedNav({ sections, selectedId, unread, remote = new Set<number>(), showRepos = false, onSelect, onContextMenu }: {
+export function GroupedNav({ reveal = null, sections, selectedId, unread, remote = new Set<number>(), showRepos = false, onSelect, onContextMenu }: {
+  reveal?: number | null
   /** Show which projects are linked to a GitHub repo: only when the GitHub CLI is ready. */
   showRepos?: boolean
   sections: NavSection[]
@@ -122,7 +128,7 @@ export function GroupedNav({ sections, selectedId, unread, remote = new Set<numb
     <>
       {sections.map(s => (
         <Section key={s.kind === 'group' ? `group:${s.groupId}` : s.kind === 'time' ? `time:${s.bucket}` : s.kind}
-          section={s} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
+          reveal={reveal} section={s} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
           defaultCollapsed={s.kind === 'hidden' || s.kind === 'archived'} />
       ))}
     </>

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 11
 
 // The base (v1) schema. Applied unconditionally on every open (see db.ts) --
 // every statement here has been additive-safe (CREATE ... IF NOT EXISTS)
@@ -166,6 +166,21 @@ CREATE TABLE IF NOT EXISTS project_settings (
 );
 `
 
+const MIGRATION_11_PINS = `
+  CREATE TABLE IF NOT EXISTS pinned_messages (
+    session_pk INTEGER NOT NULL,
+    uuid TEXT NOT NULL,
+    pinned_at INTEGER NOT NULL,
+    PRIMARY KEY (session_pk, uuid)
+  );
+`
+
+/** Marks rows a rewind went past, which stay in the transcript but aren't part of the chat. */
+function addRewoundColumn(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+  if (!cols.some(c => c.name === 'rewound')) db.exec('ALTER TABLE messages ADD COLUMN rewound INTEGER NOT NULL DEFAULT 0')
+}
+
 export const MIGRATIONS: Migration[] = [
   { toVersion: 2, apply: db => db.exec(MIGRATION_2_CHANNEL_METADATA) },
   { toVersion: 3, apply: db => db.exec(MIGRATION_3_SETTINGS) },
@@ -176,5 +191,7 @@ export const MIGRATIONS: Migration[] = [
   // rewritten, so the next index pass rebuilds each chat cleanly, picking them up.
   { toVersion: 7, apply: db => db.exec('UPDATE sessions SET indexed_offset = 9007199254740991') },
   { toVersion: 8, apply: countUsagePerMessage },
-  { toVersion: 9, apply: addChatNames }
+  { toVersion: 9, apply: addChatNames },
+  { toVersion: 10, apply: addRewoundColumn },
+  { toVersion: 11, apply: db => db.exec(MIGRATION_11_PINS) }
 ]

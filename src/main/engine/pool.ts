@@ -41,7 +41,7 @@ function refusedExternalLive(): LiveEvent {
 /** The parts of a spec the user can change on a running chat. Not the session id,
  *  which legitimately goes from "create" to "resume" after the first process. */
 function settingsKey(spec: SpawnSpec): string {
-  const dirs = (spec.extraArgs ?? []).filter((a, i, all) => all[i - 1] === '--add-dir')
+  const dirs = (spec.extraArgs ?? []).filter((a, i, all) => all[i - 1] === '--add-dir').map(d => d.toLowerCase()).sort()
   return JSON.stringify([spec.model, spec.effort, spec.permissionMode, spec.skipPermissions, spec.chrome, spec.maxBudgetUsd, spec.extraArgs?.includes('--prompt-suggestions') ?? false, dirs])
 }
 
@@ -52,6 +52,9 @@ function mergeBackgroundTasks(known: BackgroundTask[], incoming: BackgroundTask[
     return before === undefined ? { ...t, startedAt: now } : { ...t, startedAt: before.startedAt, lastTool: before.lastTool, tokens: before.tokens }
   })
 }
+
+/** A process just woken can take a while to answer about its files. */
+const REWIND_WAIT_MS = 30_000
 
 /** A message waiting for an old process to exit. */
 type HeldSend = { uuid: string | null; run: () => void }
@@ -209,6 +212,44 @@ export class SessionPool {
     if (entry?.busy === true) entry.transport.interrupt()
   }
 
+  /** Starts a process with no message, for what only a running process can answer. */
+  wake(sessionKey: string, spec: SpawnSpec): void {
+    if (this.stopped || this.live.has(sessionKey) || this.waitingForExit.has(sessionKey) || this.isExternallyLive(sessionKey)) return
+    this.spawn(sessionKey, spec, null)
+  }
+
+  /** Puts back files changed since a message, or with `dryRun` says what that would do.
+   *  Null if there's no process to ask. */
+  async rewindFiles(sessionKey: string, uuid: string, dryRun: boolean): Promise<{ canRewind: boolean; error: string | null; files: string[]; insertions: number; deletions: number } | null> {
+    const answer = this.request(sessionKey, 'rewind_files', { user_message_id: uuid, ...(dryRun ? { dry_run: true } : {}) }, REWIND_WAIT_MS)
+    if (answer === null) return null
+    const r = await answer.catch(err => ({ canRewind: false, error: err instanceof Error ? err.message : String(err) })) as { canRewind?: unknown; error?: unknown; filesChanged?: unknown; insertions?: unknown; deletions?: unknown }
+    return {
+      canRewind: r.canRewind === true,
+      error: typeof r.error === 'string' ? r.error : null,
+      files: Array.isArray(r.filesChanged) ? r.filesChanged.filter((f): f is string => typeof f === 'string') : [],
+      insertions: typeof r.insertions === 'number' ? r.insertions : 0,
+      deletions: typeof r.deletions === 'number' ? r.deletions : 0
+    }
+  }
+
+  /** Takes the chat back to before a message, and answers with that message's text. Null
+   *  if it couldn't be done. */
+  async rewindConversation(sessionKey: string, uuid: string): Promise<{ prefill: string } | null> {
+    const answer = this.request(sessionKey, 'rewind_conversation', { target_message_uuid: uuid }, REWIND_WAIT_MS)
+    if (answer === null) return null
+    const r = await answer.catch(() => null) as { rewound?: unknown; prefillText?: unknown } | null
+    return r?.rewound === true ? { prefill: typeof r.prefillText === 'string' ? r.prefillText : '' } : null
+  }
+
+  /** The end of a background command's output. Null if it can't be read. */
+  async taskOutput(sessionKey: string, taskId: string): Promise<{ output: string; truncated: boolean } | null> {
+    const answer = this.request(sessionKey, 'get_task_output', { task_id: taskId })
+    if (answer === null) return null
+    const r = await answer.catch(() => null) as { output?: unknown; truncated?: unknown } | null
+    return typeof r?.output === 'string' ? { output: r.output, truncated: r.truncated === true } : null
+  }
+
   /** Takes the chat back to before a message that was stopped before any reply, so Claude
    *  forgets it, as Esc does in a terminal. False if that couldn't be done. */
   async rewind(sessionKey: string, uuid: string): Promise<boolean> {
@@ -308,6 +349,14 @@ export class SessionPool {
 
   /** Something a process only reads at startup has changed: the chat's next message
    *  starts a new one, which resumes where it was. One mid-reply finishes first. */
+  /** The process was told about this folder while running, so the next message's spec, which
+   *  now lists it, is no reason to replace the process. */
+  noteDirAdded(sessionKey: string, dir: string): void {
+    const entry = this.live.get(sessionKey)
+    if (entry === undefined || entry.disposed) return
+    entry.spec = { ...entry.spec, extraArgs: [...(entry.spec.extraArgs ?? []), '--add-dir', dir] }
+  }
+
   restartForReload(sessionKey: string): 'restarted' | 'afterTurn' | 'none' {
     const entry = this.live.get(sessionKey)
     if (entry === undefined || entry.disposed) return 'none'
@@ -400,10 +449,10 @@ export class SessionPool {
     console.warn('[pool] use after shutdown')
   }
 
-  private spawn(sessionKey: string, spec: SpawnSpec, msg: object): void {
+  private spawn(sessionKey: string, spec: SpawnSpec, msg: object | null): void {
     const transport = this.transportFactory(spec)
     const now = this.now()
-    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: true, turnStartedAt: now, turnTokens: 0, backgroundTasks: [], disposed: false }
+    const entry: Entry = { transport, spec, startedAt: now, lastActivity: now, busy: msg !== null, turnStartedAt: now, turnTokens: 0, backgroundTasks: [], disposed: false }
     this.live.set(sessionKey, entry)
 
     transport.on((e) => {
@@ -455,7 +504,7 @@ export class SessionPool {
     // Declares the per-task stop button (background-tasks row). Without this an interrupt
     // kills background agents, which Esc in the terminal never does.
     transport.request?.('initialize', { perTaskStopAffordance: true })?.catch(() => { /* an older CLI; the turn still runs */ })
-    transport.send(msg)
+    if (msg !== null) transport.send(msg)
   }
 
   private dispose(sessionKey: string, entry: Entry): void {

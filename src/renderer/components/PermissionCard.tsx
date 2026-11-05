@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { PermissionRequest } from '../../shared/engine-types'
 import { summarizePermissionRequest, previewAllowAlwaysRule, parseEditedInput, suggestionLabel, permissionDiff } from '../lib'
+import { onlyForSession, outsideFolder } from '../../shared/permission-scope'
 
-type Decision = 'allow' | 'allow_always' | 'deny'
+type Decision = 'allow' | 'allow_always' | 'allow_folder' | 'deny'
 
 /** Inline card for an ordinary tool-permission request (Plan 2 Task 9),
  *  rendered by Transcript below the messages whenever the running `claude`
@@ -31,6 +32,8 @@ export function PermissionCard({ req, onResolve }: {
   const inputJson = JSON.stringify(req.input, null, 2) ?? ''
   const diff = permissionDiff(req.tool, req.input)
   const rulePreview = suggestionLabel(req.suggestions ?? []) ?? previewAllowAlwaysRule(req.tool, req.input)
+  const folder = outsideFolder(req)
+  const sessionOnly = onlyForSession(req.suggestions ?? [])
 
   function resolve(decision: Decision, editedInput?: unknown, denyMessage?: string) {
     if (disabled) return // already answered -- one decision per request
@@ -82,18 +85,31 @@ export function PermissionCard({ req, onResolve }: {
       )}
 
       <div className="perm-actions">
-        <button type="button" className="btn-primary" disabled={disabled} onClick={() => resolve('allow')}>
-          Allow
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={disabled}
-          title={`Will persist: ${rulePreview}`}
-          onClick={() => resolve('allow_always')}
-        >
-          Allow always <span className="perm-rule">{rulePreview}</span>
-        </button>
+        {folder !== null
+          ? <>
+              <button type="button" className="btn-primary" disabled={disabled}
+                title="No more questions about this folder until you close ClaudeCord" onClick={() => resolve('allow_always')}>
+                Allow for this session <span className="perm-rule">{folder}</span>
+              </button>
+              <button type="button" className="btn-secondary" disabled={disabled}
+                title="Adds this folder to the project, as /add-dir does. You can remove it in Project options." onClick={() => resolve('allow_folder')}>
+                Always allow <span className="perm-rule">{folder}</span>
+              </button>
+            </>
+          : <>
+              <button type="button" className="btn-primary" disabled={disabled} onClick={() => resolve('allow')}>
+                Allow
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={disabled}
+                title={sessionOnly ? `Until you close ClaudeCord: ${rulePreview}` : `Will persist: ${rulePreview}`}
+                onClick={() => resolve('allow_always')}
+              >
+                {sessionOnly ? 'Allow for this session' : 'Allow always'} <span className="perm-rule">{rulePreview}</span>
+              </button>
+            </>}
         <button
           type="button"
           className="btn-secondary perm-deny"
@@ -102,9 +118,10 @@ export function PermissionCard({ req, onResolve }: {
         >
           Deny
         </button>
-        {editing
+        {/* A read has nothing worth editing, so a folder question is just its three choices. */}
+        {(folder === null || diff !== null) && (editing
           ? <button type="button" className="btn-primary" disabled={disabled} onClick={submitEdit}>Allow with edit</button>
-          : <button type="button" className="btn-secondary" disabled={disabled} onClick={() => setEditing(true)}>Edit</button>}
+          : <button type="button" className="btn-secondary" disabled={disabled} onClick={() => setEditing(true)}>Edit</button>)}
       </div>
 
       {disabled && <div className="perm-resolved">{resolved === 'allow' ? 'Allowed' : 'Denied'}</div>}

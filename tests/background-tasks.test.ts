@@ -20,7 +20,7 @@ describe('reading background tasks off the stream', () => {
 
   it("doesn't take a subagent's words or tokens for Claude's own", () => {
     const content = [{ type: 'text', text: 'from the subagent' }]
-    expect(parsed({ type: 'assistant', uuid: 'u', parent_tool_use_id: 'toolu_1', message: { content } }).kind).toBe('other')
+    expect(parsed({ type: 'assistant', uuid: 'u', parent_tool_use_id: 'toolu_1', message: { content } }).kind).toBe('subagentStep')
     expect(parsed({ type: 'assistant', uuid: 'u', parent_tool_use_id: null, message: { content } }).kind).toBe('assistant')
     expect(parsed({ type: 'stream_event', parent_tool_use_id: 'toolu_1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'x' } } }).kind).toBe('other')
   })

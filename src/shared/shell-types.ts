@@ -1,4 +1,4 @@
-import type { SuggestionsSetting, ToolDisplaySetting } from './project-options'
+import type { SuggestionsSetting, ThinkingDisplaySetting, ToolDisplaySetting } from './project-options'
 // App-owned channel customization (rename/favorite/group/icon). Kept in
 // shared/ (electron-free) since both the main-process metadata repos
 // (src/main/catalog/metadata.ts) and the renderer nav need the shape.
@@ -54,6 +54,8 @@ export type AppSettings = {
   theme: AppTheme
   /** Where `theme` applies -- 'chat' (the chat pane only, default) or 'app'. */
   themeScope: AppThemeScope
+  /** The saved theme these settings came from, by name. Null: a built-in look. */
+  activeTheme: string | null
   /** Check GitHub for a new ClaudeCord version on launch and every few hours. */
   autoCheckUpdates: boolean
   /** Restart into a downloaded update by itself once nothing would be interrupted. */
@@ -76,6 +78,8 @@ export type AppSettings = {
   /** How tool calls show in chats. "perProject" lets each project choose; anything
    *  else overrides every project's own choice. */
   toolDisplay: ToolDisplaySetting
+  /** Whether Claude's thoughts show in chats. Same rule as toolDisplay. */
+  thinkingDisplay: ThinkingDisplaySetting
   /** Same rule as toolDisplay. */
   promptSuggestions: SuggestionsSetting
   /** Command-deck redesign: the separate session Blade column. Default false --

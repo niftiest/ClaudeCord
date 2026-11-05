@@ -22,7 +22,8 @@ export function validFontName(value: unknown): string | null {
   return value.trim()
 }
 
-/** The CSS for a chosen font, with the emoji font behind it so emoji keep working. */
+/** A chosen font for CSS. The stylesheet puts the current theme's own font behind it, which is
+ *  what shows when this one isn't on the PC. */
 export function fontStack(name: string): string {
-  return `"${name}", "Segoe UI Emoji", sans-serif`
+  return `"${name}"`
 }

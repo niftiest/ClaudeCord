@@ -11,9 +11,9 @@ import { parseQuestions } from '../question-form'
 import type { Elicitation, ElicitationAnswer } from '../../shared/engine-types'
 import { ElicitationCard, QuestionCard } from './QuestionCard'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { groupToolRuns, toolRunSummary, stableItemKeys, groupIntoTurns, userMessageParts, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
+import { groupToolRuns, toolRunSummary, thoughtRuns, thoughtsLabel, stableItemKeys, groupIntoTurns, userMessageParts, shouldScrollToBottom, followAfterScroll, isPlanApproval, isQuestion, formatClock, localDayKey, dayDividerLabel, type LivePreview } from '../lib'
 
-type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => void
+type ResolvePermission = (id: string, decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny', editedInput?: unknown, denyMessage?: string) => void
 
 /** How long the view stays on a message it just went to, unless the reader moves it. */
 const JUMP_HOLD_MS = 1200
@@ -23,7 +23,7 @@ const CARD_OPEN_MS = 400
 /** How far above the end the reader has to be before the jump button shows. */
 const JUMP_BUTTON_GAP = 200
 
-export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, elicitations = [], onAnswerElicitation, onOpenLink, livePreview, sending = false, savedTextOnly = false, showToolCalls = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
+export function Transcript({ pendingToolIds, groupToolCalls = true, items: allItems, hasMore, loadingOlder, loading, onReachTop, permissionRequests, onResolvePermission, elicitations = [], onAnswerElicitation, onOpenLink, livePreview, liveThinking = null, sending = false, savedTextOnly = false, showToolCalls = true, showThinking = true, onAtBottomChange, fileMissing = false, claudeIcon = { kind: 'initials' }, scrollToBottomSignal, thinkingExpanded = false, toolCardsExpanded = false, jumpTo = null, onJumped }: {
   items: RenderItem[]
   hasMore: boolean
   loadingOlder: boolean
@@ -43,6 +43,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   onAnswerElicitation?: (requestId: string, answer: ElicitationAnswer) => void
   onOpenLink?: (url: string) => void
   livePreview?: LivePreview | null
+  /** Claude's thinking so far, while it's still thinking. */
+  liveThinking?: string | null
   /** A message of the user's is on its way and isn't in `items` yet. */
   sending?: boolean
   /** The transcript has gone, and this is the text the catalog saved of it. */
@@ -50,6 +52,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   /** When false, tool-call cards are dropped from the transcript (Appearance
    *  setting "Show tool calls") -- for readers who only want the conversation. */
   showToolCalls?: boolean
+  /** Claude's thoughts in the chat. Hidden here, like tool calls, so turning them back on needs no reload. */
+  showThinking?: boolean
   /** Collapse each run of tool calls and thoughts into one line. */
   groupToolCalls?: boolean
   /** Reports whether the view is pinned near the bottom (following live) vs
@@ -80,8 +84,8 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // Filter tool cards out here (not upstream) so the durable render model is
   // untouched and toggling the setting re-shows them without a reload.
   const items = useMemo(
-    () => (showToolCalls ? allItems : allItems.filter(it => it.kind !== 'tool')),
-    [allItems, showToolCalls]
+    () => (showToolCalls && showThinking ? allItems : allItems.filter(it => (showToolCalls || it.kind !== 'tool') && (showThinking || it.kind !== 'thinking'))),
+    [allItems, showToolCalls, showThinking]
   )
   const parentRef = useRef<HTMLDivElement>(null)
   // Stable React keys so a loadOlder prepend reconciles the existing message
@@ -168,7 +172,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // has none until it decodes, and text reflows as fonts and highlighting land. So
   // follow the height itself, as well as the chat's own box getting shorter when the
   // composer grows. This runs before the frame is painted, so nothing shows cut off.
-  const hasStream = items.length > 0 || pending.length > 0 || elicitations.length > 0 || preview !== null || sending
+  const hasStream = items.length > 0 || pending.length > 0 || elicitations.length > 0 || preview !== null || liveThinking !== null || sending
   useEffect(() => {
     const el = parentRef.current
     const content = contentRef.current
@@ -350,28 +354,36 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
                   {ts && <time className="turn-time">{ts}</time>}
                 </div>
                 {(() => {
+                  // Thoughts in a row open and close as one. Its key is the first thought's, so
+                  // one that's open stays open as more arrive.
+                  const renderThoughts = (indices: number[]): ReactNode => {
+                    const texts = indices.flatMap(i => { const it = turn.items[i]!; return it.kind === 'thinking' ? [it.text] : [] })
+                    return (
+                      <details key={keyAt(indices[0]!)} className="turn-thinking" open={thinkingExpanded || undefined}>
+                        <summary className="thinking">✳ {thoughtsLabel(texts)}</summary>
+                        {texts.map((text, i) => <div key={i} className="txt think-body">{text}</div>)}
+                      </details>
+                    )
+                  }
                   const renderItem = (it: RenderItem, k: string): ReactNode => {
                     if (it.kind === 'text') return it.literal === true
                       ? <pre key={k} className="bubble-claude shell-output" data-msg={it.uuid}>{it.text}</pre>
                       : <Markdown key={k} text={it.text} className="bubble-claude" anchor={it.uuid} />
-                    if (it.kind === 'thinking') return (
-                      <details key={k} className="turn-thinking" open={thinkingExpanded || undefined}>
-                        <summary className="thinking">✳ thought · {it.text.length} chars</summary>
-                        <div className="txt think-body">{it.text}</div>
-                      </details>
-                    )
                     if (it.kind === 'tool') return <ToolCard key={k} item={it} defaultOpen={toolCardsExpanded} pending={pendingToolIds?.has(it.toolUseId) ?? false} />
                     if (it.kind === 'image') return <ChatImage key={k} source={it.source} />
                     return null
                   }
-                  if (!groupToolCalls) return turn.items.map((it, li) => renderItem(it, keyAt(li)))
+                  const renderRun = (indices: number[]): ReactNode[] => thoughtRuns(indices, turn.items).map(run =>
+                    turn.items[run[0]!]!.kind === 'thinking' ? renderThoughts(run) : renderItem(turn.items[run[0]!]!, keyAt(run[0]!)))
+                  if (!groupToolCalls) return renderRun(turn.items.map((_, li) => li))
                   return groupToolRuns(turn.items).map(part => {
-                    if (!part.group) return renderItem(turn.items[part.index]!, keyAt(part.index))
+                    if (part.group === 'thoughts') return renderThoughts(part.indices)
+                    if (!part.group) return renderRun([part.index])
                     const run = part.indices.map(i => turn.items[i]!)
                     return (
                       <details key={keyAt(part.indices[0]!)} className="tool-run" open={toolCardsExpanded || undefined}>
                         <summary className="tool-run-summary">{toolRunSummary(run)}</summary>
-                        <div className="tool-run-body">{part.indices.map(i => renderItem(turn.items[i]!, keyAt(i)))}</div>
+                        <div className="tool-run-body">{renderRun(part.indices)}</div>
                       </details>
                     )
                   })
@@ -386,6 +398,22 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
           <div className="turn-user-col">
             <div className="turn-meta"><span className="turn-author">You</span></div>
             <div className="bubble-me bubble-sending" role="status">Sending message…</div>
+          </div>
+        </div>
+      )}
+      {liveThinking !== null && (
+        <div className="turn">
+          <ClaudeAvatar icon={claudeIcon} size={28} />
+          <div className="turn-body">
+            <div className="turn-meta">
+              <span className="turn-author claude">Claude</span>
+              <span className="live-typing-dot" aria-hidden="true">●</span>
+              <span className="turn-typing">thinking</span>
+            </div>
+            <details className="turn-thinking" open={thinkingExpanded || undefined}>
+              <summary className="thinking">✳ thinking · {liveThinking.length} chars</summary>
+              <div className="txt think-body">{liveThinking}</div>
+            </details>
           </div>
         </div>
       )}

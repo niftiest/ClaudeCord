@@ -19,6 +19,7 @@ import type { ContentBlock } from '../src/shared/types'
 // ---------------------------------------------------------------------------
 
 class FakePool implements PoolLike {
+  wake(): void {}
   sent: Array<{ sessionKey: string; spec: SpawnSpec; msg: object }> = []
   interruptCalls: string[] = []
   turnRunning = false

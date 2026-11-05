@@ -8,6 +8,7 @@ import {
 } from '../src/main/engine/github'
 import { openCatalog, closeCatalog } from '../src/main/catalog/db'
 import { upsertProject, setProjectCwd } from '../src/main/catalog/repos'
+import { setFriendlyName } from '../src/main/catalog/metadata'
 import { listChannels } from '../src/main/ipc'
 
 let dir: string
@@ -253,6 +254,8 @@ describe('listChannels', () => {
     setProjectCwd(db, upsertProject(db, 'linked'), dir)
     setProjectCwd(db, upsertProject(db, 'plain'), join(dir, '..', 'not-here-at-all'))
     upsertProject(db, 'no-cwd')
+    // A project with no chats and nothing customized isn't listed, so name each one.
+    for (const name of ['linked', 'plain', 'no-cwd']) setFriendlyName(db, name, name)
     const byName = Object.fromEntries(listChannels(db).map(c => [c.dirName, c.repo]))
     expect(byName).toEqual({ linked: 'me/app', plain: null, 'no-cwd': null })
     closeCatalog(db)

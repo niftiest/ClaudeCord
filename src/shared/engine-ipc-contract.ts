@@ -20,6 +20,11 @@ import type { StreamedRow } from '../main/jsonl/stream'
  *  `ipcMain.on`); `event`/`rows`/`permission` are broadcasts the main process
  *  pushes to the renderer (`webContents.send` / `ipcRenderer.on`), same shape
  *  as Plan 1's `indexProgress` channel. */
+export type PinnedMessage = { sessionPk: number; uuid: string; seq: number; role: string; ts: string | null; text: string | null; chatTitle: string | null; pinnedAt: number }
+export type RewindMode = 'both' | 'conversation' | 'code'
+export type RewindPoint = { uuid: string; text: string; ts: string | null }
+export type RewindCheck = { canRewind: boolean; error: string | null; files: string[]; insertions: number; deletions: number }
+
 export const ENGINE_IPC = {
   send: 'engine:send',
   interrupt: 'engine:interrupt',
@@ -42,6 +47,13 @@ export const ENGINE_IPC = {
   backgroundTasks: 'engine:backgroundTasks',
   withdrawQueued: 'engine:withdrawQueued',
   rewindUnanswered: 'engine:rewindUnanswered',
+  rewindPoints: 'engine:rewindPoints',
+  rewindCheck: 'engine:rewindCheck',
+  rewindTo: 'engine:rewindTo',
+  taskOutput: 'engine:taskOutput',
+  pinMessage: 'engine:pinMessage',
+  unpinMessage: 'engine:unpinMessage',
+  listPins: 'engine:listPins',
   stopTask: 'engine:stopTask',
   answerElicitation: 'engine:answerElicitation',
   chatMode: 'engine:chatMode',
@@ -183,10 +195,23 @@ export type EngineApi = {
   withdrawQueued(sessionPk: number, uuid: string): Promise<boolean>
   /** Makes Claude forget a message stopped before any reply. False if it couldn't. */
   rewindUnanswered(sessionPk: number, uuid: string): Promise<boolean>
+  /** The messages this chat can go back to, newest first. */
+  rewindPoints(sessionPk: number): Promise<RewindPoint[]>
+  /** What restoring files to before a message would change. Changes nothing. */
+  rewindCheck(sessionPk: number, uuid: string): Promise<RewindCheck>
+  /** Goes back to before a message. `prefill` is its text, when the conversation went back. */
+  rewindTo(sessionPk: number, uuid: string, mode: RewindMode): Promise<{ ok: true; prefill: string | null } | { ok: false; error: string }>
+  /** Pins a message of a chat. False if it couldn't be found. */
+  pinMessage(sessionPk: number, uuid: string): Promise<boolean>
+  unpinMessage(sessionPk: number, uuid: string): Promise<void>
+  /** A project's pinned messages, newest pin first. */
+  listPins(projectId: number): Promise<PinnedMessage[]>
+  /** The end of a background command's output, or null if it can't be read. */
+  taskOutput(sessionPk: number, taskId: string): Promise<{ output: string; truncated: boolean } | null>
   interrupt(sessionPk: number): void
   resolvePermission(
     id: string,
-    decision: 'allow' | 'allow_always' | 'deny',
+    decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny',
     editedInput?: unknown,
     denyMessage?: string
   ): void

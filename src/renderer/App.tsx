@@ -7,7 +7,7 @@ import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../sha
 import { Nav, SHOW_NAV_STATUS } from './components/Nav'
 import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
 import { IconRail } from './components/IconRail'
-import { ContextRail, ContextRailStrip } from './components/ContextRail'
+import { ContextRail, ContextRailStrip, type RailView } from './components/ContextRail'
 import { CreateImageDialog } from './components/CreateImageDialog'
 import { Blade } from './components/Blade'
 import { Resizer } from './components/Resizer'
@@ -37,16 +37,21 @@ import { McpChip } from './components/McpChip'
 import { MemoryDialog } from './components/MemoryDialog'
 import { ProjectOptions } from './components/ProjectOptions'
 import { OpenInTerminalButton } from './components/OpenInTerminalButton'
-import { effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
+import { effectiveThinkingDisplay, effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
 import { ShellRuns } from './components/ShellRuns'
-import { WorkingLine, BackgroundTasksLine } from './components/WorkingLine'
+import { WorkingLine, BackgroundTasksLine, SubagentsLive } from './components/WorkingLine'
+import { RewindDialog } from './components/RewindDialog'
+import { TextMenuHost } from './components/TextMenu'
+import type { PinnedMessage } from '../shared/engine-ipc-contract'
+import { TaskOutputDialog } from './components/TaskOutputDialog'
+import { reduceAgentRuns, type AgentRun } from '../shared/subagent-activity'
 import { ProjectSearchBox, ProjectSearchResults } from './components/ProjectSearch'
 import type { ProjectSearchResult } from '../shared/project-search'
 import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -68,9 +73,23 @@ function readStoredBool(key: string, fallback: boolean): boolean {
 }
 
 /** How far the wheel travels for one step of text size. A mouse's notch is more than this. */
+const NO_AGENT_RUNS: AgentRun[] = []
 const WHEEL_NOTCH = 50
 const CHAT_SCALE_NOTE_MS = 1200
 const CHAT_SCALE_SAVE_MS = 300
+
+/** What the chat area shows with no chat open. A project still opening has no message: its
+ *  newest chat is on the way. */
+function EmptyPane({ project, onNewChat }: { project: ChannelRow | undefined; onNewChat: () => void }) {
+  if (project === undefined) return <div className="empty">Pick a project to start reading.</div>
+  if (project.sessionCount > 0) return <div className="empty" />
+  return (
+    <div className="empty">
+      <div>No chats in this project yet.</div>
+      {project.archived !== true && <button type="button" className="btn-primary empty-action" onClick={onNewChat}>New chat</button>}
+    </div>
+  )
+}
 
 export function App() {
   const [githubReady, setGithubReady] = useState(false)
@@ -103,9 +122,11 @@ export function App() {
   // transcript message instead of "no messages".
   const [transcriptFileMissing, setTranscriptFileMissing] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('cc.blade.collapsed') === 'true')
   const [newChatOpen, setNewChatOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  // A project opened from outside the chat list, which has to bring it into view.
+  const [revealChannel, setRevealChannel] = useState<number | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
   const [poolOpen, setPoolOpen] = useState(false)
@@ -138,6 +159,8 @@ export function App() {
   // 'result' event. This flag is what Composer uses to decide send-vs-queue,
   // and (with queuedCount) what LiveIndicator shows in the header.
   const [running, setRunning] = useState(false)
+  const runningRef = useRef(running)
+  runningRef.current = running
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([])
   const [findQuery, setFindQuery] = useState('')
   const [findResult, setFindResult] = useState<ProjectSearchResult | null>(null)
@@ -149,7 +172,16 @@ export function App() {
   const [savedTextOnly, setSavedTextOnly] = useState(false)
   const lastSentRef = useRef('')
   const [subagentOpen, setSubagentOpen] = useState<string | null>(null)
+  const [agentRunsByPk, setAgentRunsByPk] = useState<ReadonlyMap<number, AgentRun[]>>(new Map())
+  const [liveThinking, setLiveThinking] = useState<string | null>(null)
+  const [rewindOpen, setRewindOpen] = useState(false)
+  const [taskOutputOpen, setTaskOutputOpen] = useState<{ id: string; title: string } | null>(null)
   const closeSubagent = useCallback((): void => setSubagentOpen(null), [])
+  const closeRewind = useCallback((): void => setRewindOpen(false), [])
+  const [railView, setRailView] = useState<RailView>(() => window.localStorage.getItem('cc.ui.railView') === 'pins' ? 'pins' : 'files')
+  useEffect(() => { window.localStorage.setItem('cc.ui.railView', railView) }, [railView])
+  const [pins, setPins] = useState<PinnedMessage[]>([])
+  const closeTaskOutput = useCallback((): void => setTaskOutputOpen(null), [])
   // A `/btw` question, and its answer once it comes.
   const [sideQuestion, setSideQuestion] = useState<{ question: string; answer: string | null; error: string | null } | null>(null)
   const [chatMode, setChatMode] = useState('default')
@@ -275,6 +307,14 @@ export function App() {
       })
     }
     composeStore.handleEvent(pk, ev, (chat, command) => { void api.shellRun(chat, command) })
+    setAgentRunsByPk(prev => {
+      const runs = prev.get(pk) ?? NO_AGENT_RUNS
+      const next = reduceAgentRuns(runs, ev)
+      if (next === runs) return prev
+      const map = new Map(prev)
+      map.set(pk, next)
+      return map
+    })
     if (ev.kind === 'elicitation') setChatElicitations(pk, list => [...list, ev.request])
     if (ev.kind === 'permissionGone') {
       setPermissionsByPk(prev => {
@@ -303,6 +343,7 @@ export function App() {
   // Persist panel widths so a drag survives relaunch.
   useEffect(() => { window.localStorage.setItem('cc.width.nav', String(navWidth)) }, [navWidth])
   useEffect(() => { window.localStorage.setItem('cc.width.blade', String(bladeWidth)) }, [bladeWidth])
+  useEffect(() => { window.localStorage.setItem('cc.blade.collapsed', String(collapsed)) }, [collapsed])
   useEffect(() => { window.localStorage.setItem('cc.ui.sidebar', sidebarExpanded ? '1' : '0') }, [sidebarExpanded])
 
   // Load the project's file tree + git status for the context rail whenever the
@@ -435,6 +476,9 @@ export function App() {
         return changed ? next : prev
       })
       setChannels(list)
+      // The open project left the list, with no chat of its own still open: its last chat went.
+      const open = projectIdRef.current
+      if (open !== null && sessionRef.current === null && !list.some(c => c.id === open)) { setProject(null); setSessions([]) }
     }).catch(err => console.error('Nav refresh after catalog sync failed', err))
     void api.totalCost().then(setTotalCost).catch(() => { /* keep prior total */ })
     const pid = projectIdRef.current
@@ -496,7 +540,7 @@ export function App() {
     setSearchOpen(false)
     const channel = channels.find(c => c.dirName === projectDir) ?? null
     const reqId = ++sessionReqId.current
-    if (channel !== null) setProject(channel)
+    if (channel !== null) { setProject(channel); setRevealChannel(channel.id) }
     const list = channel === null ? [] : await api.listSessions(channel.id)
     if (isStaleResponse(reqId, sessionReqId.current)) return
     setSessions(list)
@@ -605,6 +649,9 @@ export function App() {
     // newly opened one -- Composer itself remounts fresh too (key=session.id).
     setRunning(false)
     setLivePreview(null)
+    setLiveThinking(null)
+    setRewindOpen(false)
+    setTaskOutputOpen(null)
     setQueuedCount(0)
     setExternalLock(null)
     setSettledPk(null)
@@ -631,6 +678,9 @@ export function App() {
     }
   }
 
+  const openSessionRef = useRef(openSession)
+  openSessionRef.current = openSession
+
   async function openProject(next: ChannelRow) {
     const reqId = ++sessionReqId.current
     setProject(next)
@@ -646,6 +696,8 @@ export function App() {
     const newest = list[0] ?? null
     if (newest === null) {
       setSession(null); setItems([]); setOldestSeq(null); setHasMore(false)
+      // The list may still be counting a chat that has gone.
+      refreshNavRef.current()
       return
     }
     await openSession(newest)
@@ -757,6 +809,26 @@ export function App() {
     void api.setUpdateOpenChat(openChatId !== null && openChatDir !== null ? { sessionPk: openChatId, projectDir: openChatDir } : null)
   }, [openChatId, openChatDir])
 
+  // Pinned messages of the open project.
+  const pinProjectId = project?.id ?? null
+  const refreshPins = useCallback((): void => {
+    if (pinProjectId === null) { setPins([]); return }
+    void api.listPins(pinProjectId).then(setPins).catch(() => {})
+  }, [pinProjectId])
+  useEffect(() => { refreshPins() }, [refreshPins])
+  const pinnedUuids = useMemo(() => new Set(pins.map(p => p.uuid)), [pins])
+  const pinOpenMessage = useCallback((uuid: string): void => {
+    if (openChatId === null) return
+    void api.pinMessage(openChatId, uuid).then(ok => {
+      if (ok) refreshPins()
+      else setTerminalNotice("That message couldn't be pinned yet. Try again in a moment.")
+    })
+  }, [openChatId, refreshPins])
+  const unpinOpenMessage = useCallback((uuid: string): void => {
+    if (openChatId === null) return
+    void api.unpinMessage(openChatId, uuid).then(refreshPins)
+  }, [openChatId, refreshPins])
+
   // Going to a search result: load back to it, then Transcript scrolls there.
   useEffect(() => {
     if (jumpTarget === null || session === null || session.id !== jumpTarget.sessionPk) return
@@ -788,6 +860,8 @@ export function App() {
       if (sessionPk !== sid) return
       setLastEventAt(Date.now())
       setLivePreview(prev => reduceLivePreview(prev, ev))
+      if (ev.kind === 'thinkingDelta') setLiveThinking(t => (t ?? '') + ev.text)
+      else if (ev.kind === 'delta' || ev.kind === 'assistant' || clearsRunning(ev)) setLiveThinking(null)
       if (ev.kind === 'init' && ev.mcpServers !== undefined) setMcpServers(ev.mcpServers)
       if (ev.kind === 'exit') setMcpServers(null)
       if (ev.kind === 'usage') setTurnTokens(n => n + ev.outputTokens)
@@ -920,6 +994,7 @@ export function App() {
     return () => { alive = false }
   }, [sessionPk])
   const toolDisplay = effectiveToolDisplay(settings?.toolDisplay ?? 'grouped', projectSettings)
+  const showThinking = effectiveThinkingDisplay(settings?.thinkingDisplay ?? 'show', projectSettings) === 'show'
   // The Files panel is remembered per project. The last choice is also kept as the
   // starting point for projects that haven't made one.
   const toggleFiles = (open: boolean): void => {
@@ -1082,8 +1157,10 @@ export function App() {
   // arrived for a session the user has since navigated away from still
   // removes it from the RIGHT session's list, not whatever is open now.
   const onResolvePermission = useCallback(
-    (sessionPk: number, id: string, decision: 'allow' | 'allow_always' | 'deny', editedInput?: unknown, denyMessage?: string) => {
+    (sessionPk: number, id: string, decision: 'allow' | 'allow_always' | 'allow_folder' | 'deny', editedInput?: unknown, denyMessage?: string) => {
       api.resolvePermission(id, decision, editedInput, denyMessage)
+      // So Project options lists the folder, and it can be taken back out from there.
+      if (decision === 'allow_folder') void api.getProjectSettings(sessionPk).then(c => { if (sessionRef.current?.id === sessionPk) setProjectSettings(c) })
       setPermissionsByPk(prev => {
         const list = prev.get(sessionPk)
         if (list === undefined) return prev
@@ -1201,6 +1278,11 @@ export function App() {
       return
     }
     if (isForkCommand(combined)) { forkChatRef.current(); return }
+    if (isRewindCommand(combined)) {
+      if (runningRef.current) setTerminalNotice('Claude is still replying here. Press Esc to stop it, then rewind.')
+      else setRewindOpen(true)
+      return
+    }
     // /clear would move Claude to a new session underneath this chat.
     if (isClearCommand(combined)) {
       void clearChatRef.current()
@@ -1352,6 +1434,15 @@ export function App() {
     if (closeChat) {
       setSession(null); setItems([]); setOldestSeq(null); setHasMore(false)
       if (target.scope !== 'chat') { setProject(null); setSessions([]) }
+      else {
+        // The open chat went: on to the project's next newest, if it has one.
+        const pid = projectIdRef.current, reqId = sessionReqId.current
+        if (pid !== null) {
+          void api.listSessions(pid).then(list => {
+            if (!isStaleResponse(reqId, sessionReqId.current) && list[0] !== undefined) void openSessionRef.current(list[0])
+          })
+        }
+      }
     }
     setManageEpoch(e => e + 1)
     refreshNavRef.current()
@@ -1437,10 +1528,11 @@ export function App() {
 
   return (
     <div className="shell" data-density={settings?.density ?? 'comfortable'} data-nav-density={settings?.navDensity ?? 'comfortable'}>
+      <TextMenuHost pinned={pinnedUuids} onPin={pinOpenMessage} onUnpin={unpinOpenMessage} />
       {/* The icon rail stands in for the chat list: its buttons move under the list while that's open. */}
       {(manageOpen || !sidebarExpanded) && (
         <IconRail channels={channels} groups={groups} selectedId={project?.id ?? null} unread={unread} remote={remoteProjects}
-        sidebarExpanded={false}
+        sidebarExpanded={false} reveal={revealChannel} onRevealed={() => setRevealChannel(null)}
         onSelect={p => { setManageOpen(false); void openProject(p) }}
         onToggleSidebar={() => { setManageOpen(false); setSidebarExpanded(true) }}
         onNewChat={() => setNewChatOpen(true)} onOpenSearch={() => setSearchOpen(true)}
@@ -1458,6 +1550,7 @@ export function App() {
             onManageMemory={setMemoryChannel}
             onOpenManage={() => setManageOpen(true)} onOpenSettings={() => { setSettingsSection(undefined); setSettingsOpen(true) }}
             onCollapse={() => setSidebarExpanded(false)} channels={channels} groups={groups} selectedId={project?.id ?? null} width={navWidth}
+            reveal={revealChannel} onRevealed={() => setRevealChannel(null)}
             unread={unread} remote={remoteProjects} showRepos={githubReady} totalCost={totalCost} elevated={elevated} activeChats={activeChats} planUsage={planUsage} session={session}
             onSelect={p => void openProject(p)} onNewChat={() => setNewChatOpen(true)}
             onOpenSearch={() => setSearchOpen(true)} onOpenPool={() => setPoolOpen(true)}
@@ -1469,13 +1562,12 @@ export function App() {
             onResize={dx => setNavWidth(w => clamp(w + dx, NAV_MIN, NAV_MAX))} />
         </>
       )}
-      {/* Session Blade: opt-in (Settings → Appearance), and only when a channel
-          actually has more than one session to pick between. Off by default in
-          the command-deck layout (rail + list + chat + context rail). */}
-      {!manageOpen && (settings?.showBlade ?? false) && sessions.length > 1 && (
+      {/* Session Blade: on unless turned off in Settings → Appearance, and only
+          when a project actually has more than one session to pick between. */}
+      {!manageOpen && (settings?.showBlade ?? true) && sessions.length > 1 && (
         <>
           <Blade sessions={sessions} selectedId={session?.id ?? null} remote={remoteSessions} collapsed={collapsed} width={bladeWidth}
-            onToggle={() => setCollapsed(c => !c)} onSelect={s => void openSession(s)} />
+            onToggle={() => setCollapsed(c => !c)} onSelect={s => void openSession(s)} onDelete={s => setDeleteTarget({ scope: 'chat', sessionPk: s.id })} />
           {!collapsed && <Resizer label="Resize session list"
             onResize={dx => setBladeWidth(w => clamp(w + dx, BLADE_MIN, BLADE_MAX))} />}
         </>
@@ -1532,7 +1624,6 @@ export function App() {
           {session !== null && settings !== null && project !== null && (
             <ProjectOptions settings={settings} chat={projectSettings}
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
-              onAddDir={() => { void api.addProjectDir(session.id, null).then(r => { if (!r.ok) setTerminalNotice(r.error); else setProjectSettings(r.settings) }) }}
               onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
               session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onFork={forkChat}
               summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}>
@@ -1543,7 +1634,7 @@ export function App() {
         </header>
         {session !== null && <SyncChatBanner info={syncChat.info} onOpenSettings={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />}
         {session === null
-          ? <div className="empty">Pick a channel to start reading.</div>
+          ? <EmptyPane project={project === null ? undefined : channels.find(c => c.id === project.id)} onNewChat={() => setNewChatOpen(true)} />
           // Keyed on the session id: forces a fresh Transcript instance (and
           // fresh internal scroll/height refs) per session, so the scroll-
           // preservation math never mixes geometry from a previously open
@@ -1558,7 +1649,7 @@ export function App() {
           // session switch, stacking a new .stream under the stale one (each
           // switch leaked one, splitting the chat into 50/50 scroll boxes).
           : <><div style={{ display: findTerms === '' ? 'contents' : 'none' }}><Transcript key={`transcript-${session.id}`} items={items} hasMore={hasMore} loadingOlder={loadingOlder}
-              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview} sending={sendingPks.has(session.id)} savedTextOnly={savedTextOnly}
+              loading={sessionLoading} onReachTop={loadOlder} livePreview={livePreview} liveThinking={showThinking ? liveThinking : null} showThinking={showThinking} sending={sendingPks.has(session.id)} savedTextOnly={savedTextOnly}
               showToolCalls={toolDisplay !== 'hidden'} groupToolCalls={toolDisplay === 'grouped'} fileMissing={transcriptFileMissing}
               claudeIcon={settings?.claudeIcon ?? { kind: 'initials' }}
               thinkingExpanded={settings?.thinkingExpanded ?? false}
@@ -1617,7 +1708,23 @@ export function App() {
           <WorkingLine startedAt={turnStartedAt} tokens={turnTokens} status={liveStatus} pending={pending} lastActivity={lastEventAt}
             waitingOnYou={(permissionsByPk.get(session.id)?.length ?? 0) > 0 || (elicitations.get(session.id)?.length ?? 0) > 0} activity={liveActivity} />
         )}
-        {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} />}
+        {session !== null && <SubagentsLive runs={agentRunsByPk.get(session.id) ?? NO_AGENT_RUNS} onView={setSubagentOpen} />}
+        {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} onShowOutput={(id, title) => setTaskOutputOpen({ id, title })} />}
+        {session !== null && taskOutputOpen !== null && <TaskOutputDialog sessionPk={session.id} taskId={taskOutputOpen.id} title={taskOutputOpen.title} onClose={closeTaskOutput} />}
+        {session !== null && rewindOpen && (
+          <RewindDialog sessionPk={session.id} onClose={closeRewind} onDone={r => {
+            const pk = session.id
+            setRewindOpen(false)
+            if (r.mode === 'code') {
+              const note = 'Files restored. The conversation is unchanged.'
+              setGoodNotice(note)
+              setTerminalNotice(note)
+              return
+            }
+            setItems(prev => dropCancelledMessage(prev, r.uuid))
+            if (r.prefill !== null && r.prefill.length > 0) composeStore.returnMessage(pk, { text: r.prefill, images: [] })
+          }} />
+        )}
         {session !== null && <ShellRuns runs={shellRuns} />}
         {sideQuestion !== null && (
           // Keyed on the question, so a new one starts open however the last was left.
@@ -1656,7 +1763,7 @@ export function App() {
               draftsRef.current.set(session.id, text)
               refreshUpdateHold()
             }}
-            onSend={onSend} onSubmit={() => setTerminalNotice(null)} onInterrupt={onInterrupt} onCancelSending={onCancelSending} onQueueLengthChange={setQueuedCount} />
+            onSend={onSend} onSubmit={() => setTerminalNotice(null)} onInterrupt={onInterrupt} onRewind={() => setRewindOpen(true)} onCancelSending={onCancelSending} onQueueLengthChange={setQueuedCount} />
         )}
       </main>
       </OpenSubagentContext.Provider>
@@ -1667,8 +1774,19 @@ export function App() {
               canCreateImage={typeof project?.cwd === 'string' && project.cwd.length > 0}
               onCreateImage={() => setCreateImageOpen(true)}
               onCollapse={() => toggleFiles(false)} context={context}
+              view={railView} onView={setRailView} pins={pins} openChatId={session?.id ?? null}
+              onJumpToPin={pin => {
+                setFindQuery('')
+                setJumpTarget({ sessionPk: pin.sessionPk, uuid: pin.uuid, seq: pin.seq })
+                if (pin.sessionPk !== session?.id && project !== null) {
+                  jumpPendingRef.current = true
+                  void openSearchResult(pin.sessionPk, project.dirName)
+                }
+              }}
+              onUnpin={pin => { void api.unpinMessage(pin.sessionPk, pin.uuid).then(refreshPins) }}
               onCompact={session !== null && !running && externalLock === null ? () => onSend('/compact', [], []) : undefined} />
-          : <ContextRailStrip fsEntries={fsEntries} onExpand={() => toggleFiles(true)} />
+          : <ContextRailStrip fsEntries={fsEntries} view={railView} pinCount={pins.length} onExpand={() => toggleFiles(true)}
+              onOpenView={v => { setRailView(v); toggleFiles(true) }} />
       )}
       {createImageOpen && typeof project?.cwd === 'string' && project.cwd.length > 0 && (
         <CreateImageDialog cwd={project.cwd} onClose={() => setCreateImageOpen(false)}

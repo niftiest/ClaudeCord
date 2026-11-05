@@ -54,6 +54,14 @@ export type LiveEvent =
   | { kind: 'background'; tasks: BackgroundTask[] }
   /** How one background agent is getting on. The pool folds this into `background`. */
   | { kind: 'taskProgress'; taskId: string; lastTool: string | null; tokens: number | null }
+  /** Claude's thinking as it comes, when the process was started to send it. */
+  | { kind: 'thinkingDelta'; text: string }
+  /** A subagent has started; `toolUseId` is the Agent call it belongs to. */
+  | { kind: 'taskStarted'; toolUseId: string; description: string }
+  /** One thing a subagent did or said. */
+  | { kind: 'subagentStep'; parent: string; label: string }
+  /** A subagent has finished, however it finished. */
+  | { kind: 'taskEnded'; toolUseId: string }
   /** Claude Code wants a tool approved. Handled in the main process, never sent to the window. */
   | { kind: 'permissionAsked'; requestId: string; args: Record<string, unknown> }
   /** Claude Code stopped waiting for an answer it had asked for. Also handled in main. */
@@ -102,6 +110,8 @@ export type PermissionRequest = {
   description?: string
   /** Why it's asking: a matched rule, a path outside the project, a hook. */
   reason?: string
+  /** Claude Code's name for that reason: `workingDir` is a path outside the project. */
+  reasonType?: string
   blockedPath?: string
   /** What "don't ask again" would change, exactly as Claude Code offers it. */
   suggestions?: PermissionSuggestion[]

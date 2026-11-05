@@ -162,10 +162,10 @@ describe('parseEvent — stream_event deltas', () => {
     expect(parseEvent(line)).toEqual({ kind: 'other', type: 'stream_event' })
   })
 
-  it('does not emit a text delta for a thinking_delta', () => {
+  it('reads a thinking_delta as thinking, not as reply text', () => {
     const line =
       '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}},"session_id":"s1"}'
-    expect(parseEvent(line)).toEqual({ kind: 'other', type: 'stream_event' })
+    expect(parseEvent(line)).toEqual({ kind: 'thinkingDelta', text: 'hmm' })
   })
 
   it('falls back to kind:other for a stream_event with no event field', () => {

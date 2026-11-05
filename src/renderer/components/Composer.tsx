@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type DragEvent, type KeyboardEvent, type SetStateAction } from 'react'
 import { api } from '../api'
 import {
-  collapsePastedText, queueReducer, imageFromDataUrl, buildOutgoingText,
+  collapsePastedText, queueReducer, imageFromDataUrl, buildOutgoingText, isRewindCommand,
   applyCompletion, commandTokenLength, completionAt, fileMention, filterCommands, matchesCommandName, rankFiles,
   type ComposerImage, type PastedTextChip, type QueueAction, type QueuedMessage
 } from '../lib'
@@ -76,7 +76,7 @@ function lockHolder(lock: ExternalLock): string {
   return `${who} (PID ${lock.pid})`
 }
 
-export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onSubmit, onInterrupt, onCancelSending, onQueueLengthChange }: {
+export function Composer({ sessionPk, running, settled = false, shellStops = 0, onCycleMode, lock = null, cwd = null, suggestion = null, onHijack, onShellCommand, initialDraft, onDraftChange, onSend, onSubmit, onInterrupt, onRewind, onCancelSending, onQueueLengthChange }: {
   /** True while a turn is in flight for this session. Enter queues instead
    *  of sending, and Esc interrupts, only while this is true. */
   running: boolean
@@ -111,6 +111,8 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
   /** The user sent something themselves, as opposed to a queued message going by itself. */
   onSubmit?: () => void
   onInterrupt: () => void
+  /** Esc Esc on an empty box, with Claude idle: go back to an earlier message. */
+  onRewind?: () => void
   /** A message that hasn't gone anywhere yet: calls it off. False if there's none. */
   onCancelSending?: () => boolean
   /** Fires whenever the queued-message count changes, so a parent (App.tsx)
@@ -354,6 +356,7 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
   // Esc Esc clears the box, as in the terminal: the first press only says so.
   const [clearHint, setClearHint] = useState(false)
   const clearArmedAt = useRef(0)
+  const rewindArmedAt = useRef(0)
   useEffect(() => {
     if (!clearHint) return
     const timer = setTimeout(() => setClearHint(false), CLEAR_WINDOW_MS)
@@ -448,7 +451,8 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
       return
     }
     // A side question doesn't wait for the turn: that's what it's for.
-    if (running && !/^\s*\/btw\s/.test(wouldSend)) {
+    // Nor does /rewind: it says to stop first, which is only any use now.
+    if (running && !/^\s*\/btw\s/.test(wouldSend) && !isRewindCommand(wouldSend)) {
       // QueuedMessage has a single `text` field with no separate pasted-chip
       // slot, so the combine has to happen now, at enqueue time.
       // It goes straight to Claude Code, which feeds it in at Claude's next step and
@@ -547,6 +551,16 @@ export function Composer({ sessionPk, running, settled = false, shellStops = 0, 
       if (running) { e.preventDefault(); onInterrupt(); return }
       if (onCancelSending?.() === true) { e.preventDefault(); return }
       if (text.length > 0 || pastedChips.length > 0 || imageChips.length > 0) { e.preventDefault(); escClears() }
+      else if (onRewind !== undefined) {
+        e.preventDefault()
+        const now = Date.now()
+        if (now - rewindArmedAt.current > CLEAR_WINDOW_MS) {
+          rewindArmedAt.current = now
+        } else {
+          rewindArmedAt.current = 0
+          onRewind()
+        }
+      }
     }
   }
 

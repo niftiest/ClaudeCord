@@ -29,7 +29,7 @@ describe('font name', () => {
     expect(validFontName(5)).toBeNull()
   })
 
-  it('keeps emoji working behind the chosen font', () => {
-    expect(fontStack('Consolas')).toBe('"Consolas", "Segoe UI Emoji", sans-serif')
+  it('names only the chosen font, leaving the fallback to the stylesheet', () => {
+    expect(fontStack('Consolas')).toBe('"Consolas"')
   })
 })

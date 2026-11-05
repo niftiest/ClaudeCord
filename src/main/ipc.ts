@@ -1,4 +1,12 @@
-import { ipcMain, app, shell, type BrowserWindow } from 'electron'
+import { ipcMain, app, shell, dialog, type BrowserWindow } from 'electron'
+import { readFile, stat, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+import { applyTheme, cleanThemeValues, deleteTheme, hasTheme, listThemes, parseThemeFile, saveTheme, themeFileText } from './catalog/themes'
+import {
+  MAX_THEME_FILE_BYTES, MAX_THEME_NAME, THEME_FILE_EXTENSION, cleanThemeName, isBuiltInThemeName, themeFileName, themeNameFromPath, themeValuesOf,
+  type ExportThemeResult, type ImportThemeResult, type SaveThemeResult, type ThemeValues
+} from '../shared/themes'
+import type { AppDialogRequest } from '../shared/app-dialog'
 import { applyStartupSettings, relaunchElevated, isElevated } from './elevation'
 import type { Catalog } from './catalog/db'
 import { listProjects, listSubagents, sumTotalCostUsd } from './catalog/repos'
@@ -7,7 +15,7 @@ import { displayText } from './jsonl/synthetic'
 import { readOriginRepo } from './engine/github'
 import { search, searchProject } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
-import type { AppSettings } from '../shared/shell-types'
+import type { AppSettings, ChannelMeta } from '../shared/shell-types'
 import {
   getChannelMeta, setFriendlyName, setStarred, setChannelIcon, setChannelGroup,
   listGroups, createGroup, renameGroup, deleteGroup, setHidden, setGroupIcon
@@ -73,7 +81,8 @@ export async function loadTranscript(
     | undefined
   if (session === undefined) return empty
   // Everything a subagent says is on a side chain, so in its own transcript that's the point.
-  const chainFilter = session.kind === 'subagent' ? '' : 'AND is_sidechain = 0'
+  // What a rewind went past isn't part of the chat any more.
+  const chainFilter = session.kind === 'subagent' ? 'AND rewound = 0' : 'AND is_sidechain = 0 AND rewound = 0'
 
   // A chat-history viewer shows EVERY message in chronological order (like
   // Discord), not a pruned "live branch". Earlier this walked the parentUuid
@@ -171,6 +180,13 @@ export async function loadTranscript(
   }
 }
 
+/** A project with no chats stays in the list only if the user made it theirs by favoriting,
+ *  naming, or giving it an icon. This is worked out on each read and removes nothing: chats
+ *  coming back bring the project back. */
+export function keepWithoutChats(meta: ChannelMeta): boolean {
+  return meta.starred || meta.friendlyName !== null || meta.icon.kind !== 'initials'
+}
+
 /** Merges each project row with its app-owned ChannelMeta (Plan 3 Task 2) --
  *  the nav's actual data source. One `getChannelMeta` SELECT per channel
  *  rather than a bulk `allChannelMeta` map lookup: simpler, and the nav's
@@ -181,6 +197,7 @@ export async function loadTranscript(
 export function listChannels(db: Catalog): ChannelRow[] {
   return listProjects(db).flatMap((p): ChannelRow[] => {
     const meta = getChannelMeta(db, p.dirName)
+    if (p.sessionCount === 0 && !keepWithoutChats(meta)) return []
     if (!folderGone(p.cwd)) return [{ ...p, meta, repo: p.cwd !== null && p.cwd.length > 0 ? readOriginRepo(p.cwd) : null }]
     // Every chat here moved with the project, so this row has nothing of its own to show.
     const chats = chatsToShow(db, p.id).length
@@ -208,6 +225,8 @@ export type IpcHooks = {
   onIndexProgress?: (p: IndexProgress) => void
   /** Settings were saved (tray options may have changed). */
   onSettingsChanged?: (s: AppSettings) => void
+  /** A question in the app's own window. Answers with the button's index. */
+  ask?: (request: Omit<AppDialogRequest, 'id'>) => Promise<number>
 }
 
 /** Startup registrations launch ClaudeCord with this, so "Start minimized"
@@ -305,4 +324,78 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
     return after
   })
   ipcMain.handle(IPC.isElevated, () => isElevated())
+
+  ipcMain.handle(IPC.listThemes, () => listThemes(db))
+  ipcMain.handle(IPC.saveTheme, async (_e, rawName: unknown, values: ThemeValues | null): Promise<SaveThemeResult> => {
+    const name = cleanThemeName(rawName)
+    if (name === null) return { ok: false, reason: 'name', message: `Enter a name of up to ${MAX_THEME_NAME} characters.` }
+    if (isBuiltInThemeName(name)) return { ok: false, reason: 'builtin', message: `${name} is a built-in theme, which can't be overwritten. Choose another name.` }
+    if (hasTheme(db, name)) {
+      const choice = await hooks.ask?.({
+        title: `Overwrite ${name}?`,
+        detail: ['You already have a theme with this name. Saving replaces it, and it can’t be brought back.'],
+        buttons: [{ label: 'Cancel', kind: 'secondary' }, { label: 'Overwrite', kind: 'danger' }],
+        defaultIndex: 0,
+        cancelIndex: 0
+      })
+      if (choice !== 1) return { ok: false, reason: 'cancelled' }
+    }
+    const saved = saveTheme(db, name, values === null || values === undefined ? null : values)
+    hooks.onSettingsChanged?.(saved.settings)
+    return { ok: true, ...saved }
+  })
+  ipcMain.handle(IPC.applyTheme, (_e, name: unknown) => {
+    const after = typeof name === 'string' ? applyTheme(db, name) : null
+    if (after !== null) hooks.onSettingsChanged?.(after)
+    return after
+  })
+  ipcMain.handle(IPC.deleteTheme, async (_e, name: unknown) => {
+    if (typeof name !== 'string' || !hasTheme(db, name)) return null
+    const choice = await hooks.ask?.({
+      title: `Delete ${name}?`,
+      detail: ['The app keeps looking the way it does now. The saved theme can’t be brought back unless you have exported it.'],
+      buttons: [{ label: 'Cancel', kind: 'secondary' }, { label: 'Delete', kind: 'danger' }],
+      defaultIndex: 0,
+      cancelIndex: 0
+    })
+    if (choice !== 1) return null
+    return deleteTheme(db, name)
+  })
+  ipcMain.handle(IPC.exportTheme, async (_e, suggestedName: unknown): Promise<ExportThemeResult> => {
+    const result = await dialog.showSaveDialog(window, {
+      title: 'Export theme',
+      defaultPath: themeFileName(cleanThemeName(suggestedName) ?? 'My theme'),
+      filters: [{ name: 'ClaudeCord theme', extensions: [THEME_FILE_EXTENSION] }]
+    })
+    if (result.canceled || result.filePath === undefined) return { status: 'cancelled' }
+    // The name it comes back with is the one the user gave the file.
+    const name = cleanThemeName(themeNameFromPath(result.filePath)) ?? 'Theme'
+    try {
+      await writeFile(result.filePath, themeFileText(name, cleanThemeValues(themeValuesOf(getSettings(db)))), 'utf8')
+      return { status: 'saved', path: result.filePath }
+    } catch (e) {
+      return { status: 'failed', message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle(IPC.importTheme, async (): Promise<ImportThemeResult> => {
+    const result = await dialog.showOpenDialog(window, {
+      title: 'Import theme',
+      properties: ['openFile'],
+      filters: [{ name: 'ClaudeCord theme', extensions: [THEME_FILE_EXTENSION, 'json'] }]
+    })
+    const path = result.filePaths[0]
+    if (result.canceled || path === undefined) return { status: 'cancelled' }
+    const notTheme = { status: 'invalid', message: `${basename(path)} isn’t a ClaudeCord theme file.` } as const
+    let text: string
+    try {
+      if ((await stat(path)).size > MAX_THEME_FILE_BYTES) return notTheme
+      text = await readFile(path, 'utf8')
+    } catch (e) {
+      return { status: 'invalid', message: `Couldn’t read ${basename(path)}: ${e instanceof Error ? e.message : String(e)}` }
+    }
+    const file = parseThemeFile(text)
+    if (file === null) return notTheme
+    const name = file.name ?? cleanThemeName(themeNameFromPath(path)) ?? 'Imported theme'
+    return { status: 'ready', name, values: file.values, conflict: isBuiltInThemeName(name) ? 'builtin' : hasTheme(db, name) ? 'custom' : 'none' }
+  })
 }

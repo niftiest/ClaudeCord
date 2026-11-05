@@ -5,12 +5,35 @@ import type { TextMenuAction, TextMenuRequest } from '../../shared/text-menu'
 
 /** The right-click menu for text, in the app's own style. Mouse presses are kept from taking
  *  the focus, since copying and replacing a word act on what's selected in the box. */
-export function TextMenuHost() {
+export function TextMenuHost({ pinned, onPin, onUnpin }: {
+  /** The messages pinned so far, by uuid. */
+  pinned: ReadonlySet<string>
+  onPin: (uuid: string) => void
+  onUnpin: (uuid: string) => void
+}) {
   const [menu, setMenu] = useState<TextMenuRequest | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const underPointer = useRef<string | null>(null)
   const [pos, setPos] = useState({ x: 0, y: 0 })
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => api.onTextMenu(setMenu), [])
+  // The window sees the click before main reports it, so this is ready when the menu comes.
+  // A subagent's transcript isn't this chat, and its messages can't be gone back to.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent): void => {
+      const target = e.target instanceof Element ? e.target : null
+      const row = target?.closest<HTMLElement>('[data-msg]') ?? null
+      underPointer.current = row !== null && row.closest('.subagent-view') === null ? row.dataset.msg ?? null : null
+    }
+    document.addEventListener('contextmenu', onContextMenu, true)
+    return () => document.removeEventListener('contextmenu', onContextMenu, true)
+  }, [])
+  useEffect(() => api.onTextMenu(request => {
+    const uuid = underPointer.current
+    const offers = request.linkUrl !== null || request.editable || request.canCopy || request.misspelled !== null
+    setMessage(uuid)
+    setMenu(offers || uuid !== null ? request : null)
+  }), [])
 
   useLayoutEffect(() => {
     if (menu === null || ref.current === null) return
@@ -52,6 +75,10 @@ export function TextMenuHost() {
   )
   const spelling = menu.misspelled !== null
   const hasEditing = menu.editable || menu.canCopy
+  const button = (label: string, run: () => void): ReactNode => (
+    <button key={label} type="button" role="menuitem" className="ctx-item" onMouseDown={e => e.preventDefault()} onClick={() => { setMenu(null); run() }}>{label}</button>
+  )
+  const url = menu.linkUrl
   return (
     <div ref={ref} className="ctx-menu text-menu" role="menu" style={{ left: pos.x, top: pos.y }}>
       {spelling && (
@@ -62,11 +89,16 @@ export function TextMenuHost() {
           {(menu.linkUrl !== null || hasEditing) && <div className="ctx-sep" />}
         </>
       )}
-      {menu.linkUrl !== null && item('Copy URL', { kind: 'copyLink' })}
-      {menu.linkUrl !== null && hasEditing && <div className="ctx-sep" />}
+      {url !== null && item('Copy Link', { kind: 'copyLink' })}
+      {url !== null && button('Open Link', () => { void api.openLink(url) })}
+      {url !== null && hasEditing && <div className="ctx-sep" />}
       {menu.editable && item('Cut', { kind: 'cut' }, menu.canCut)}
       {hasEditing && item('Copy', { kind: 'copy' }, menu.canCopy)}
       {menu.editable && item('Paste', { kind: 'paste' }, menu.canPaste)}
+      {message !== null && (url !== null || hasEditing) && <div className="ctx-sep" />}
+      {message !== null && (pinned.has(message)
+        ? button('Unpin Message', () => onUnpin(message))
+        : button('Pin Message', () => onPin(message)))}
     </div>
   )
 }
