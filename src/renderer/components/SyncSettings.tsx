@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { ago } from './SyncChat'
 import type {
@@ -22,6 +22,7 @@ export function SyncSettings() {
   const [review, setReview] = useState<{ row: SyncProjectRow; scan: ProjectScan } | null>(null)
   const [pending, setPending] = useState<SyncProjectRow | null>(null)
   const [linking, setLinking] = useState<RemoteProject | null>(null)
+  const [turnedOff, setTurnedOff] = useState<SyncProjectRow[]>([])
 
   useEffect(() => {
     void api.syncStatus().then(setStatus)
@@ -36,7 +37,8 @@ export function SyncSettings() {
 
   const report = (r: { ok: true } | { ok: false; error: string }): void => setMessage(r.ok ? null : r.error)
   const synced = status.projects.filter(p => p.projectId !== null)
-  const others = status.projects.filter(p => p.projectId === null)
+  // Ones turned off during this visit stay listed, so a slip can be undone.
+  const justOff = turnedOff.filter(p => !synced.some(s => s.workingDir === p.workingDir))
 
   async function optIn(row: SyncProjectRow): Promise<void> {
     setMessage(null)
@@ -108,7 +110,7 @@ export function SyncSettings() {
       )}
 
       <h3 className="settings-sub">Syncing ({synced.length})</h3>
-      {synced.length === 0 && <p className="settings-note">No projects yet. Choose them below.</p>}
+      {synced.length === 0 && justOff.length === 0 && <p className="settings-note">No projects yet. Turn sync on by right-clicking a project in the chat list, in a chat’s Project options, or when you create a new chat.</p>}
       {synced.map(p => (
         <div key={p.workingDir} className={p.pendingFindings.length > 0 ? 'sync-row warn' : 'sync-row'}>
           <div>
@@ -120,23 +122,28 @@ export function SyncSettings() {
           </div>
           <div className="sync-actions">
             {p.pendingFindings.length > 0 && <button type="button" className="btn-primary" onClick={() => setPending(p)}>Review</button>}
-            <button type="button" className="btn-secondary" disabled={status.busy} onClick={() => void api.syncDisableProject(p.projectId!).then(report)}>Stop syncing</button>
             <button type="button" className="btn-secondary" disabled={status.busy} onClick={() => void api.syncRemoveFromGithub(p.projectId!).then(report)}>Remove from GitHub</button>
+            <label className="sync-toggle">
+              <input type="checkbox" checked disabled={status.busy}
+                onChange={() => { setTurnedOff(off => [...off.filter(o => o.workingDir !== p.workingDir), { ...p, projectId: null }]); void api.syncDisableProject(p.projectId!).then(report) }} />
+              Sync
+            </label>
           </div>
         </div>
       ))}
-
-      <h3 className="settings-sub">Other projects ({others.length})</h3>
-      {others.map(p => (
+      {justOff.map(p => (
         <div key={p.workingDir} className="sync-row">
           <div>
             <strong>{p.name}</strong>
             <div className="settings-note">{p.workingDir}</div>
-            <div className="settings-note">{p.chats} chat{p.chats === 1 ? '' : 's'}, {size(p.sizeBytes)}{p.github !== null ? ` · ${p.github}` : ' · no GitHub repo'}</div>
+            <div className="settings-note">Not syncing. Its chats stay on this PC and on GitHub.</div>
           </div>
-          <button type="button" className="btn-secondary" disabled={scanning !== null || status.busy} onClick={() => void optIn(p)}>
-            {scanning === p.workingDir ? 'Checking…' : 'Sync…'}
-          </button>
+          <div className="sync-actions">
+            <label className="sync-toggle">
+              <input type="checkbox" checked={false} disabled={scanning !== null || status.busy} onChange={() => void optIn(p)} />
+              {scanning === p.workingDir ? 'Checking…' : 'Sync'}
+            </label>
+          </div>
         </div>
       ))}
 
@@ -294,6 +301,61 @@ function RecoveryKeyPanel({ recoveryKey, onDone }: { recoveryKey: string; onDone
 }
 
 type Choice = 'redact' | 'allow' | 'exclude'
+
+/** Starts syncing a project from outside Settings: checks it for likely secrets, then shows the
+ *  same review, which a project with nothing in it yet doesn't need. Closing this while the
+ *  first upload runs doesn't stop it, and Settings shows any error from then on. */
+export function StartProjectSync({ workingDir, name, encrypted, onClose }: {
+  workingDir: string
+  name: string
+  encrypted: boolean
+  onClose: () => void
+}) {
+  const [scan, setScan] = useState<ProjectScan | null>(null)
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
+
+  function start(decisions: FindingDecisions): void {
+    setStarting(true)
+    void api.syncEnableProject(workingDir, decisions).then(r => {
+      if (!aliveRef.current) return
+      if (r.ok) closeRef.current()
+      else { setStarting(false); setError(r.error) }
+    })
+  }
+  useEffect(() => {
+    let alive = true
+    api.syncScanProject(workingDir).then(s => {
+      if (!alive) return
+      if (s.chats === 0 && s.findings.length === 0) start({ redact: [], allow: [], excludeChats: [] })
+      else setScan(s)
+    }, (e: Error) => { if (alive) setError(e.message) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for this folder
+  }, [workingDir])
+
+  if (scan !== null && !starting && error === null) {
+    return (
+      <ReviewDialog title={`Sync ${name}?`} findings={scan.findings} encrypted={encrypted}
+        intro={`${scan.chats} chat${scan.chats === 1 ? '' : 's'}, ${size(scan.bytes)}.`} images={scan.images} actionLabel="Start syncing"
+        onCancel={onClose} onDone={start} />
+    )
+  }
+  return (
+    <div className="modal-overlay" onClick={e => e.stopPropagation()}>
+      <div className="modal sync-dialog">
+        <h2 className="modal-title">Sync {name}?</h2>
+        {error !== null && <div className="modal-error">{error}</div>}
+        {error === null && <p className="settings-note">{starting ? 'Starting to sync. This keeps going if you close this.' : 'Checking its chats for likely secrets…'}</p>}
+        <div className="modal-actions"><button type="button" className="btn-secondary" onClick={onClose}>{error !== null || starting ? 'Close' : 'Cancel'}</button></div>
+      </div>
+    </div>
+  )
+}
 
 function ReviewDialog({ title, intro, findings, images, encrypted, actionLabel, onCancel, onDone }: {
   title: string

@@ -1530,7 +1530,7 @@ export class SyncService {
       repoSizeBytes: this.repoSize,
       projects: rows,
       remoteProjects,
-      discoveredRepos: this.state.repo === null ? this.discovered : [],
+      discoveredRepos: this.discovered,
       leftSync: this.state.leftSync === true,
       conflicts: Object.values(this.state.conflicts).map(c => ({
         ...c, sessionPk: this.deps.sessionPkOf(this.transcriptPath(this.state.projects[c.projectId]?.root ?? '', c.sessionId)) ?? c.sessionPk

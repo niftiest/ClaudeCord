@@ -67,6 +67,15 @@ jobs:
           )
           gh release create "$GITHUB_REF_NAME" --title "ClaudeCord $version" --generate-notes "${files[@]}"
 
+      # main is what visitors see, and it means "the latest release". Forward only:
+      # GitHub refuses this if main has commits the release doesn't, and the run fails.
+      - name: Move main to this release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f sha="$GITHUB_SHA" -F force=false --silent
+
       - name: Upload build artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4

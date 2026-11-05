@@ -5,7 +5,7 @@ import { EFFORTS } from '../../shared/models'
 import { modelOption, useClaudeModels } from './useClaudeModels'
 import type { FolderContents } from '../../shared/shell-run-types'
 import type { GithubRepoOption, GithubStatus } from '../../shared/github-types'
-import type { RemoteProject } from '../../shared/sync-types'
+import { projectSyncState, type RemoteProject, type SyncStatus } from '../../shared/sync-types'
 
 /** Modal for starting a brand-new chat (Plan 2 Task 8): a working directory
  *  (typed, or via the native folder picker), whether to run with
@@ -33,7 +33,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
    *  `{ok:false, error}` (e.g. a cwd that doesn't exist on disk), which this
    *  component shows inline and leaves the dialog open so the user can
    *  correct it. */
-  onCreate: (options: NewProjectOptions) => Promise<{ ok: true } | { ok: false; error: string }>
+  onCreate: (options: NewProjectOptions, sync: boolean) => Promise<{ ok: true } | { ok: false; error: string }>
   /** Opens a project that's just been brought over from another PC, and closes this dialog. */
   onOpenProject: (workingDir: string) => void
 }) {
@@ -85,6 +85,8 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
   const [search, setSearch] = useState('')
   const [remote, setRemote] = useState<RemoteProject[]>([])
   const [syncRepos, setSyncRepos] = useState<string[]>([])
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+  const [syncIt, setSyncIt] = useState(false)
   // A project brought over from another PC, with what to know before opening it.
   const [linked, setLinked] = useState<{ workingDir: string; warnings: string[] } | null>(null)
   const [preparing, setPreparing] = useState(false)
@@ -105,6 +107,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
     })
     void api.syncStatus().then(status => {
       if (!alive) return
+      setSyncStatus(status)
       setRemote(status.configured ? status.remoteProjects : [])
       setSyncRepos([...status.discoveredRepos, ...(status.repo === null ? [] : [status.repo])])
     }).catch(() => { /* the list just won't show what's synced */ })
@@ -113,6 +116,9 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
 
   const rows = repos === null && remote.length === 0 ? null : checkoutRows(repos ?? [], remote, syncRepos)
   const shownRows = rows === null ? [] : filterCheckoutRows(rows, search)
+  const folder = cwd.trim()
+  const alreadySyncing = syncStatus !== null && folder.length > 0 && projectSyncState(syncStatus, { cwd: folder })?.kind === 'on'
+  const canSync = syncStatus?.configured === true && picked?.sync == null && !alreadySyncing
 
   /** Clicking the picked row again goes back to using a folder. A clone already on this PC is
    *  used as it is: only a repo that isn't here yet gets fetched. */
@@ -178,7 +184,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
     setCreating(true)
     setError(null)
     try {
-      const result = await onCreate(resolved.options)
+      const result = await onCreate(resolved.options, canSync && syncIt)
       if (!result.ok) setError(result.error)
     } finally {
       setCreating(false)
@@ -250,6 +256,17 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
             : 'You’ll be asked to Allow or Deny each tool use that needs permission.'}
         </p>
 
+        {canSync && (
+          <label className="field field-checkbox">
+            <input type="checkbox" checked={syncIt} onChange={e => setSyncIt(e.target.checked)} />
+            <span>Sync this project across your PCs</span>
+          </label>
+        )}
+        {alreadySyncing && <p className="field-note">This project is already syncing across your PCs.</p>}
+        {github?.state === 'ready' && syncStatus !== null && !syncStatus.configured && (
+          <p className="field-note">To sync projects across your PCs, set up Project sync in Settings first.</p>
+        )}
+
         <label className="field">
           <span className="field-label">Model</span>
           <select className="field-input" value={shownModel} onChange={e => setModel(e.target.value)}>
@@ -274,7 +291,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
         </label>
 
         {error !== null && <div className="modal-error">{error}</div>}
-        {linked?.warnings.map(w => <div key={w} className="modal-error" role="alert">{w}</div>)}
+        {linked?.warnings.map(w => <div key={w} className="sync-warn-text" role="alert">{w}</div>)}
         {repoWarning !== null && <div className="modal-error" role="alert">{repoWarning} Press Create again to start the chat anyway.</div>}
         {trustPrompt !== null && <TrustPrompt contents={trustPrompt} skipPermissions={skipPermissions} />}
         {confirming && (

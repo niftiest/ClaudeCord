@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChannelRow } from '../../shared/types'
 import type { ChannelIcon, ChannelGroup } from '../../shared/shell-types'
+import type { ProjectSyncState } from '../../shared/sync-types'
 import { resolveChannelName, clampMenuPosition } from '../lib'
 import { IconPicker } from './IconPicker'
 
@@ -20,7 +21,7 @@ type View = 'menu' | 'rename' | 'move' | 'newGroup' | 'renameGroup' | 'icon'
  *  clampMenuPosition's own math is unit-tested in tests/renderer-lib.test.ts. */
 export function ChannelContextMenu({
   channel, groups, x, y, onClose, onRename, onShowInExplorer, onManageMemory, onToggleStar, onMoveToGroup, onCreateGroup, onDeleteGroup,
-  onRenameGroup, onSetGroupIcon, onSetIcon, onToggleHidden, onDeleteChannel, onDeleteChat
+  onRenameGroup, onSetGroupIcon, onSetIcon, onToggleHidden, onDeleteChannel, onDeleteChat, sync, onSync
 }: {
   channel: ChannelRow
   groups: ChannelGroup[]
@@ -42,6 +43,9 @@ export function ChannelContextMenu({
   onDeleteChannel: (dirName: string) => void
   /** Opens the Delete wizard for one chat (the open one, else the latest). */
   onDeleteChat: (channel: ChannelRow) => void
+  /** Sync's state for this project; no value leaves the item out. */
+  sync: ProjectSyncState | null
+  onSync: (state: ProjectSyncState) => void
 }) {
   const [view, setView] = useState<View>('menu')
   const [renameValue, setRenameValue] = useState(() => resolveChannelName(channel.meta, channel.cwd, channel.dirName))
@@ -133,6 +137,11 @@ export function ChannelContextMenu({
           </button>
           <button type="button" className="ctx-item" role="menuitem" onClick={() => setView('move')}>Move to group ▸</button>
           <button type="button" className="ctx-item" role="menuitem" onClick={() => setView('icon')}>Change icon ▸</button>
+          {sync !== null && (
+            <button type="button" className="ctx-item" role="menuitem" onClick={() => { onSync(sync); onClose() }}>
+              {sync.kind === 'on' ? 'Stop syncing' : 'Sync this project…'}
+            </button>
+          )}
           <div className="ctx-sep" />
           <button type="button" className="ctx-item" role="menuitem"
             onClick={() => { onToggleHidden(channel.dirName, !channel.meta.hidden); onClose() }}>

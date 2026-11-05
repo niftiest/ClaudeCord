@@ -164,13 +164,8 @@ function readDismissedOffers(): Set<string> {
 }
 
 /** What's waiting on GitHub for this PC, for the chat list to mention. */
-export function useSyncOffer(): { offer: SyncOffer | null; dismiss: () => void } {
-  const [status, setStatus] = useState<SyncStatus | null>(null)
+export function useSyncOffer(status: SyncStatus | null): { offer: SyncOffer | null; dismiss: () => void } {
   const [dismissed, setDismissed] = useState(readDismissedOffers)
-  useEffect(() => {
-    void api.syncStatus().then(setStatus).catch(() => { /* no offer, then */ })
-    return api.onSyncChanged(setStatus)
-  }, [])
   const offer = status === null ? null : syncOffer(status, dismissed)
   const dismiss = (): void => {
     if (offer === null) return
@@ -179,4 +174,22 @@ export function useSyncOffer(): { offer: SyncOffer | null; dismiss: () => void }
     setDismissed(next)
   }
   return { offer, dismiss }
+}
+
+const UNLINKED_CHECK_MS = 5 * 60_000
+
+/** Sync's current state, for anything outside Settings that depends on it. */
+export function useSyncStatus(): SyncStatus | null {
+  const [status, setStatus] = useState<SyncStatus | null>(null)
+  const linkedRef = useRef(false)
+  linkedRef.current = status?.configured === true
+  useEffect(() => {
+    const refresh = (): void => { void api.syncStatus().then(setStatus).catch(() => { /* treated as sync not applying */ }) }
+    refresh()
+    // Until this PC is linked, asking is what looks for a repo another PC may have just made.
+    const timer = setInterval(() => { if (!linkedRef.current) refresh() }, UNLINKED_CHECK_MS)
+    const off = api.onSyncChanged(setStatus)
+    return () => { clearInterval(timer); off() }
+  }, [])
+  return status
 }

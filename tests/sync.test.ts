@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { encodePath } from '../src/main/manage/paths'
 import { realRunner, type Runner } from '../src/main/engine/github'
+import { syncOffer } from '../src/shared/sync-types'
 import { SyncService, type KeyStore, type SyncHub } from '../src/main/sync/service'
 import { deriveKey, keyCheck, newKdf, newRecoveryKey, SyncCodec, verifyKeyCheck, WrongKeyError } from '../src/main/sync/crypto'
 import { fingerprintOf, redactSecrets, scanText } from '../src/main/sync/secret-scan'
@@ -223,6 +224,18 @@ describe('transcript reading', () => {
 })
 
 describe('setting up', () => {
+  it('can sync a brand-new project with nothing in it yet', async () => {
+    const a = makePc('PC-A')
+    await a.service.setupNew({ name: 'claudecord-sync', encrypted: false })
+    const folder = join(a.dataDir, 'brand-new')
+    mkdirSync(folder, { recursive: true })
+    const scan = await a.service.scanProjectFor(folder)
+    expect(scan).toMatchObject({ chats: 0, findings: [] })
+    await ok(a.service.enableProject(folder, { redact: [], allow: [], excludeChats: [] }))
+    const row = (await a.service.status()).projects.find(p => p.name === 'brand-new')
+    expect(row?.projectId).not.toBeNull()
+  })
+
   it('finds sync repos on the account and ignores files that only look like one', async () => {
     const a = makePc('PC-A')
     hub.privateReposWithFile = async () => [
@@ -243,7 +256,7 @@ describe('setting up', () => {
     await a.service.status()
     await new Promise(r => setTimeout(r, 20))
     await a.service.setupNew({ name: 'claudecord-sync', encrypted: true })
-    expect((await a.service.status()).discoveredRepos).toEqual([])
+    expect(syncOffer(await a.service.status(), new Set())).toBeNull()
     await a.service.disconnect()
     expect((await a.service.status()).leftSync).toBe(true)
   })

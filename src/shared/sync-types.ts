@@ -111,7 +111,7 @@ export type GithubState = { state: 'missing' | 'signed_out' | 'ready'; account: 
 export type SyncStatus = {
   github: GithubState
   configured: boolean
-  /** Sync repos found on the account, while this PC isn't linked to one. */
+  /** Sync repos found on the account the last time it was checked. */
   discoveredRepos: string[]
   /** This PC chose to disconnect from sync. */
   leftSync: boolean
@@ -174,6 +174,28 @@ export function syncOffer(status: SyncStatus, dismissed: ReadonlySet<string>): S
   }
   if (status.repo !== null || status.leftSync || status.discoveredRepos.every(r => dismissed.has(r))) return null
   return { ids: status.discoveredRepos, text: 'Found your sync repo. Link this PC to see its projects.' }
+}
+
+/** What the chat list can offer for one project. No value means sync doesn't apply to it. */
+export type ProjectSyncState =
+  | { kind: 'setup' }
+  | { kind: 'off'; workingDir: string; name: string }
+  | { kind: 'on'; projectId: string }
+
+const samePath = (a: string, b: string): boolean => {
+  const clean = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return clean(a) === clean(b)
+}
+
+/** `setup` means this PC has to link to a sync repo first. A folder sync doesn't list, such as
+ *  a worktree, can't be synced on its own. */
+export function projectSyncState(status: SyncStatus, project: { cwd: string | null; archived?: boolean }): ProjectSyncState | null {
+  if (status.github.state !== 'ready' || project.cwd === null || project.cwd.length === 0 || project.archived === true) return null
+  if (!status.configured) return { kind: 'setup' }
+  const cwd = project.cwd
+  const row = status.projects.find(p => samePath(p.workingDir, cwd))
+  if (row === undefined) return null
+  return row.projectId !== null ? { kind: 'on', projectId: row.projectId } : { kind: 'off', workingDir: row.workingDir, name: row.name }
 }
 
 export type RepoSearch = { repo: string; exists: boolean; isPrivate: boolean | null; encrypted: boolean | null; isSyncRepo: boolean; error: string | null }

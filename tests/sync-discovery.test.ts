@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { privateReposWithFile, type Runner } from '../src/main/engine/github'
-import { syncOffer, type RemoteProject, type SyncStatus } from '../src/shared/sync-types'
+import { projectSyncState, syncOffer, type RemoteProject, type SyncProjectRow, type SyncStatus } from '../src/shared/sync-types'
 import { checkoutRows, filterCheckoutRows } from '../src/renderer/lib'
 import type { GithubRepoOption } from '../src/shared/github-types'
 
@@ -94,5 +94,26 @@ describe('the list in New Chat', () => {
     expect(filterCheckoutRows(rows, 'game ideas').map(r => r.label)).toEqual(['me/notes'])
     expect(filterCheckoutRows(rows, '  ')).toHaveLength(3)
     expect(filterCheckoutRows(rows, 'zzz')).toEqual([])
+  })
+})
+
+describe("what a project's menu offers", () => {
+  const row = (workingDir: string, projectId: string | null): SyncProjectRow => ({ workingDir, name: 'app', projectId } as SyncProjectRow)
+  const linked = { configured: true, repo: 'me/s', projects: [row('D:\\GIT\\app', null), row('D:\\GIT\\synced', 'p1')] }
+  it('starting, for a project that is not syncing, however its path is written', () => {
+    expect(projectSyncState(status(linked), { cwd: 'd:/git/APP/' })).toEqual({ kind: 'off', workingDir: 'D:\\GIT\\app', name: 'app' })
+  })
+  it('stopping, for one that is', () => {
+    expect(projectSyncState(status(linked), { cwd: 'D:\\GIT\\synced' })).toEqual({ kind: 'on', projectId: 'p1' })
+  })
+  it('setup first, on a PC that is not linked', () => {
+    expect(projectSyncState(status({}), { cwd: 'D:\\GIT\\app' })).toEqual({ kind: 'setup' })
+  })
+  it('nothing without GitHub, a folder, or a project sync can list, or when archived', () => {
+    expect(projectSyncState(status({ ...linked, github: { state: 'missing', account: null } }), { cwd: 'D:\\GIT\\app' })).toBeNull()
+    expect(projectSyncState(status({ ...linked, github: { state: 'signed_out', account: null } }), { cwd: 'D:\\GIT\\app' })).toBeNull()
+    expect(projectSyncState(status(linked), { cwd: null })).toBeNull()
+    expect(projectSyncState(status(linked), { cwd: 'D:\\GIT\\worktree' })).toBeNull()
+    expect(projectSyncState(status(linked), { cwd: 'D:\\GIT\\app', archived: true })).toBeNull()
   })
 })

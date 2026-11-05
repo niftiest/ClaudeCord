@@ -1,4 +1,5 @@
 import { RemoteBadge } from './RemoteBadge'
+import type { ProjectSyncState } from '../../shared/sync-types'
 import { useEffect, useState } from 'react'
 import type { ChannelRow } from '../../shared/types'
 import { plainPreview, resolveChannelName, resolveChannelIcon, relativeTime, type NavSection, type ResolvedIcon } from '../lib'
@@ -31,7 +32,8 @@ function RepoIcon({ repo }: { repo: string }) {
   )
 }
 
-function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, onContextMenu }: {
+function ChannelItem({ channel, selected, unread, remote, synced, showRepo, onSelect, onContextMenu }: {
+  synced: boolean
   channel: ChannelRow
   selected: boolean
   unread: boolean
@@ -56,6 +58,7 @@ function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, on
         <div className="ch-top">
           <span className="ch-name">{name}</span>
           {showRepo && channel.repo != null && <RepoIcon repo={channel.repo} />}
+          {synced && <span className="ch-synced" role="img" aria-label="Syncing across your PCs" title="Syncing across your PCs">⟳</span>}
           {channel.meta.starred && <span className="ch-star" aria-label="Starred" title="Starred">★</span>}
           <time className="ch-time">{relativeTime(channel.lastActivity)}</time>
         </div>
@@ -71,7 +74,8 @@ function ChannelItem({ channel, selected, unread, remote, showRepo, onSelect, on
 /** One collapsible section (Starred / a named group / Ungrouped). Section
  *  collapse state is purely local UI state (not persisted) -- reopening the
  *  app always shows every section expanded. */
-function Section({ reveal, section, selectedId, unread, remote, showRepos, onSelect, onContextMenu, defaultCollapsed = false }: {
+function Section({ reveal, section, selectedId, unread, remote, syncStates, showRepos, onSelect, onContextMenu, defaultCollapsed = false }: {
+  syncStates: ReadonlyMap<number, ProjectSyncState>
   reveal: number | null
   showRepos: boolean
   section: NavSection
@@ -100,7 +104,7 @@ function Section({ reveal, section, selectedId, unread, remote, showRepos, onSel
         section.channels.length === 0
           ? <div className="nav-section-empty">No chats here yet.</div>
           : section.channels.map(c => (
-            <ChannelItem key={c.id} channel={c} selected={c.id === selectedId} unread={unread.has(c.id)} remote={remote.has(c.id)} showRepo={showRepos}
+            <ChannelItem key={c.id} channel={c} selected={c.id === selectedId} unread={unread.has(c.id)} remote={remote.has(c.id)} synced={syncStates.get(c.id)?.kind === 'on'} showRepo={showRepos}
               onSelect={onSelect} onContextMenu={onContextMenu} />
           ))
       )}
@@ -113,7 +117,8 @@ function Section({ reveal, section, selectedId, unread, remote, showRepos, onSel
  *  and an Ungrouped section last -- exactly what `groupChannels`
  *  (src/renderer/lib.ts) computes. Right-clicking a row surfaces
  *  `onContextMenu`, which Nav.tsx wires to ChannelContextMenu. */
-export function GroupedNav({ reveal = null, sections, selectedId, unread, remote = new Set<number>(), showRepos = false, onSelect, onContextMenu }: {
+export function GroupedNav({ reveal = null, sections, selectedId, unread, remote = new Set<number>(), syncStates, showRepos = false, onSelect, onContextMenu }: {
+  syncStates: ReadonlyMap<number, ProjectSyncState>
   reveal?: number | null
   /** Show which projects are linked to a GitHub repo: only when the GitHub CLI is ready. */
   showRepos?: boolean
@@ -128,7 +133,7 @@ export function GroupedNav({ reveal = null, sections, selectedId, unread, remote
     <>
       {sections.map(s => (
         <Section key={s.kind === 'group' ? `group:${s.groupId}` : s.kind === 'time' ? `time:${s.bucket}` : s.kind}
-          reveal={reveal} section={s} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
+          reveal={reveal} section={s} selectedId={selectedId} unread={unread} remote={remote} syncStates={syncStates} showRepos={showRepos} onSelect={onSelect} onContextMenu={onContextMenu}
           defaultCollapsed={s.kind === 'hidden' || s.kind === 'archived'} />
       ))}
     </>

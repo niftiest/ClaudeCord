@@ -2,13 +2,17 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AppSettings } from '../../shared/shell-types'
 import type { ProjectSettings, ThinkingDisplay, ToolDisplay } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
+import type { ProjectSyncState } from '../../shared/sync-types'
 
 const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
 
 /** Everything about the open chat and its project that doesn't need to sit in the header:
  *  mode, model, effort and cost, and the choices Settings leaves to
  *  "Choose per project". */
-export function ProjectOptions({ settings, chat, onChange, onOpenSettings, session, sessions, onOpenChat, onFork, summary, children }: {
+export function ProjectOptions({ settings, chat, onChange, onOpenSettings, session, sessions, onOpenChat, onFork, summary, sync, onSync, children }: {
+  /** Sync's state for this project; no value leaves the option out. */
+  sync: ProjectSyncState | null
+  onSync: (state: ProjectSyncState) => void
   settings: AppSettings
   chat: ProjectSettings
   onChange: (patch: Partial<ProjectSettings>) => void
@@ -51,6 +55,12 @@ export function ProjectOptions({ settings, chat, onChange, onOpenSettings, sessi
                   onClick={() => { setOpen(false); onOpenChat(s) }}>{s.title ?? 'Untitled chat'}</button>
               ))}
             </div>
+          )}
+          {sync !== null && (
+            <label className="project-option">
+              <span>Sync across your PCs</span>
+              <input type="checkbox" checked={sync.kind === 'on'} onChange={() => { setOpen(false); onSync(sync) }} />
+            </label>
           )}
           {tools ? (
             <label className="project-option">

@@ -69,9 +69,9 @@ Chats you've opened for remote control from your phone or the web get a small ba
 
 ## Syncing between your PCs
 
-Project sync keeps the chats in the projects you choose the same across your PCs, through a private GitHub repo you own. It uses your GitHub CLI sign-in and encrypts everything before upload by default. Each project gets checked for likely keys and passwords before it syncs, so you can redact them, leave those chats out, or sync anyway. The check can miss things, such as a key in a picture.
+Project sync keeps the chats in the projects you choose the same across your PCs, through a private GitHub repo you own. Turn it on by right-clicking a project in the chat list, in a chat's Project options, or when you create a new chat, and Settings lists what's syncing with a toggle for each. It uses your GitHub CLI sign-in and encrypts everything before upload by default. Each project gets checked for likely keys and passwords before it syncs, so you can redact them, leave those chats out, or sync anyway. The check can miss things, such as a key in a picture.
 
-Only chats sync, so your code stays with the project's own repo. On a second PC, ClaudeCord finds your sync repo and asks for your recovery key once. Keep that key safe: a new PC can't read the synced copy without it. Projects from your other PCs then appear in the chat list's notice, in Settings, and with a sync icon in New chat. Setting one up clones its repo into the folder you choose and brings its chats over.
+Only chats sync, so your code stays with the project's own repo. On a second PC, ClaudeCord finds your sync repo and asks for your recovery key once. Keep that key safe: a new PC can't read the synced copy without it. Projects from your other PCs then appear in the chat list's notice, in Settings, and with a sync icon in New chat. Projects that are syncing show the same icon in the chat list. Setting one up clones its repo into the folder you choose and brings its chats over.
 
 ## Cleaning up your history
 

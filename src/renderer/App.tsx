@@ -23,7 +23,9 @@ import { ChatHeaderControls } from './components/ChatHeaderControls'
 import { SearchOverlay } from './components/SearchOverlay'
 import { SettingsWindow, type SettingsSection } from './components/SettingsWindow'
 import { BlockedBanner } from './components/BlockedBanner'
-import { SyncChatBanner, SyncConflictDialog, useSyncChat, useSyncOffer } from './components/SyncChat'
+import { SyncChatBanner, SyncConflictDialog, useSyncChat, useSyncOffer, useSyncStatus } from './components/SyncChat'
+import { StartProjectSync } from './components/SyncSettings'
+import { projectSyncState, type ProjectSyncState } from '../shared/sync-types'
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
 import { UpdateBar, UpdateIcon } from './components/UpdatesPanel'
@@ -711,7 +713,7 @@ export function App() {
   // shape; a stale response here (the user clicked a different
   // channel/session while this was in flight) is handled the same way --
   // silently dropped rather than clobbering whatever is now open.
-  async function createChat(options: NewProjectOptions): Promise<{ ok: true } | { ok: false; error: string }> {
+  async function createChat(options: NewProjectOptions, sync: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
     // See creatingChatRef's own comment above: this check-and-set happens
     // synchronously, before the first `await`, so a second synchronous
     // invocation (double-click) always observes the flag already set and
@@ -722,6 +724,7 @@ export function App() {
       const outcome = await api.newChat(options)
       if (!outcome.ok) return { ok: false, error: outcome.error }
       await openCreatedChat(options.cwd, outcome.sessionId)
+      if (sync) setStartingSync({ workingDir: options.cwd, name: options.cwd.split(/[\\/]/).filter(p => p.length > 0).pop() ?? options.cwd })
       return { ok: true }
     } finally {
       creatingChatRef.current = false
@@ -1218,7 +1221,24 @@ export function App() {
   forkChatRef.current = forkChat
 
   const syncChat = useSyncChat(session?.id ?? null)
-  const syncOfferNotice = useSyncOffer()
+  const syncStatus = useSyncStatus()
+  const syncOfferNotice = useSyncOffer(syncStatus)
+  const syncStates = useMemo(() => {
+    const states = new Map<number, ProjectSyncState>()
+    if (syncStatus === null) return states
+    for (const c of channels) {
+      const state = projectSyncState(syncStatus, c)
+      if (state !== null) states.set(c.id, state)
+    }
+    return states
+  }, [syncStatus, channels])
+  const [startingSync, setStartingSync] = useState<{ workingDir: string; name: string } | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const onSyncProject = (state: ProjectSyncState): void => {
+    if (state.kind === 'setup') { setSettingsSection('sync'); setSettingsOpen(true) }
+    else if (state.kind === 'off') setStartingSync({ workingDir: state.workingDir, name: state.name })
+    else void api.syncDisableProject(state.projectId).then(r => { if (!r.ok) setSyncError(r.error) })
+  }
   const onSendRef = useRef<(text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void>(() => {})
   const checkingSyncRef = useRef(new Map<number, { text: string; images: ComposerImage[]; cancelled: boolean }>())
   const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
@@ -1570,6 +1590,7 @@ export function App() {
             onSetGroupIcon={onSetGroupIcon} onSetIcon={onSetIcon}
             onToggleHidden={onToggleHidden} onDeleteChannel={onDeleteChannel} onDeleteChat={onDeleteChat}
             syncOffer={syncOfferNotice.offer} onDismissSyncOffer={syncOfferNotice.dismiss}
+            syncStates={syncStates} onSyncProject={onSyncProject}
             onOpenSyncOffer={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />
           <Resizer label="Resize channel list"
             onResize={dx => setNavWidth(w => clamp(w + dx, NAV_MIN, NAV_MAX))} />
@@ -1639,7 +1660,8 @@ export function App() {
               onChange={patch => { void api.setProjectSettings(session.id, patch).then(setProjectSettings) }}
               onOpenSettings={() => { setSettingsSection('appearance'); setSettingsOpen(true) }}
               session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onFork={forkChat}
-              summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}>
+              summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}
+              sync={syncStates.get(project.id) ?? null} onSync={onSyncProject}>
               <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />
             </ProjectOptions>
           )}
@@ -1808,6 +1830,18 @@ export function App() {
       {deleteTarget !== null && (
         <DeleteWizard target={deleteTarget} onClose={() => setDeleteTarget(null)}
           onDeleted={() => onDeleted(deleteTarget)} />
+      )}
+      {startingSync !== null && (
+        <StartProjectSync workingDir={startingSync.workingDir} name={startingSync.name} encrypted={syncStatus?.encrypted ?? true}
+          onClose={() => setStartingSync(null)} />
+      )}
+      {syncError !== null && (
+        <div className="modal-overlay" role="presentation" onClick={() => setSyncError(null)}>
+          <div className="modal sync-dialog" role="alertdialog" aria-label="Sync problem" onClick={e => e.stopPropagation()}>
+            <div className="modal-error">{syncError}</div>
+            <div className="modal-actions"><button type="button" className="btn-primary" onClick={() => setSyncError(null)}>Close</button></div>
+          </div>
+        </div>
       )}
       {newChatOpen && (
         // Seeds the dialog's cwd field from whatever project is currently
