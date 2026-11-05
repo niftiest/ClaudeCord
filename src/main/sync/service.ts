@@ -55,6 +55,8 @@ export type SyncHub = {
   create(repo: string): Promise<void>
   sizeBytes(repo: string): Promise<number | null>
   header(repo: string): Promise<string | null>
+  /** The account's own private repos holding this file, with its text. */
+  privateReposWithFile(file: string): Promise<Array<{ repo: string; text: string }>>
 }
 
 export type KeyStore = { load(): Buffer | null; save(key: Buffer): void; clear(): void }
@@ -122,6 +124,8 @@ type SavedState = {
   projects: Record<string, ProjectState>
   chats: Record<string, ChatState>
   conflicts: Record<string, SyncConflict>
+  /** This PC chose to disconnect, so it isn't offered the repo again unprompted. */
+  leftSync?: boolean
 }
 
 type Origin = { root: string; claudeDir: string; siblings: string[] }
@@ -236,6 +240,8 @@ export class SyncService {
   private presenceSent = ''
   private openChat: string | null = null
   private github: GithubState = { state: 'missing', account: null }
+  private discovered: string[] = []
+  private discoveredAt: number | null = null
   private githubAt = 0
   private scanCache: { at: number; projects: ProjectInfo[] } | null = null
   private titlesToApply = new Map<string, string>()
@@ -343,6 +349,19 @@ export class SyncService {
     }
   }
 
+  /** Looks for sync repos on the account, for a PC that isn't linked to one. Runs behind the
+   *  status it's called from, and reports again if it found anything different. */
+  private discoverRepos(): void {
+    if (this.discoveredAt !== null && this.now() - this.discoveredAt < STALE_CHECK_MS) return
+    this.discoveredAt = this.now()
+    void this.deps.hub.privateReposWithFile(HEADER_FILE).then(found => {
+      const repos = found.filter(f => this.parseHeader(f.text) !== null).map(f => f.repo).sort()
+      if (repos.join() === this.discovered.join()) return
+      this.discovered = repos
+      this.deps.onChange()
+    }).catch(err => console.warn('[sync] could not look for a sync repo', err))
+  }
+
   private parseHeader(text: string): Header | null {
     try {
       const h = JSON.parse(text) as Header
@@ -435,6 +454,7 @@ export class SyncService {
   private activate(repo: string, encrypted: boolean, key: Buffer | null): void {
     if (key !== null) this.deps.keys.save(key)
     this.state.repo = repo
+    this.state.leftSync = false
     this.state.encrypted = encrypted
     this.state.remoteSha = null
     this.state.projects = {}
@@ -449,6 +469,7 @@ export class SyncService {
       await this.removeRepoDir()
       this.deps.keys.clear()
       this.state.repo = null
+      this.state.leftSync = true
       this.state.remoteSha = null
       this.state.projects = {}
       this.state.chats = {}
@@ -1469,6 +1490,7 @@ export class SyncService {
 
   async status(): Promise<SyncStatus> {
     const github = await this.refreshGithub()
+    if (github.state === 'ready' && this.state.repo === null) this.discoverRepos()
     const scanned = await this.localProjects().catch(() => [] as ProjectInfo[])
     const byRoot = new Map(Object.values(this.state.projects).map(p => [normalizePath(p.root).toLowerCase(), p]))
     const rows: SyncProjectRow[] = []
@@ -1508,6 +1530,8 @@ export class SyncService {
       repoSizeBytes: this.repoSize,
       projects: rows,
       remoteProjects,
+      discoveredRepos: this.state.repo === null ? this.discovered : [],
+      leftSync: this.state.leftSync === true,
       conflicts: Object.values(this.state.conflicts).map(c => ({
         ...c, sessionPk: this.deps.sessionPkOf(this.transcriptPath(this.state.projects[c.projectId]?.root ?? '', c.sessionId)) ?? c.sessionPk
       })),

@@ -23,7 +23,7 @@ import { ChatHeaderControls } from './components/ChatHeaderControls'
 import { SearchOverlay } from './components/SearchOverlay'
 import { SettingsWindow, type SettingsSection } from './components/SettingsWindow'
 import { BlockedBanner } from './components/BlockedBanner'
-import { SyncChatBanner, SyncConflictDialog, useSyncChat } from './components/SyncChat'
+import { SyncChatBanner, SyncConflictDialog, useSyncChat, useSyncOffer } from './components/SyncChat'
 import { RemoteBadge } from './components/RemoteBadge'
 import { DeleteWizard } from './components/DeleteWizard'
 import { UpdateBar, UpdateIcon } from './components/UpdatesPanel'
@@ -753,6 +753,16 @@ export function App() {
     if (created !== null) await openSession(created)
   }
 
+  /** Opens a project sync just brought to this PC. */
+  async function openLinkedProject(workingDir: string): Promise<void> {
+    setNewChatOpen(false)
+    const list = await api.listChannels()
+    setChannels(list)
+    const same = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const found = list.find(c => c.cwd !== null && same(c.cwd) === same(workingDir))
+    if (found !== undefined) { setRevealChannel(found.id); await openProject(found) }
+  }
+
   // /clear: this chat stays in the history; a new one opens in the same folder.
   async function clearChat(): Promise<void> {
     if (session === null || creatingChatRef.current) return
@@ -1208,6 +1218,7 @@ export function App() {
   forkChatRef.current = forkChat
 
   const syncChat = useSyncChat(session?.id ?? null)
+  const syncOfferNotice = useSyncOffer()
   const onSendRef = useRef<(text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => void>(() => {})
   const checkingSyncRef = useRef(new Map<number, { text: string; images: ComposerImage[]; cancelled: boolean }>())
   const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
@@ -1557,7 +1568,9 @@ export function App() {
             onRename={onRenameChannel} onToggleStar={onToggleStar} onMoveToGroup={onMoveToGroup}
             onCreateGroup={onCreateGroup} onDeleteGroup={onDeleteGroup} onRenameGroup={onRenameGroup}
             onSetGroupIcon={onSetGroupIcon} onSetIcon={onSetIcon}
-            onToggleHidden={onToggleHidden} onDeleteChannel={onDeleteChannel} onDeleteChat={onDeleteChat} />
+            onToggleHidden={onToggleHidden} onDeleteChannel={onDeleteChannel} onDeleteChat={onDeleteChat}
+            syncOffer={syncOfferNotice.offer} onDismissSyncOffer={syncOfferNotice.dismiss}
+            onOpenSyncOffer={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />
           <Resizer label="Resize channel list"
             onResize={dx => setNavWidth(w => clamp(w + dx, NAV_MIN, NAV_MAX))} />
         </>
@@ -1811,6 +1824,7 @@ export function App() {
           confirmBypass={settings?.confirmBeforeBypass ?? false}
           onCancel={() => setNewChatOpen(false)}
           onCreate={createChat}
+          onOpenProject={openLinkedProject}
         />
       )}
       {searchOpen && (

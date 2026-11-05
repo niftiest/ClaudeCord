@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { resolveNewProjectOptions, type NewChatDefaults, type NewProjectOptions } from '../lib'
+import { checkoutRows, filterCheckoutRows, resolveNewProjectOptions, type CheckoutRow, type NewChatDefaults, type NewProjectOptions } from '../lib'
 import { EFFORTS } from '../../shared/models'
 import { modelOption, useClaudeModels } from './useClaudeModels'
 import type { FolderContents } from '../../shared/shell-run-types'
 import type { GithubRepoOption, GithubStatus } from '../../shared/github-types'
+import type { RemoteProject } from '../../shared/sync-types'
 
 /** Modal for starting a brand-new chat (Plan 2 Task 8): a working directory
  *  (typed, or via the native folder picker), whether to run with
@@ -20,7 +21,9 @@ import type { GithubRepoOption, GithubStatus } from '../../shared/github-types'
  *  native Browse dialog, and the end-to-end create-and-open flow) is
  *  visual/electron and cannot be exercised by vitest -- see the Task 8
  *  report for the manual check. */
-export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = false }: {
+const SEARCH_ABOVE = 10
+
+export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, confirmBypass = false }: {
   defaults: NewChatDefaults
   /** Ask once more before creating a chat that skips permission prompts. */
   confirmBypass?: boolean
@@ -31,6 +34,8 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
    *  component shows inline and leaves the dialog open so the user can
    *  correct it. */
   onCreate: (options: NewProjectOptions) => Promise<{ ok: true } | { ok: false; error: string }>
+  /** Opens a project that's just been brought over from another PC, and closes this dialog. */
+  onOpenProject: (workingDir: string) => void
 }) {
   const [cwd, setCwd] = useState(defaults.cwd ?? '')
   // Interactive permission approval is now wired end-to-end (Plan 3 Task 7):
@@ -76,6 +81,12 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
   const [repos, setRepos] = useState<GithubRepoOption[] | null>(null)
   const [reposError, setReposError] = useState<string | null>(null)
   const [repo, setRepo] = useState('')
+  const [picked, setPicked] = useState<CheckoutRow | null>(null)
+  const [search, setSearch] = useState('')
+  const [remote, setRemote] = useState<RemoteProject[]>([])
+  const [syncRepos, setSyncRepos] = useState<string[]>([])
+  // A project brought over from another PC, with what to know before opening it.
+  const [linked, setLinked] = useState<{ workingDir: string; warnings: string[] } | null>(null)
   const [preparing, setPreparing] = useState(false)
   // The repo + folder already cloned or pulled, so a second Create (after a prompt) doesn't repeat it.
   const [prepared, setPrepared] = useState<string | null>(null)
@@ -92,17 +103,40 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         else setReposError(list.error)
       })
     })
+    void api.syncStatus().then(status => {
+      if (!alive) return
+      setRemote(status.configured ? status.remoteProjects : [])
+      setSyncRepos([...status.discoveredRepos, ...(status.repo === null ? [] : [status.repo])])
+    }).catch(() => { /* the list just won't show what's synced */ })
     return () => { alive = false }
   }, [])
 
-  function pickRepo(fullName: string) {
-    setRepo(fullName)
+  const rows = repos === null && remote.length === 0 ? null : checkoutRows(repos ?? [], remote, syncRepos)
+  const shownRows = rows === null ? [] : filterCheckoutRows(rows, search)
+
+  /** Clicking the picked row again goes back to using a folder. A clone already on this PC is
+   *  used as it is: only a repo that isn't here yet gets fetched. */
+  function pickRow(row: CheckoutRow) {
+    const next = picked?.key === row.key ? null : row
+    setPicked(next)
+    setRepo(next !== null && next.sync === null && !next.onThisPc ? next.repo ?? '' : '')
     setPrepared(null)
     setRepoWarning(null)
     setTrustPrompt(null)
-    const option = repos?.find(r => r.fullName === fullName)
-    if (option !== undefined) setCwd(option.destination)
-    else if (repos?.some(r => r.destination === cwd)) setCwd('')
+    setLinked(null)
+    setError(null)
+    if (next !== null) setCwd(next.folder)
+    else if (cwd === picked?.folder) setCwd(defaults.cwd ?? '')
+  }
+
+  async function bringOver(projectId: string, folder: string) {
+    if (linked !== null) { onOpenProject(linked.workingDir); return }
+    setError(null)
+    setPreparing(true)
+    const outcome = await api.syncLinkProject(projectId, folder).finally(() => setPreparing(false))
+    if (!outcome.ok) { setError(outcome.error); return }
+    if (outcome.warnings.length > 0) setLinked({ workingDir: outcome.workingDir, warnings: outcome.warnings })
+    else onOpenProject(outcome.workingDir)
   }
 
   async function browse() {
@@ -111,6 +145,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
   }
 
   async function submit() {
+    if (picked?.sync != null) { await bringOver(picked.sync.projectId, cwd.trim()); return }
     const resolved = resolveNewProjectOptions(
       {
         cwd,
@@ -157,21 +192,40 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         <h2 className="modal-title">New chat</h2>
 
         {github?.state === 'ready' && (
-          <label className="field">
-            <span className="field-label">GitHub repository</span>
-            <select className="field-input" value={repo} disabled={repos === null || preparing}
-              onChange={e => pickRepo(e.target.value)}>
-              <option value="">{repos === null && reposError === null ? 'Loading your repositories…' : 'None: use a folder'}</option>
-              {(repos ?? []).map(r => (
-                <option key={r.fullName} value={r.fullName} title={r.description ?? undefined}>
-                  {r.fullName}{r.isPrivate ? ' (private)' : ''}{r.isArchived ? ' (archived)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="field">
+            <span className="field-label">Your GitHub projects</span>
+            {rows !== null && rows.length > SEARCH_ABOVE && (
+              <input className="field-input checkout-search" type="text" value={search} placeholder={`Filter ${rows.length} projects`}
+                aria-label="Filter projects" onChange={e => setSearch(e.target.value)} />
+            )}
+            {repos === null && reposError === null && <p className="field-note">Loading your repositories…</p>}
+            {repos !== null && rows !== null && rows.length === 0 && <p className="field-note">No repositories on this account yet.</p>}
+            {rows !== null && rows.length > 0 && (
+              <div className="checkout-list" role="listbox" aria-label="Your GitHub projects">
+                {shownRows.length === 0 && <p className="field-note checkout-none">No projects match that.</p>}
+                {shownRows.map(r => (
+                  <button key={r.key} type="button" className="checkout-row" role="option" aria-selected={picked?.key === r.key}
+                    disabled={preparing} title={r.description ?? undefined} onClick={() => pickRow(r)}>
+                    <span className="checkout-name">
+                      {r.sync !== null && <span className="checkout-synced" title={`Syncing from ${r.sync.from}`} aria-label="Syncing from another PC">⟳</span>}
+                      {r.label}
+                    </span>
+                    <span className="checkout-meta">
+                      {[
+                        r.sync !== null && `Syncing from ${r.sync.from}, ${r.sync.chats} chat${r.sync.chats === 1 ? '' : 's'}`,
+                        r.onThisPc && 'On this PC',
+                        r.isPrivate && 'Private',
+                        r.isArchived && 'Archived'
+                      ].filter(Boolean).join(' · ') || 'Public'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {reposError !== null && <p className="field-note">Couldn’t list your repositories: {reposError}</p>}
-        {repos !== null && repos.length === 0 && <p className="field-note">All your repositories already have a project.</p>}
+        {picked?.sync != null && <p className="field-note">Brings the project’s chats to the folder below{picked.repo !== null ? ', and clones its code there' : ''}, then opens it.</p>}
         {repo !== '' && <p className="field-note">Created in the folder below: cloned if it’s new there, or pulled if it’s already there.</p>}
         {github?.state === 'signed_out' && <p className="field-note">Run <code>gh auth login</code> to start a chat from one of your GitHub repositories.</p>}
 
@@ -220,6 +274,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
         </label>
 
         {error !== null && <div className="modal-error">{error}</div>}
+        {linked?.warnings.map(w => <div key={w} className="modal-error" role="alert">{w}</div>)}
         {repoWarning !== null && <div className="modal-error" role="alert">{repoWarning} Press Create again to start the chat anyway.</div>}
         {trustPrompt !== null && <TrustPrompt contents={trustPrompt} skipPermissions={skipPermissions} />}
         {confirming && (
@@ -232,7 +287,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, confirmBypass = fa
           <button type="button" className="btn-secondary" onClick={onCancel} disabled={creating || preparing}>Cancel</button>
           <button type="button" className="btn-primary" onClick={() => void submit()}
             disabled={cwd.trim().length === 0 || creating || preparing}>
-            {preparing ? 'Getting the repository…' : creating ? 'Creating…' : trustPrompt !== null ? 'Trust folder and create' : confirming ? 'Yes, create it' : 'Create chat'}
+            {picked?.sync != null ? (preparing ? 'Setting up…' : linked !== null ? 'Open project' : 'Set up on this PC') : preparing ? 'Getting the repository…' : creating ? 'Creating…' : trustPrompt !== null ? 'Trust folder and create' : confirming ? 'Yes, create it' : 'Create chat'}
           </button>
         </div>
       </div>

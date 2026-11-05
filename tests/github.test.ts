@@ -163,14 +163,17 @@ describe('availableRepos', () => {
   const origins: Record<string, string> = { 'D:/GIT/linked': 'Me/Linked' }
   const originOf = (cwd: string) => origins[cwd.replace(/\\/g, '/')] ?? null
 
-  it('leaves out a repo a project already uses, whatever the case, and gives each the rest a destination', () => {
+  it('lists every repo: one a project already uses, whatever the case, keeps that folder', () => {
     const repos = [repo('me/linked'), repo('me/free')]
-    expect(availableRepos(repos, ['D:/GIT/linked'], root, originOf)).toEqual([{ ...repos[1], destination: join(root, 'free') }])
+    expect(availableRepos(repos, ['D:/GIT/linked'], root, originOf)).toEqual([
+      { ...repos[0], destination: 'D:/GIT/linked', onThisPc: true },
+      { ...repos[1], destination: join(root, 'free'), onThisPc: false }
+    ])
   })
 
-  it('leaves out a repo whose usual folder already has a project, even if that folder is gone', () => {
+  it("doesn't count a folder as a clone just for having the repo's name", () => {
     const cwd = join(root, 'gone')
-    expect(availableRepos([repo('me/gone')], [cwd], root, () => null)).toEqual([])
+    expect(availableRepos([repo('me/gone')], [cwd], root, () => null)).toEqual([{ ...repo('me/gone'), destination: cwd, onThisPc: false }])
   })
 })
 

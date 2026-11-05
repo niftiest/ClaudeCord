@@ -32,7 +32,7 @@ export function SyncSettings() {
 
   if (recoveryKey !== null) return <RecoveryKeyPanel recoveryKey={recoveryKey} onDone={() => setRecoveryKey(null)} />
   if (status.github.state !== 'ready') return <GithubNeeded state={status.github.state} onRecheck={() => void api.syncStatus().then(setStatus)} />
-  if (!status.configured) return <SetupPanel account={status.github.account} previousRepo={status.repo} onKey={setRecoveryKey} />
+  if (!status.configured) return <SetupPanel account={status.github.account} previousRepo={status.repo} discovered={status.discoveredRepos} onKey={setRecoveryKey} />
 
   const report = (r: { ok: true } | { ok: false; error: string }): void => setMessage(r.ok ? null : r.error)
   const synced = status.projects.filter(p => p.projectId !== null)
@@ -199,7 +199,7 @@ function GithubNeeded({ state, onRecheck }: { state: 'missing' | 'signed_out' | 
   )
 }
 
-function SetupPanel({ account, previousRepo, onKey }: { account: string | null; previousRepo: string | null; onKey: (key: string) => void }) {
+function SetupPanel({ account, previousRepo, discovered, onKey }: { account: string | null; previousRepo: string | null; discovered: string[]; onKey: (key: string) => void }) {
   const [name, setName] = useState(previousRepo ?? DEFAULT_REPO)
   const [encrypted, setEncrypted] = useState(true)
   const [found, setFound] = useState<RepoSearch | null>(null)
@@ -213,6 +213,12 @@ function SetupPanel({ account, previousRepo, onKey }: { account: string | null; 
     const timer = setTimeout(() => { void api.syncFindRepo(name).then(setFound) }, 400)
     return () => clearTimeout(timer)
   }, [name])
+
+  // A repo found on the account takes over from the suggested name, unless the user typed one.
+  const onlyFound = discovered.length === 1 ? discovered[0]! : null
+  useEffect(() => {
+    if (onlyFound !== null) setName(current => current === DEFAULT_REPO ? onlyFound : current)
+  }, [onlyFound])
 
   async function create(): Promise<void> {
     setWorking(true); setError(null)
@@ -237,6 +243,12 @@ function SetupPanel({ account, previousRepo, onKey }: { account: string | null; 
         <div className="settings-row-label">Sync repository<span className="settings-hint">A private repo for ClaudeCord’s use. It’s made for you if it doesn’t exist.</span></div>
         <input type="text" value={name} onChange={e => setName(e.target.value)} />
       </label>
+      {discovered.length > 1 && (
+        <div className="sync-found">
+          <span className="settings-note">Sync repos on your account:</span>
+          {discovered.map(r => <button key={r} type="button" className="btn-secondary" onClick={() => setName(r)}>{r}</button>)}
+        </div>
+      )}
       {found?.error !== null && found?.error !== undefined && <div className="modal-error">{found.error}</div>}
       {blocked && <div className="modal-error">{found.repo} already exists and isn’t a sync repo. Choose another name.</div>}
       {canLink ? (

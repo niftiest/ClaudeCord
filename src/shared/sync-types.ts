@@ -111,6 +111,10 @@ export type GithubState = { state: 'missing' | 'signed_out' | 'ready'; account: 
 export type SyncStatus = {
   github: GithubState
   configured: boolean
+  /** Sync repos found on the account, while this PC isn't linked to one. */
+  discoveredRepos: string[]
+  /** This PC chose to disconnect from sync. */
+  leftSync: boolean
   repo: string | null
   encrypted: boolean
   auto: boolean
@@ -155,6 +159,22 @@ export type ResolveOutcome =
   | { ok: false; error: string }
 
 export type SyncResult = { ok: true } | { ok: false; error: string }
+
+/** What the chat list says about something waiting on GitHub. `ids` are what dismissing it covers. */
+export type SyncOffer = { text: string; ids: string[] }
+
+/** Dismissing covers what's listed now: anything new brings the offer back. */
+export function syncOffer(status: SyncStatus, dismissed: ReadonlySet<string>): SyncOffer | null {
+  if (status.github.state !== 'ready') return null
+  if (status.configured) {
+    const ids = status.remoteProjects.map(r => r.projectId)
+    if (ids.every(id => dismissed.has(id))) return null
+    const from = new Set(status.remoteProjects.map(r => r.updatedBy))
+    return { ids, text: `${ids.length} project${ids.length === 1 ? '' : 's'} available from ${from.size === 1 ? [...from][0] : 'your other PCs'}` }
+  }
+  if (status.repo !== null || status.leftSync || status.discoveredRepos.every(r => dismissed.has(r))) return null
+  return { ids: status.discoveredRepos, text: 'Found your sync repo. Link this PC to see its projects.' }
+}
 
 export type RepoSearch = { repo: string; exists: boolean; isPrivate: boolean | null; encrypted: boolean | null; isSyncRepo: boolean; error: string | null }
 

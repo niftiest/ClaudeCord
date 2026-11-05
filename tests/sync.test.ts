@@ -144,7 +144,8 @@ beforeEach(() => {
     sizeBytes: async () => 1234,
     async header() {
       try { return git(bare, 'show', 'main:claudecord-sync.json') } catch { return null }
-    }
+    },
+    privateReposWithFile: async () => []
   }
 })
 
@@ -222,6 +223,39 @@ describe('transcript reading', () => {
 })
 
 describe('setting up', () => {
+  it('finds sync repos on the account and ignores files that only look like one', async () => {
+    const a = makePc('PC-A')
+    hub.privateReposWithFile = async () => [
+      { repo: 'me/real', text: JSON.stringify({ format: 'claudecord-sync', version: 1, encrypted: true, kdf: null, check: null }) },
+      { repo: 'me/other-format', text: JSON.stringify({ format: 'something-else', version: 1 }) },
+      { repo: 'me/junk', text: 'not json' }
+    ]
+    await a.service.status()
+    await new Promise(r => setTimeout(r, 20))
+    const found = await a.service.status()
+    expect(found.discoveredRepos).toEqual(['me/real'])
+    expect(found.leftSync).toBe(false)
+  })
+
+  it('stops offering a repo once linked, and remembers choosing to disconnect', async () => {
+    const a = makePc('PC-A')
+    hub.privateReposWithFile = async () => [{ repo: 'me/claudecord-sync', text: JSON.stringify({ format: 'claudecord-sync', version: 1 }) }]
+    await a.service.status()
+    await new Promise(r => setTimeout(r, 20))
+    await a.service.setupNew({ name: 'claudecord-sync', encrypted: true })
+    expect((await a.service.status()).discoveredRepos).toEqual([])
+    await a.service.disconnect()
+    expect((await a.service.status()).leftSync).toBe(true)
+  })
+
+  it('carries on if the look-up fails', async () => {
+    const a = makePc('PC-A')
+    hub.privateReposWithFile = async () => { throw new Error('offline') }
+    expect((await a.service.status()).discoveredRepos).toEqual([])
+    await new Promise(r => setTimeout(r, 20))
+    expect((await a.service.status()).discoveredRepos).toEqual([])
+  })
+
   it('creates a private repo with a key, and refuses a public one', async () => {
     const a = makePc('PC-A')
     const made = await a.service.setupNew({ name: 'claudecord-sync', encrypted: true })

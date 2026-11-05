@@ -9,6 +9,8 @@
 import type { RenderItem, ChannelRow, SearchHit } from '../shared/types'
 import type { ContentBlock } from '../shared/types'
 import type { ChannelMeta, ChannelGroup } from '../shared/shell-types'
+import type { GithubRepoOption } from '../shared/github-types'
+import type { RemoteProject } from '../shared/sync-types'
 // Type-only import: NewProjectOptions' canonical home is the IPC contract (both
 // the New-Chat dialog and the main process's startNewChat cross that
 // boundary with it) -- erased at compile time, so re-exporting it here adds
@@ -1537,4 +1539,48 @@ export function toolRunSummary(items: RenderItem[]): string {
   }
   const list = [...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => n > 1 ? `${name} ×${n}` : name)
   return `${steps.length} steps · ${list.join(', ')}`
+}
+
+/** One line in the New Chat dialog's list of projects to start from. */
+export type CheckoutRow = {
+  key: string
+  label: string
+  description: string | null
+  isPrivate: boolean
+  isArchived: boolean
+  onThisPc: boolean
+  folder: string
+  /** The GitHub repo, for a project that has one. */
+  repo: string | null
+  /** Set when another PC syncs this project: picking it brings the chats over too. */
+  sync: { projectId: string; from: string; chats: number } | null
+}
+
+/** Projects syncing from other PCs come first, including any with no GitHub repo, then the rest
+ *  in the order given. The sync repos themselves aren't projects, so they're left out. */
+export function checkoutRows(repos: GithubRepoOption[], remote: RemoteProject[], syncRepos: string[]): CheckoutRow[] {
+  const hidden = new Set(syncRepos.map(r => r.toLowerCase()))
+  const byRepo = new Map(repos.map(r => [r.fullName.toLowerCase(), r]))
+  const synced = new Set<string>()
+  const first = remote.map((p): CheckoutRow => {
+    const known = p.github === null ? undefined : byRepo.get(p.github.toLowerCase())
+    if (p.github !== null) synced.add(p.github.toLowerCase())
+    return {
+      key: `sync:${p.projectId}`, label: p.github ?? p.name, description: known?.description ?? null,
+      isPrivate: known?.isPrivate ?? false, isArchived: known?.isArchived ?? false, onThisPc: known?.onThisPc ?? false,
+      folder: known?.onThisPc === true ? known.destination : p.suggestedFolder, repo: p.github,
+      sync: { projectId: p.projectId, from: p.updatedBy, chats: p.chats }
+    }
+  })
+  const rest = repos.filter(r => !hidden.has(r.fullName.toLowerCase()) && !synced.has(r.fullName.toLowerCase())).map((r): CheckoutRow => ({
+    key: `repo:${r.fullName}`, label: r.fullName, description: r.description, isPrivate: r.isPrivate, isArchived: r.isArchived,
+    onThisPc: r.onThisPc, folder: r.destination, repo: r.fullName, sync: null
+  }))
+  return [...first, ...rest]
+}
+
+/** Rows matching every word typed, in the name or description. */
+export function filterCheckoutRows(rows: CheckoutRow[], query: string): CheckoutRow[] {
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+  return rows.filter(r => { const text = `${r.label} ${r.description ?? ''}`.toLowerCase(); return words.every(w => text.includes(w)) })
 }

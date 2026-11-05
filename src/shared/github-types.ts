@@ -9,8 +9,8 @@ export type GithubRepo = {
   pushedAt: string | null
 }
 
-/** A repo with no project yet, and the folder a new chat would clone it into. */
-export type GithubRepoOption = GithubRepo & { destination: string }
+/** A repo and its folder: the clone on this PC if `onThisPc`, otherwise where one would go. */
+export type GithubRepoOption = GithubRepo & { destination: string; onThisPc: boolean }
 
 export type GithubRepoList = { ok: true; repos: GithubRepoOption[] } | { ok: false; error: string }
 

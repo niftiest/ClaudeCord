@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { ChannelRow, SessionSummary } from '../../shared/types'
 import type { PlanUsage } from '../../shared/plan-usage'
 import type { ChannelIcon, ChannelGroup } from '../../shared/shell-types'
+import type { SyncOffer } from '../../shared/sync-types'
 import { CLAUDE_SETUP_URL, groupChannels } from '../lib'
 import { formatCostWhole } from '../../shared/models'
 import { GroupedNav } from './GroupedNav'
@@ -39,7 +40,7 @@ function EmptyProjects() {
 export function Nav({
   reveal = null, onRevealed, channels, groups, selectedId, width, unread, remote, showRepos, totalCost, elevated, activeChats, planUsage, session, onSelect, onShowInExplorer, onManageMemory, onNewChat, onOpenSearch, onOpenManage, onOpenSettings, onCollapse, onOpenPool,
   onRename, onToggleStar, onMoveToGroup, onCreateGroup, onDeleteGroup, onRenameGroup, onSetGroupIcon, onSetIcon,
-  onToggleHidden, onDeleteChannel, onDeleteChat
+  onToggleHidden, onDeleteChannel, onDeleteChat, syncOffer, onOpenSyncOffer, onDismissSyncOffer
 }: {
   /** A project to bring into view, opened from outside this list. */
   reveal?: number | null
@@ -89,6 +90,10 @@ export function Nav({
   onToggleHidden: (dirName: string, hidden: boolean) => void
   onDeleteChannel: (dirName: string) => void
   onDeleteChat: (channel: ChannelRow) => void
+  /** Something waiting on GitHub for this PC, if any. */
+  syncOffer: SyncOffer | null
+  onOpenSyncOffer: () => void
+  onDismissSyncOffer: () => void
 }) {
   const totalSessions = channels.reduce((sum, c) => sum + c.sessionCount, 0)
   const sections = useMemo(() => groupChannels(channels, groups), [channels, groups])
@@ -115,6 +120,12 @@ export function Nav({
         <span style={{ flex: 1, textAlign: 'left' }}>Search chats</span>
         <span className="nav-search-key">⌃K</span>
       </button>
+      {syncOffer !== null && (
+        <div className="sync-offer">
+          <button type="button" className="sync-offer-text" onClick={onOpenSyncOffer}>{syncOffer.text}</button>
+          <button type="button" className="sync-offer-close" aria-label="Dismiss" title="Dismiss" onClick={onDismissSyncOffer}>×</button>
+        </div>
+      )}
       {channels.length === 0 && <EmptyProjects />}
       <div className="nav-list" ref={listRef}>
         <GroupedNav reveal={reveal} sections={sections} selectedId={selectedId} unread={unread} remote={remote} showRepos={showRepos} onSelect={onSelect}

@@ -6,7 +6,7 @@ import type { Catalog } from './catalog/db'
 import { getEngineSessionInfo } from './catalog/repos'
 import { getSettings, updateSettings } from './catalog/settings'
 import type { EngineIpcHandle } from './engine/engine-ipc'
-import { githubStatus, ghPath, realRunner, cleanOutput, type Runner } from './engine/github'
+import { githubStatus, ghPath, privateReposWithFile, realRunner, cleanOutput, type Runner } from './engine/github'
 import { getLiveSessions } from './manage/live'
 import { defaultPaths, type ClaudePaths } from './manage/paths'
 import { SyncService, type KeyStore, type SyncHub } from './sync/service'
@@ -58,7 +58,8 @@ export function githubHub(run: Runner): SyncHub {
         throw new Error(cleanOutput(r.stderr) || `Couldn't read ${repo}.`)
       }
       return Buffer.from(r.stdout.replace(/\s+/g, ''), 'base64').toString('utf8')
-    }
+    },
+    privateReposWithFile: file => privateReposWithFile(run, file)
   }
 }
 

@@ -164,6 +164,30 @@ export async function listGithubRepos(run: Runner): Promise<GithubRepo[]> {
 }
 
 /** Where new clones go: wherever the user's linked projects mostly sit, so they land beside the rest. */
+/** Each of the signed-in account's own private repos that has this file, with its text. One
+ *  request covers 100 repos, so this stays quick however many there are. */
+export async function privateReposWithFile(run: Runner, file: string): Promise<Array<{ repo: string; text: string }>> {
+  const query = `query($after: String) { viewer { repositories(first: 100, after: $after, privacy: PRIVATE, ownerAffiliations: OWNER) {
+    pageInfo { hasNextPage endCursor }
+    nodes { nameWithOwner object(expression: "HEAD:${file}") { ... on Blob { text } } }
+  } } }`
+  const out: Array<{ repo: string; text: string }> = []
+  let after: string | null = null
+  for (let page = 0; page < 50; page++) {
+    const r = await run('gh', ['api', 'graphql', '-f', `query=${query}`, ...(after === null ? [] : ['-f', `after=${after}`])], { timeoutMs: LIST_TIMEOUT_MS })
+    if (r.code !== 0) throw new Error(cleanOutput(r.stderr) || "Couldn't list your repositories.")
+    const found = (JSON.parse(r.stdout) as { data: { viewer: { repositories: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null }
+      nodes: Array<{ nameWithOwner: string; object: { text?: string | null } | null }>
+    } } } }).data.viewer.repositories
+    for (const n of found.nodes) if (typeof n.object?.text === 'string') out.push({ repo: n.nameWithOwner, text: n.object.text })
+    if (!found.pageInfo.hasNextPage || found.pageInfo.endCursor === null) break
+    after = found.pageInfo.endCursor
+  }
+  return out
+}
+
+/** Where new clones go: wherever the user's linked projects mostly sit, so they land beside the rest. */
 export function defaultCloneRoot(linkedCwds: string[], home: string): string {
   const counts = new Map<string, number>()
   for (const cwd of linkedCwds) {
@@ -179,23 +203,19 @@ export function defaultCloneRoot(linkedCwds: string[], home: string): string {
 
 const samePath = (a: string, b: string) => a.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === b.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 
-/** Repos with no chat, project or history yet, each with the folder it would go in. A project counts
- *  if its folder is a clone of the repo, or is the repo's usual folder even if that has since gone. */
+/** The user's repos, each with its folder: the clone already on this PC if there is one, otherwise
+ *  where a new clone would go. */
 export function availableRepos(repos: GithubRepo[], projectCwds: string[], cloneRoot: string,
   originOf: (cwd: string) => string | null = readOriginRepo): GithubRepoOption[] {
-  const linked = new Set<string>()
+  const here = new Map<string, string>()
   for (const cwd of projectCwds) {
-    const repo = originOf(cwd)
-    if (repo !== null) linked.add(repo.toLowerCase())
+    const repo = originOf(cwd)?.toLowerCase()
+    if (repo !== undefined && !here.has(repo)) here.set(repo, cwd)
   }
-  const out: GithubRepoOption[] = []
-  for (const repo of repos) {
-    if (linked.has(repo.fullName.toLowerCase())) continue
-    const destination = join(cloneRoot, repo.fullName.split('/')[1]!)
-    if (projectCwds.some(cwd => samePath(cwd, destination))) continue
-    out.push({ ...repo, destination })
-  }
-  return out
+  return repos.map(repo => {
+    const local = here.get(repo.fullName.toLowerCase())
+    return { ...repo, destination: local ?? join(cloneRoot, repo.fullName.split('/')[1]!), onThisPc: local !== undefined }
+  })
 }
 
 function isEmptyOrMissing(path: string): boolean {

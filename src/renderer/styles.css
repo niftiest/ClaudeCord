@@ -851,6 +851,25 @@ body { margin:0; background:var(--bg); color:var(--tx);
 .bar i { display:block; height:100%; background:var(--accent); transition:width .2s linear; }
 .empty { color:var(--mu); padding:24px; font-size:13.5px; }
 .empty-action { margin-top:12px; }
+.sync-offer { display:flex; align-items:center; gap:4px; margin:0 10px 8px; border-radius:6px; background:var(--s2); }
+.sync-offer-text { flex:1; min-width:0; padding:8px 0 8px 10px; background:none; border:0; color:var(--tx); font:inherit; font-size:12.5px; text-align:left; cursor:pointer; }
+.sync-offer-text:hover { text-decoration:underline; }
+.sync-offer-close { flex:none; width:24px; height:24px; margin-right:4px; background:none; border:0; border-radius:4px; color:var(--mu); font-size:15px; cursor:pointer; }
+.sync-offer-close:hover { background:var(--s3); color:var(--tx); }
+.checkout-search { margin-bottom:6px; }
+.checkout-list { max-height:190px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; }
+.checkout-list::-webkit-scrollbar { width:8px; }
+.checkout-list::-webkit-scrollbar-track { background:transparent; }
+.checkout-list::-webkit-scrollbar-thumb { background:var(--s3); border-radius:4px; }
+.checkout-none { padding:8px 10px; margin:0; }
+.checkout-row { display:block; width:100%; padding:6px 10px; background:none; border:0; color:var(--tx); font:inherit; text-align:left; cursor:pointer; }
+.checkout-row:hover { background:var(--s2); }
+.checkout-row[aria-selected="true"] { background:var(--s3); }
+.checkout-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.checkout-name { display:block; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.checkout-meta { display:block; font-size:11.5px; color:var(--mu); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.checkout-synced { margin-right:6px; color:var(--accent); font-weight:700; }
+.sync-found { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:8px 0; }
 .transcript-archived { max-width:560px; line-height:1.5; }
 .transcript-archived-title { color:var(--amber); font-weight:700; font-size:14.5px; margin-bottom:8px; }
 .transcript-archived p { margin:8px 0 0; }

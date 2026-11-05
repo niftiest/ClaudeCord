@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import type { SyncChatInfo, SyncConflict } from '../../shared/sync-types'
+import { syncOffer, type SyncChatInfo, type SyncConflict, type SyncOffer, type SyncStatus } from '../../shared/sync-types'
 
 const NOTHING: SyncChatInfo = { synced: false, elsewhere: null, conflict: null, pendingSecrets: 0, codeNote: null }
 
@@ -150,4 +150,33 @@ export function SyncConflictDialog({ conflict, heldMessage, onLater, onResolved,
       </div>
     </div>
   )
+}
+
+const DISMISSED_OFFERS = 'cc.sync.dismissedOffers'
+
+function readDismissedOffers(): Set<string> {
+  try {
+    const list = JSON.parse(window.localStorage.getItem(DISMISSED_OFFERS) ?? '[]') as unknown
+    return new Set(Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/** What's waiting on GitHub for this PC, for the chat list to mention. */
+export function useSyncOffer(): { offer: SyncOffer | null; dismiss: () => void } {
+  const [status, setStatus] = useState<SyncStatus | null>(null)
+  const [dismissed, setDismissed] = useState(readDismissedOffers)
+  useEffect(() => {
+    void api.syncStatus().then(setStatus).catch(() => { /* no offer, then */ })
+    return api.onSyncChanged(setStatus)
+  }, [])
+  const offer = status === null ? null : syncOffer(status, dismissed)
+  const dismiss = (): void => {
+    if (offer === null) return
+    const next = new Set([...dismissed, ...offer.ids])
+    window.localStorage.setItem(DISMISSED_OFFERS, JSON.stringify([...next]))
+    setDismissed(next)
+  }
+  return { offer, dismiss }
 }
