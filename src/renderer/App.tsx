@@ -5,7 +5,8 @@ import type { IndexProgress as Progress } from '../shared/ipc'
 import { FOLDER_MISSING, SHELL_OUTPUT_SENT, type Elicitation, type BackgroundTask, type PermissionRequest, type ExternalLock, type RemoteSession } from '../shared/engine-types'
 import type { ChannelMeta, ChannelIcon, ChannelGroup, AppSettings } from '../shared/shell-types'
 import { Nav, SHOW_NAV_STATUS } from './components/Nav'
-import { NO_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage'
+import { NO_PLAN_USAGE, currentWindow, planLabel, type PlanUsage } from '../shared/plan-usage'
+import { costOfSession } from '../shared/models'
 import { IconRail } from './components/IconRail'
 import { ContextRail, ContextRailStrip, type RailView } from './components/ContextRail'
 import { CreateImageDialog } from './components/CreateImageDialog'
@@ -39,7 +40,7 @@ import { McpChip } from './components/McpChip'
 import { MemoryDialog } from './components/MemoryDialog'
 import { ProjectOptions } from './components/ProjectOptions'
 import { OpenInTerminalButton } from './components/OpenInTerminalButton'
-import { effectiveThinkingDisplay, effectiveToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
+import { effectiveThinkingDisplay, effectiveToolDisplay, shownToolDisplay, type ProjectSettings, type ContextUsage } from '../shared/project-options'
 import { ShellRuns } from './components/ShellRuns'
 import { WorkingLine, BackgroundTasksLine, SubagentsLive } from './components/WorkingLine'
 import { RewindDialog } from './components/RewindDialog'
@@ -54,7 +55,7 @@ import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, applyThemeColors, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import type { LocalTheme } from '../shared/themes'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, mcpCommandOf, type McpCommand, isForkCommand,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, mcpCommandOf, type McpCommand, appCommandOf, type AppCommand, nthLatestReply, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -108,6 +109,8 @@ export function App() {
   const [lastEventAt, setLastEventAt] = useState(0)
   const [suggestion, setSuggestion] = useState<string | null>(null)
   const [liveModel, setLiveModel] = useState<string | null>(null)
+  /** Bumped when a command changes the model or effort, so the header's pickers read it again. */
+  const [headerRev, setHeaderRev] = useState(0)
   const [context, setContext] = useState<ContextUsage | null>(null)
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({})
   const [shellRuns, setShellRuns] = useState<ShellRun[]>([])
@@ -1275,6 +1278,84 @@ export function App() {
     else setTerminalNotice(`${done > 0 ? `${verb} ${done}. ` : ''}Couldn't with ${failed.join('; ')}`)
   }
 
+  /** Terminal commands ClaudeCord answers itself (see appCommandOf), with the screen or
+   *  action that does the same job here. Called through a ref: onSend is memoized, and
+   *  this reads the chat's current state. */
+  const runAppCommandRef = useRef<(pk: number, cmd: AppCommand) => void>(() => {})
+  runAppCommandRef.current = (pk: number, cmd: AppCommand): void => {
+    const say = (text: string, good = true): void => { if (good) setGoodNotice(text); setTerminalNotice(text) }
+    switch (cmd.kind) {
+      case 'settings': setSettingsSection(cmd.section); setSettingsOpen(true); return
+      case 'memory': if (project !== null) setMemoryChannel(project); return
+      case 'search': setSearchOpen(true); return
+      case 'copy': {
+        const reply = nthLatestReply(itemsRef.current, cmd.nth)
+        if (reply === null) { say(cmd.nth === 1 ? 'Claude hasn’t replied in this chat yet.' : `There’s no reply ${cmd.nth} back.`, false); return }
+        void navigator.clipboard.writeText(reply).then(
+          () => say(cmd.nth === 1 ? 'Copied Claude’s last reply.' : `Copied the reply ${cmd.nth} back.`),
+          () => say('Couldn’t copy to the clipboard.', false))
+        return
+      }
+      case 'help': say('Type / in the message box to see every command with what it does. Commands that need Claude Code’s terminal offer to open it.'); return
+      case 'plan':
+        setChatMode('plan')
+        void api.setChatMode(pk, 'plan').then(() => {
+          if (cmd.text !== '') onSendRef.current(cmd.text, [], [])
+          else say('Plan mode is on: Claude plans before making changes, and its plan shows in the chat for you to approve.')
+        })
+        return
+      case 'usage': {
+        const now = Date.now()
+        const part = (label: string, w: PlanUsage['fiveHour']): string | null => {
+          const cur = currentWindow(w, now)
+          return cur === null ? null : `${label} ${Math.round(cur.percent)}%${cur.resetsAt !== null ? `, resets ${new Date(cur.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}`
+        }
+        const parts = [part('5-hour', planUsage.fiveHour), part('week', planUsage.sevenDay)].filter((x): x is string => x !== null)
+        const cost = session !== null ? costOfSession(session.model, session) : null
+        say([parts.length > 0 ? `${planLabel(planUsage.plan)}: ${parts.join('; ')}.` : 'Plan usage shows after the next reply.',
+          typeof cost === 'number' ? `This chat so far: about $${cost.toFixed(2)} at list price.` : null,
+          'The chat list’s footer and the right-hand panel keep this up to date.'].filter(Boolean).join(' '))
+        return
+      }
+      case 'status':
+        void api.claudeInfo(project?.cwd ?? null).then(r => {
+          const servers = mcpServers ?? []
+          const connected = servers.filter(s => s.status === 'connected').length
+          say([
+            r.ok && r.info.version !== null ? `Claude Code ${r.info.version}` : 'Claude Code',
+            planUsage.plan !== null ? planLabel(planUsage.plan) : null,
+            session?.model != null ? `model ${session.model}` : null,
+            `mode ${permissionModeLabel(chatMode)}`,
+            project?.cwd != null ? `in ${project.cwd}` : null,
+            servers.length > 0 ? `MCP ${connected} of ${servers.length} connected` : null
+          ].filter(Boolean).join(' · ') + '. Account and connection details are in Claude Code’s own /status, in a terminal.')
+        })
+        return
+      case 'releaseNotes': void api.openLink('https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md'); return
+      case 'exit': say('There’s nothing to exit here. Close the window, or pick another chat.'); return
+      case 'note': say(cmd.text); return
+      case 'model':
+        api.setSessionOverrides(pk, { model: cmd.value })
+        // The header reads the project's choice again once main has saved it.
+        setTimeout(() => setHeaderRev(r => r + 1), 300)
+        say(cmd.value === '' ? 'This project is back on the default model.' : `This project now uses ${cmd.value}.`)
+        return
+      case 'effort':
+        api.setSessionOverrides(pk, { effort: cmd.value })
+        setTimeout(() => setHeaderRev(r => r + 1), 300)
+        say(cmd.value === '' ? 'Effort is back to the default for this project.' : `Effort is ${cmd.value} for this project.`)
+        return
+      case 'focus': {
+        const focused = settings !== null && effectiveToolDisplay(settings.toolDisplay, projectSettings) === 'hidden' && effectiveThinkingDisplay(settings.thinkingDisplay, projectSettings) === 'hidden'
+        const on = cmd.on ?? !focused
+        const patch = on ? { toolDisplay: 'hidden' as const, thinkingDisplay: 'hidden' as const } : { toolDisplay: shownToolDisplay(settings?.toolDisplay ?? 'grouped'), thinkingDisplay: 'show' as const }
+        void api.setProjectSettings(pk, patch).then(setProjectSettings)
+        say(on ? 'Focus view: tool calls and thoughts are hidden in this project. /focus again, or Project options, brings them back.' : 'Tool calls and thoughts show again in this project.')
+        return
+      }
+    }
+  }
+
   const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => {
     // Composer is only mounted while a session is open, so this is a
     // defensive no-op, not a reachable path.
@@ -1342,6 +1423,8 @@ export function App() {
     }
     const mcp = mcpCommandOf(combined)
     if (mcp !== null) { void runMcpCommand(session.id, mcp); return }
+    const appCommand = appCommandOf(combined)
+    if (appCommand !== null && images.length === 0) { runAppCommandRef.current(session.id, appCommand); return }
     if (isForkCommand(combined)) { forkChatRef.current(); return }
     if (isRewindCommand(combined)) {
       if (runningRef.current) setTerminalNotice('Claude is still replying here. Press Esc to stop it, then rewind.')
@@ -1702,7 +1785,7 @@ export function App() {
               session={session} sessions={sessions} onOpenChat={s => void openSession(s)} onFork={forkChat}
               summary={`${permissionModeLabel(chatMode)} · ${liveModel ?? session.model ?? 'Default model'}`}
               sync={syncStates.get(project.id) ?? null} onSync={onSyncProject}>
-              <ChatHeaderControls key={session.id} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />
+              <ChatHeaderControls key={`${session.id}-${headerRev}`} session={session} liveModel={liveModel} mode={chatMode} onChangeMode={changeChatMode} />
             </ProjectOptions>
           )}
           {(manageOpen || !(settings?.showContextRail ?? true)) && <UpdateIcon />}

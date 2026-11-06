@@ -12,7 +12,7 @@ import { mcpLoginCommand } from '../src/main/engine/terminal'
 import { ClaudeInfoService, INFO_ARGS, parseCommands } from '../src/main/engine/claude-info'
 import type { ChildLike } from '../src/main/engine/transport'
 import { listProjectFiles } from '../src/main/project-files'
-import { applyCompletion, hideAnsweredCommands, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpCommandOf, mcpProblems, rankFiles } from '../src/renderer/lib'
+import { applyCompletion, hideAnsweredCommands, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpCommandOf, appCommandOf, nthLatestReply, mcpProblems, rankFiles } from '../src/renderer/lib'
 import type { ClaudeCommand, McpServerStatus } from '../src/shared/claude-info-types'
 
 class FakeProcess extends EventEmitter {
@@ -154,7 +154,9 @@ describe('asking Claude Code what it has', () => {
       ['docx', 'synced', null],
       ['compact', 'builtin', null],
       ['mcp__rea__trace', 'mcp', null],
-      ['clear', 'builtin', null]
+      ['clear', 'builtin', null],
+      // A bundled skill now: it runs headless, so it stays.
+      ['doctor', 'builtin', null]
     ])
     expect(commands[0]!.description).toBe('Build loop')
     expect(commands[2]!.description).toBe('Think first')
@@ -201,7 +203,9 @@ describe('asking Claude Code what it has', () => {
     const request = svc.get('C:\\p')
     answer(children[0]!)
     const info = await request
-    expect(info.commands.map(c => c.name)).toEqual(['a'])
+    // Claude's own, then the ones ClaudeCord answers itself.
+    expect(info.commands[0]!.name).toBe('a')
+    expect(info.commands.map(c => c.name)).toEqual(expect.arrayContaining(['memory', 'status', 'add-dir', 'rewind']))
     expect(info.version).toBe('2.1.316')
     expect(children[0]!.ended).toBe(true)
     expect(calls[0]!.args).toBe(INFO_ARGS)
@@ -425,5 +429,51 @@ describe('/mcp', () => {
   it('leaves other messages alone', () => {
     expect(mcpCommandOf('/mcpx')).toBeNull()
     expect(mcpCommandOf('tell me about /mcp')).toBeNull()
+  })
+})
+
+describe('commands ClaudeCord answers itself', () => {
+  it('maps the terminal commands that have a screen or action here', () => {
+    expect(appCommandOf('/theme')).toEqual({ kind: 'settings', section: 'appearance' })
+    expect(appCommandOf('/allowed-tools')).toEqual({ kind: 'settings', section: 'claude' })
+    expect(appCommandOf('/config')).toEqual({ kind: 'settings', section: 'claude' })
+    expect(appCommandOf('/memory')).toEqual({ kind: 'memory' })
+    expect(appCommandOf('/continue')).toEqual({ kind: 'search' })
+    expect(appCommandOf('/copy 3')).toEqual({ kind: 'copy', nth: 3 })
+    expect(appCommandOf('/plan add tests')).toEqual({ kind: 'plan', text: 'add tests' })
+    expect(appCommandOf('/plan open')).toEqual({ kind: 'plan', text: '' })
+    expect(appCommandOf('/cost')).toEqual({ kind: 'usage' })
+    expect(appCommandOf('/focus off')).toEqual({ kind: 'focus', on: false })
+    expect(appCommandOf('/quit')).toEqual({ kind: 'exit' })
+    expect(appCommandOf('/color')).toMatchObject({ kind: 'note' })
+  })
+
+  it('leaves the rest to Claude Code, including /config with a setting to change', () => {
+    expect(appCommandOf('/config autoCompact=false')).toBeNull()
+    expect(appCommandOf('/context')).toBeNull()
+    expect(appCommandOf('/compact')).toBeNull()
+    expect(appCommandOf('hello')).toBeNull()
+  })
+
+  it('counts replies back from the latest for /copy', () => {
+    const item = (role: 'user' | 'assistant', text: string) => ({ kind: 'text' as const, uuid: text, role, ts: null, model: null, text })
+    const items = [item('assistant', 'first'), item('user', 'q'), item('assistant', 'second'), item('assistant', '  ')]
+    expect(nthLatestReply(items, 1)).toBe('second')
+    expect(nthLatestReply(items, 2)).toBe('first')
+    expect(nthLatestReply(items, 3)).toBeNull()
+  })
+})
+
+describe('/model and /effort with a value', () => {
+  it('set the header’s choice, so it lasts past the chat’s process', () => {
+    expect(appCommandOf('/model opus')).toEqual({ kind: 'model', value: 'opus' })
+    expect(appCommandOf('/model default')).toEqual({ kind: 'model', value: '' })
+    expect(appCommandOf('/effort high')).toEqual({ kind: 'effort', value: 'high' })
+    expect(appCommandOf('/effort auto')).toEqual({ kind: 'effort', value: '' })
+  })
+  it('leave the rest to Claude Code: listing, and options only it knows', () => {
+    expect(appCommandOf('/model')).toBeNull()
+    expect(appCommandOf('/effort')).toBeNull()
+    expect(appCommandOf('/effort ultracode on')).toBeNull()
   })
 })

@@ -1316,7 +1316,10 @@ describe('terminalOnlyCommand', () => {
     const { terminalOnlyCommand } = await import('../src/renderer/lib')
     expect(terminalOnlyCommand('/hooks')).toBe('/hooks')
     expect(terminalOnlyCommand('  /Login  ')).toBe('/login')
-    expect(terminalOnlyCommand('/chrome reconnect')).toBe('/chrome')
+    expect(terminalOnlyCommand('/tasks')).toBe('/tasks')
+    // ClaudeCord has its own screen for these.
+    expect(terminalOnlyCommand('/chrome')).toBeNull()
+    expect(terminalOnlyCommand('/memory')).toBeNull()
   })
   it('leaves commands that work headlessly, skills and ordinary text alone', async () => {
     const { terminalOnlyCommand } = await import('../src/renderer/lib')

@@ -26,6 +26,7 @@ import { isDisplayRow } from '../main/jsonl/parse'
 import { rewoundUuids } from '../main/jsonl/rewound'
 import { CLEAR_COMMANDS, TERMINAL_ONLY_COMMANDS, type ClaudeCommand, type CommandSource, type McpServerStatus } from '../shared/claude-info-types'
 import { buildRenderItems, collectToolResults } from '../main/jsonl/render'
+import { EFFORTS } from '../shared/models'
 
 export type { NewProjectOptions }
 
@@ -1311,6 +1312,71 @@ export function sideQuestionOf(text: string): string | null {
 export function renameCommandOf(text: string): string | null {
   const m = /^\s*\/rename\s+([\s\S]+)$/.exec(text)
   return m === null ? null : m[1]!.trim()
+}
+
+/** Terminal commands ClaudeCord answers with its own screens or actions, because Claude
+ *  Code can't run them headless ("isn't available in this environment") or only prints a
+ *  summary pointing back to the terminal. Checked against 2.1.318. */
+export type AppCommand =
+  | { kind: 'settings'; section: 'appearance' | 'skills' | 'claude' | 'engine' }
+  | { kind: 'memory' }
+  | { kind: 'search' }
+  | { kind: 'copy'; nth: number }
+  | { kind: 'help' }
+  | { kind: 'plan'; text: string }
+  | { kind: 'usage' }
+  | { kind: 'status' }
+  | { kind: 'releaseNotes' }
+  | { kind: 'exit' }
+  /** Claude Code's focus view: just your prompt and the replies. Here, this project's
+   *  tool calls and thoughts switched off (or back on). Null `on` toggles. */
+  | { kind: 'focus'; on: boolean | null }
+  /** Only changes the terminal's own look: says so, and what does the job here. */
+  | { kind: 'note'; text: string }
+  /** What the header's pickers do, so the choice lasts past this chat's process. '' is the default. */
+  | { kind: 'model'; value: string }
+  | { kind: 'effort'; value: string }
+
+export function appCommandOf(text: string): AppCommand | null {
+  const m = /^\s*\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/i.exec(text)
+  if (m === null) return null
+  const name = m[1]!.toLowerCase(), args = (m[2] ?? '').trim()
+  switch (name) {
+    case 'theme': return { kind: 'settings', section: 'appearance' }
+    case 'skills': return { kind: 'settings', section: 'skills' }
+    case 'permissions': case 'allowed-tools': return { kind: 'settings', section: 'claude' }
+    // With key=value, Claude Code sets it itself; bare, it only prints usage.
+    case 'config': case 'settings': return args === '' ? { kind: 'settings', section: 'claude' } : null
+    case 'chrome': return { kind: 'settings', section: 'engine' }
+    case 'memory': return { kind: 'memory' }
+    case 'resume': case 'continue': return { kind: 'search' }
+    case 'copy': {
+      const n = args === '' ? 1 : Number(args)
+      return Number.isInteger(n) && n >= 1 ? { kind: 'copy', nth: n } : { kind: 'copy', nth: 1 }
+    }
+    case 'help': return { kind: 'help' }
+    case 'plan': return { kind: 'plan', text: args.toLowerCase() === 'open' ? '' : args }
+    case 'usage': case 'cost': case 'stats': return { kind: 'usage' }
+    case 'status': return { kind: 'status' }
+    case 'release-notes': return { kind: 'releaseNotes' }
+    case 'exit': case 'quit': return { kind: 'exit' }
+    case 'color': return { kind: 'note', text: '/color only colors the prompt bar in Claude Code’s terminal. To tell chats apart here, right-click a project in the chat list and choose Change icon.' }
+    // Bare, Claude Code lists what there is; with a name, the header's choice is set.
+    case 'model': return args === '' ? null : { kind: 'model', value: args.toLowerCase() === 'default' ? '' : args }
+    case 'effort': {
+      const level = args.toLowerCase()
+      if (level === 'auto' || level === 'default') return { kind: 'effort', value: '' }
+      return (EFFORTS as readonly string[]).includes(level) ? { kind: 'effort', value: level } : null
+    }
+    case 'focus': return { kind: 'focus', on: args.toLowerCase() === 'on' ? true : args.toLowerCase() === 'off' ? false : null }
+    default: return null
+  }
+}
+
+/** The nth-latest reply of Claude's, as `/copy N` counts them, or null. */
+export function nthLatestReply(items: RenderItem[], nth: number): string | null {
+  const replies = items.filter((it): it is Extract<RenderItem, { kind: 'text' }> => it.kind === 'text' && it.role === 'assistant' && it.text.trim() !== '')
+  return replies[replies.length - nth]?.text ?? null
 }
 
 export type McpCommand = { action: 'open' } | { action: 'reconnect' | 'enable' | 'disable'; target: string }

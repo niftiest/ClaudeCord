@@ -51,18 +51,42 @@ export type McpCheckResult = { ok: true; servers: McpServerStatus[] } | { ok: fa
 export type ClaudeInfoResult = { ok: true; info: ClaudeInfo } | { ok: false; error: string }
 
 /** Slash commands that need Claude Code's terminal: tested against 2.1.316 and 2.1.318
- *  without a terminal (or, for logins and installers, inherently interactive).
+ *  without a terminal (or, for logins and installers, inherently interactive). Ones
+ *  ClaudeCord answers itself (appCommandOf, /mcp, /add-dir, /btw, /rename, /rewind, /fork,
+ *  /clear) aren't here, and neither is /doctor, which runs headless as a bundled skill.
  *  Claude's own command list can't answer this alone: it lists a few of these
  *  and leaves out aliases that do work, such as /cost. */
 export const TERMINAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
-  'artifacts', 'autofix-pr', 'background', 'brief', 'bug', 'cd', 'chrome', 'cloud-plugins', 'copy', 'daemon', 'design-login',
-  'desktop', 'diff', 'doctor', 'exit', 'export', 'feedback', 'focus', 'help', 'hooks', 'ide', 'install', 'install-github-app',
-  'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'memory', 'mobile', 'passes', 'permissions', 'plugin', 'plugins',
-  'powerup', 'privacy-settings', 'quit', 'radio', 'rate-limit-options', 'rc', 'release-notes', 'remote-control', 'remote-env',
-  'restart', 'resume', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'settings', 'setup-bedrock', 'setup-vertex', 'skills',
-  'status', 'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'theme', 'todos', 'tui', 'ultraplan', 'upgrade',
+  'artifacts', 'autofix-pr', 'background', 'bashes', 'brief', 'bug', 'cd', 'cloud-plugins', 'daemon', 'design-login',
+  'desktop', 'diff', 'export', 'feedback', 'hooks', 'ide', 'install', 'install-github-app',
+  'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'mobile', 'passes', 'plugin', 'plugins', 'marketplace',
+  'powerup', 'privacy-settings', 'radio', 'rate-limit-options', 'rc', 'remote-control', 'remote-env',
+  'restart', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'setup-bedrock', 'setup-vertex',
+  'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'todos', 'tui', 'ultraplan', 'upgrade',
   'vim', 'voice', 'web-setup', 'wellbeing', 'workflows'
 ])
+
+/** Commands ClaudeCord answers itself (see appCommandOf and the /mcp, /add-dir, /btw,
+ *  /rewind and /fork handling), for the / menu: a headless Claude doesn't list them. */
+export const APP_COMMANDS: ReadonlyArray<Pick<ClaudeCommand, 'name' | 'description' | 'argumentHint' | 'aliases'>> = [
+  { name: 'add-dir', description: 'Let Claude use another folder in this project', argumentHint: '<path>', aliases: [] },
+  { name: 'btw', description: 'Ask a quick side question without interrupting the chat', argumentHint: '<question>', aliases: [] },
+  { name: 'rewind', description: 'Go back to an earlier message, and optionally undo file changes', argumentHint: '', aliases: ['checkpoint', 'undo'] },
+  { name: 'fork', description: 'Fork this chat to try something else from here', argumentHint: '', aliases: ['branch'] },
+  { name: 'memory', description: 'Edit this project’s CLAUDE.md files', argumentHint: '', aliases: [] },
+  { name: 'skills', description: 'See the skills Claude can use', argumentHint: '', aliases: [] },
+  { name: 'permissions', description: 'Edit the allow, ask and deny rules for tools', argumentHint: '', aliases: ['allowed-tools'] },
+  { name: 'theme', description: 'Change ClaudeCord’s theme and colors', argumentHint: '', aliases: [] },
+  { name: 'status', description: 'Claude Code version, plan, model, mode and MCP servers', argumentHint: '', aliases: [] },
+  { name: 'resume', description: 'Find another chat to continue', argumentHint: '', aliases: ['continue'] },
+  { name: 'copy', description: 'Copy Claude’s last reply (or /copy N for the Nth-latest)', argumentHint: '[N]', aliases: [] },
+  { name: 'plan', description: 'Turn on plan mode, optionally with what to plan', argumentHint: '[description]', aliases: [] },
+  { name: 'focus', description: 'Hide tool calls and thoughts in this project, or show them again', argumentHint: '[on|off]', aliases: [] },
+  { name: 'chrome', description: 'Claude in Chrome settings', argumentHint: '', aliases: [] },
+  { name: 'color', description: 'In the terminal, the prompt bar’s color; here, how to tell chats apart', argumentHint: '', aliases: [] },
+  { name: 'release-notes', description: 'Claude Code’s release notes', argumentHint: '', aliases: [] },
+  { name: 'help', description: 'How commands work here', argumentHint: '', aliases: [] }
+]
 
 /** ClaudeCord runs these itself: Claude would start a new session underneath
  *  the open chat, so instead they open a new chat in the same folder. */

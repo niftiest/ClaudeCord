@@ -2,7 +2,7 @@ import { defaultSpawn, type ChildLike, type SpawnFn } from './transport'
 import { parseControlResponse } from './events'
 import { parseMcpServers } from './mcp-status'
 import type { ContextUsage } from '../../shared/project-options'
-import { TERMINAL_ONLY_COMMANDS, type ClaudeCommand, type ClaudeInfo, type ClaudeModel, type CommandSource, type McpServerStatus } from '../../shared/claude-info-types'
+import { APP_COMMANDS, TERMINAL_ONLY_COMMANDS, type ClaudeCommand, type ClaudeInfo, type ClaudeModel, type CommandSource, type McpServerStatus } from '../../shared/claude-info-types'
 
 /** Asks Claude Code about a folder by starting a short-lived process and sending
  *  control requests. No message is sent, so it uses no tokens and creates no chat.
@@ -68,6 +68,13 @@ export function parseCommands(raw: unknown): ClaudeCommand[] {
     })
   }
   return out
+}
+
+/** Claude's commands plus the ones ClaudeCord answers itself, which a headless Claude
+ *  doesn't list, so the / menu offers every command that works here. */
+export function withAppCommands(commands: ClaudeCommand[]): ClaudeCommand[] {
+  const have = new Set(commands.flatMap(c => [c.name, ...c.aliases]))
+  return [...commands, ...APP_COMMANDS.filter(c => !have.has(c.name)).map(c => ({ ...c, aliases: [...c.aliases], source: 'builtin' as const, plugin: null }))]
 }
 
 /** Claude's model list, without "default" (the pickers have their own entry for
@@ -207,7 +214,7 @@ export class ClaudeInfoService {
       const answer = await session.request('initialize')
       const a = isObj(answer) ? answer : {}
       return {
-        commands: parseCommands(a.commands),
+        commands: withAppCommands(parseCommands(a.commands)),
         models: parseModels(a.models),
         version: typeof a.claude_code_version === 'string' ? a.claude_code_version : null,
         fetchedAt: this.now()

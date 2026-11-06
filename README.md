@@ -42,7 +42,7 @@ Other things you can do in a chat:
 
 - Rewind to an earlier message, or pin a message to find it again later.
 - Type `/` to list every skill and command Claude has for that project, including plugins, or `@` to find project files to mention.
-- Use `/compact`, `/context`, `/usage`, and other commands right in the chat. `/clear` starts a new chat in the same folder, `/fork` copies a chat so you can take it another way, `/rename` names it, and `/btw` asks a side question without touching the chat.
+- Use `/compact`, `/context`, `/usage`, and other commands right in the chat. `/clear` starts a new chat in the same folder, `/fork` copies a chat so you can take it another way, `/rename` names it, and `/btw` asks a side question without touching the chat. Terminal commands that ClaudeCord has its own screen for open it: `/memory`, `/skills`, `/permissions`, `/theme`, `/mcp`, `/resume` and `/config`. `/status`, `/usage`, `/copy`, `/plan`, `/focus`, `/model` and `/effort` work here too, and the `/` menu lists them all. Commands that only work in Claude Code's terminal, such as `/login` or `/hooks`, offer to open the chat in one.
 - Start a message with `!` to run a shell command in the chat's folder, as you would in the terminal.
 - Use `/add-dir` or Project options to add other folders to a project.
 - Open a background task's output, or a subagent's full transcript.
