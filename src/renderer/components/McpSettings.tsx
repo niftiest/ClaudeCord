@@ -6,24 +6,46 @@ import { mcpProblems, mcpStatusLabel } from '../lib'
 
 /** Settings → MCP servers: every server Claude Code would use for this folder,
  *  and how each one is doing right now, as Claude itself reports it. Falls back
- *  to the config files if Claude can't be asked. */
-export function McpSettings({ projectCwd, ignored, onIgnoredChange }: {
+ *  to the config files if Claude can't be asked.
+ *
+ *  Opened from a chat (`/mcp` does this), it shows that chat's own servers, live, with
+ *  what Claude Code's /mcp offers: reconnect, turn off or on, and sign in. */
+export function McpSettings({ projectCwd, sessionPk = null, ignored, onIgnoredChange }: {
   projectCwd: string | null
+  /** The open chat, when its process can be asked directly. */
+  sessionPk?: number | null
   ignored: string[]
   onIgnoredChange: (next: string[]) => void
 }) {
   const [servers, setServers] = useState<McpServerStatus[] | null>(null)
+  const [live, setLive] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
   const [fallback, setFallback] = useState<{ error: string; servers: McpServerInfo[] } | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
 
   const check = useCallback(() => {
     setServers(null)
     setFallback(null)
-    void api.mcpCheck(projectCwd).then(async r => {
+    setLoginError(null)
+    void (async () => {
+      // The chat's own process answers at once, if it's running; otherwise start the servers to see.
+      const own = sessionPk === null ? null : await api.mcpStatus(sessionPk).catch(() => null)
+      if (own !== null) { setLive(true); setServers(own); return }
+      setLive(false)
+      const r = await api.mcpCheck(projectCwd)
       if (r.ok) { setServers(r.servers); return }
       setFallback({ error: r.error, servers: await api.listMcpServers(projectCwd) })
-    })
-  }, [projectCwd])
+    })()
+  }, [projectCwd, sessionPk])
+
+  async function act(name: string, run: () => Promise<{ ok: true; servers: McpServerStatus[] } | { ok: false; error: string }>) {
+    setBusy(name)
+    setLoginError(null)
+    const r = await run()
+    setBusy(null)
+    if (r.ok) setServers(r.servers)
+    else setLoginError(`${name}: ${r.error}`)
+  }
   useEffect(check, [check])
 
   async function signIn(name: string) {
@@ -57,7 +79,7 @@ export function McpSettings({ projectCwd, ignored, onIgnoredChange }: {
 
   return <>
     <div className="cc-actions">
-      <span className="settings-note" style={{ margin: 0 }}>{servers.length} configured{projectCwd !== null ? ' for this project' : ''}. A chat warns you if one it needs is down.</span>
+      <span className="settings-note" style={{ margin: 0 }}>{servers.length} configured{projectCwd !== null ? ' for this project' : ''}{live ? ', as this chat sees them' : ''}. A chat warns you if one it needs is down.</span>
       <button type="button" className="btn-secondary" onClick={check}>Check again</button>
     </div>
     {loginError !== null && <div className="cc-err">{loginError}</div>}
@@ -72,6 +94,16 @@ export function McpSettings({ projectCwd, ignored, onIgnoredChange }: {
             {s.status === 'connected' && <span className="ms-detail" style={{ margin: 0 }} title={s.tools.join(', ')}>{s.tools.length} tool{s.tools.length === 1 ? '' : 's'}</span>}
             <span className="mcp-item-actions">
               {s.status === 'needs-auth' && <button type="button" className="btn-secondary" onClick={() => void signIn(s.name)}>Sign in…</button>}
+              {live && sessionPk !== null && s.status !== 'disabled' && s.status !== 'needs-auth' && (
+                <button type="button" className="btn-secondary" disabled={busy !== null} onClick={() => void act(s.name, () => api.mcpReconnect(sessionPk, s.name))}>
+                  {busy === s.name ? 'Working…' : 'Reconnect'}</button>
+              )}
+              {live && sessionPk !== null && (
+                <button type="button" className="btn-secondary" disabled={busy !== null}
+                  title={s.status === 'disabled' ? 'Turn this server back on' : 'Turn this server off. Claude Code remembers it.'}
+                  onClick={() => void act(s.name, () => api.mcpToggle(sessionPk, s.name, s.status === 'disabled'))}>
+                  {s.status === 'disabled' ? 'Turn on' : 'Turn off'}</button>
+              )}
               {problemNames.has(s.name) && (
                 <label className="mcp-warn-toggle">
                   <input type="checkbox" checked={!ignored.includes(s.name)}
@@ -86,6 +118,7 @@ export function McpSettings({ projectCwd, ignored, onIgnoredChange }: {
         </div>
       ))}
     </div>
-    <p className="settings-note">Add or remove servers with <code>claude mcp</code> or your config files. Turn a project’s own servers on or off under Settings → Claude Code.</p>
+    {!live && sessionPk !== null && <p className="settings-note">Send a message in this chat to reconnect or turn servers off from here.</p>}
+    <p className="settings-note">Add or remove servers with <code>claude mcp add</code> in a terminal, or in your config files. Turn a project’s own servers on or off under Settings → Claude Code.</p>
   </>
 }

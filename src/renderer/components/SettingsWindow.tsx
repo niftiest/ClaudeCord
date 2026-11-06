@@ -40,8 +40,10 @@ const IS_WINDOWS = navigator.userAgent.includes('Windows')
  *  new settings (so an invalid value is silently reverted to what stuck).
  *  The "MCP & Skills" section is read-only (lists configured servers/skills for
  *  the user + the open project). */
-export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, initialSection, projects = [] }: {
+export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, sessionPk = null, initialSection, projects = [] }: {
   onClose: () => void
+  /** The open chat, so MCP servers can show what it sees and act on them. */
+  sessionPk?: number | null
   onSettingsChanged?: (s: AppSettings) => void
   projectCwd?: string | null
   initialSection?: SettingsSection
@@ -177,7 +179,7 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           )}
           {section === 'mcp' && (
             <Group title="MCP servers">
-              <McpSettings projectCwd={projectCwd} ignored={settings.mcpWarnIgnore} onIgnoredChange={next => void patch({ mcpWarnIgnore: next })} />
+              <McpSettings projectCwd={projectCwd} sessionPk={sessionPk} ignored={settings.mcpWarnIgnore} onIgnoredChange={next => void patch({ mcpWarnIgnore: next })} />
             </Group>
           )}
           {section === 'skills' && (
@@ -216,9 +218,9 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           {section === 'updates' && (
             <Group title="Updates">
               <UpdatesPanel autoInstall={settings.autoInstallUpdates} />
-              <Toggle label="Check for updates automatically" hint="On launch and every few hours. A new version downloads in the background when one is found. Off: only when you click Check for updates."
+              <Toggle label="Check for updates automatically" hint="On launch and every hour. A new version shows up here and in the corner, and nothing downloads until you click Download. Off: only when you click Check for updates."
                 value={settings.autoCheckUpdates} on={v => patch({ autoCheckUpdates: v })} />
-              <Toggle label="Install updates automatically" hint="Restarts into a downloaded update once nothing is running, no message is unsent, and you've been away for a few minutes. Off: it waits for you to click Restart to update."
+              <Toggle label="Install updates automatically" hint="Once you've downloaded an update, restarts into it when nothing is running, no message is unsent, and you've been away for a few minutes. Off: it waits for you to click Restart to update."
                 value={settings.autoInstallUpdates} on={v => patch({ autoInstallUpdates: v })} />
             </Group>
           )}

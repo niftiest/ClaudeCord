@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openCatalog } from '../src/main/catalog/db'
-import { upsertProject, setProjectCwd, upsertSession, listProjects, listSessions, listSubagents, sumTotalCostUsd } from '../src/main/catalog/repos'
+import { upsertProject, setProjectCwd, projectFolderFor, repairProjectCwds, upsertSession, listProjects, listSessions, listSubagents, sumTotalCostUsd } from '../src/main/catalog/repos'
 import { search } from '../src/main/catalog/search'
 
 function seed() {
@@ -207,5 +207,47 @@ describe('repos', () => {
     // punctuation-only bug. \p{L}/\p{N} with the `u` flag must recognize it.
     expect(search(db, '爬虫')).toHaveLength(1)
     expect(search(db, 'scraper 爬虫')).toHaveLength(1)
+  })
+})
+
+describe("a project's own folder", () => {
+  const folder = (db: ReturnType<typeof openCatalog>, id: number) => (db.prepare('SELECT cwd FROM projects WHERE id = ?').get(id) as { cwd: string | null }).cwd
+
+  it('stays the folder the chat started in after Claude moves into a subfolder', () => {
+    const db = openCatalog(':memory:')
+    const p = upsertProject(db, 'D--GIT-SockProxy')
+    setProjectCwd(db, p, 'D:/GIT/SockProxy')
+    setProjectCwd(db, p, 'D:/GIT/SockProxy/build/audit/sfw-1.14.4/extracted')
+    expect(folder(db, p)).toBe('D:/GIT/SockProxy')
+    setProjectCwd(db, p, '/d/GIT/SockProxy')
+    expect(folder(db, p)).toBe('D:/GIT/SockProxy')
+  })
+
+  it('finds the project folder above a subfolder when that is all it has seen', () => {
+    const db = openCatalog(':memory:')
+    const p = upsertProject(db, 'D--GIT-SockProxy')
+    setProjectCwd(db, p, 'D:/GIT/SockProxy/app/src')
+    expect(folder(db, p)).toBe('D:/GIT/SockProxy')
+    expect(projectFolderFor('D:/GIT/Other/x', 'D--GIT-SockProxy')).toBeNull()
+  })
+
+  it('keeps a folder that matches nothing only until a better one turns up', () => {
+    const db = openCatalog(':memory:')
+    const p = upsertProject(db, 'D--GIT-SockProxy')
+    setProjectCwd(db, p, '/d/GIT/SockProxy')
+    expect(folder(db, p)).toBe('/d/GIT/SockProxy')
+    setProjectCwd(db, p, 'D:/GIT/SockProxy')
+    expect(folder(db, p)).toBe('D:/GIT/SockProxy')
+  })
+
+  it('repairs a folder saved wrongly before', () => {
+    const db = openCatalog(':memory:')
+    const p = upsertProject(db, 'D--GIT-SockProxy')
+    const q = upsertProject(db, 'D--GIT-Fine')
+    db.prepare('UPDATE projects SET cwd = ? WHERE id = ?').run('D:/GIT/SockProxy/build/audit', p)
+    db.prepare('UPDATE projects SET cwd = ? WHERE id = ?').run('D:/GIT/Fine', q)
+    expect(repairProjectCwds(db)).toBe(1)
+    expect(folder(db, p)).toBe('D:/GIT/SockProxy')
+    expect(folder(db, q)).toBe('D:/GIT/Fine')
   })
 })

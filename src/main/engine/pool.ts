@@ -109,6 +109,7 @@ interface Entry {
 export class SessionPool {
   private readonly idleReapMs: () => number
   private readonly transportFactory: TransportFactory
+  private readonly trustToAttest: (cwd: string) => string | null
   private readonly isExternallyLive: (sessionKey: string) => boolean
   private readonly now: () => number
 
@@ -141,8 +142,12 @@ export class SessionPool {
      *  brief's literal interface, but required to test "updated on send and
      *  on each event" without depending on wall-clock timing. */
     now?: () => number
+    /** The folder the user trusted in ClaudeCord's own prompt, to tell Claude Code at
+     *  startup so it records the same answer a terminal would; null to say nothing. */
+    trustToAttest?: (cwd: string) => string | null
   }) {
     const idleReapMs = opts.idleReapMs
+    this.trustToAttest = opts.trustToAttest ?? (() => null)
     this.idleReapMs = typeof idleReapMs === 'function' ? idleReapMs : () => idleReapMs
     this.transportFactory = opts.transportFactory
     this.isExternallyLive = opts.isExternallyLive ?? (() => false)
@@ -503,7 +508,10 @@ export class SessionPool {
     transport.start()
     // Declares the per-task stop button (background-tasks row). Without this an interrupt
     // kills background agents, which Esc in the terminal never does.
-    transport.request?.('initialize', { perTaskStopAffordance: true })?.catch(() => { /* an older CLI; the turn still runs */ })
+    // workspaceTrust: Claude Code then records the folder as trusted itself, so a terminal
+    // there doesn't ask again. Only sent after the user answered ClaudeCord's own prompt.
+    const trusted = this.trustToAttest(spec.cwd)
+    transport.request?.('initialize', { perTaskStopAffordance: true, ...(trusted !== null ? { workspaceTrust: { accepted: true, directory: trusted } } : {}) })?.catch(() => { /* an older CLI; the turn still runs */ })
     if (msg !== null) transport.send(msg)
   }
 

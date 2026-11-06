@@ -9,7 +9,9 @@ export function describeUpdate(s: UpdateStatus, autoInstall = false): string {
     case 'idle': return 'Not checked yet.'
     case 'checking': return 'Checking for updates…'
     case 'none': return 'You have the latest version.'
-    case 'available': return `Version ${s.version} is available, but it couldn't be downloaded automatically${s.reason !== undefined ? `: ${s.reason}` : '.'}`
+    case 'available': return s.reason !== undefined
+      ? `Version ${s.version} is available, but it can't be downloaded from here: ${s.reason}`
+      : `Version ${s.version} is available. Nothing is downloaded until you choose to.`
     case 'downloading': return `Downloading version ${s.version}… ${s.percent}%`
     case 'ready': return autoInstall
       ? `Version ${s.version} is ready. It installs the next time ClaudeCord is idle, or restart now.`
@@ -87,7 +89,7 @@ export function UpdatesPanel({ autoInstall }: { autoInstall: boolean }) {
       <div className="settings-row">
         <div className="settings-row-label">ClaudeCord {status.currentVersion}
           <span className="settings-hint">
-            {status.channel === 'portable' ? 'Portable version: a new version downloads beside this file, starts, and removes the old one.' : status.channel === 'dev' ? 'Development build.' : 'Installed version: updates download and install automatically.'}
+            {status.channel === 'portable' ? 'Portable version: a new version downloads beside this file, starts, and removes the old one.' : status.channel === 'dev' ? 'Development build.' : 'Installed version: a new version downloads only when you click Download, then installs.'}
           </span>
         </div>
       </div>
@@ -107,9 +109,9 @@ export function UpdatesPanel({ autoInstall }: { autoInstall: boolean }) {
             <button type="button" className="btn-primary" onClick={() => void api.installUpdate()}>Restart now</button>
           </>
         )}
-        {status.state === 'available' && status.channel === 'portable' && (
-          <button type="button" className="btn-primary" onClick={() => void api.openUpdateDownload()}>Download</button>
-        )}
+        {status.state === 'available' && (status.reason !== undefined
+          ? <button type="button" className="btn-primary" onClick={() => void api.openUpdateDownload()}>Open the download page</button>
+          : <button type="button" className="btn-primary" onClick={() => void api.downloadUpdate()}>Download version {status.version}</button>)}
       </div>
       {restart.dialog}
     </div>
@@ -129,9 +131,13 @@ export function UpdateIcon() {
   return (
     <>
       <button type="button" className={`update-icon${downloading ? ' update-icon-busy' : ''}`} disabled={downloading}
-        title={downloading ? `A new version is downloading (${status.percent}%)` : 'A new version is available, click to update!'}
-        aria-label={downloading ? 'A new version is downloading' : 'A new version is available, click to update'}
-        onClick={() => { if (status.state === 'ready') restart.request(); else void api.openUpdateDownload() }}>
+        title={downloading ? `A new version is downloading (${status.percent}%)` : status.state === 'ready' ? 'A new version is ready, click to restart into it' : 'A new version is available, click to download it'}
+        aria-label={downloading ? 'A new version is downloading' : status.state === 'ready' ? 'A new version is ready, click to restart into it' : 'A new version is available, click to download it'}
+        onClick={() => {
+          if (status.state === 'ready') restart.request()
+          else if (status.state === 'available' && status.reason === undefined) void api.downloadUpdate()
+          else void api.openUpdateDownload()
+        }}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.8 8 10.3l3.5-3.5M3 13.5h10" /></svg>
       </button>
       {restart.dialog}

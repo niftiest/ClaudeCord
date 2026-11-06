@@ -22,7 +22,7 @@ import { hijackChat } from './hijack'
 import { listMemoryFiles, readMemoryFile, writeMemoryFile } from '../project-memory'
 import type { MemoryFile, MemoryFileContent, MemorySaveResult } from '../../shared/project-memory-types'
 import { ShellRunner, shellRunBlocks } from './shell-run'
-import { claudeTrusts, folderContents, listTrusts } from './folder-trust'
+import { claudeTrusts, folderContents, listTrusts, repoRoot, sameFolder, trustKey } from './folder-trust'
 import { cwdToProjectDir } from '../indexer/discover'
 import type { FolderTrust } from '../../shared/shell-run-types'
 import { homedir } from 'node:os'
@@ -43,6 +43,8 @@ import { listSessions } from '../catalog/repos'
 import type { SessionSummary } from '../../shared/types'
 import { isCatalogSettled } from '../indexer/indexer'
 import { addAllowRule, defaultManagedFiles } from '../claude-settings/files'
+import { BYPASS_ACCEPT_INDEX, BYPASS_QUESTION, bypassAccepted, recordBypassAccepted } from './bypass-consent'
+import type { AppDialogRequest } from '../../shared/app-dialog'
 import type { ElicitationAnswer, LiveEvent, PermissionRequest } from '../../shared/engine-types'
 
 /** The electron boundary for Plan 2's write path (Task 6): constructs the
@@ -136,6 +138,8 @@ function makeClaudeRulesStore(legacy: RulesStore): RulesStore {
 export type EngineHooks = {
   onEvent?: (sessionPk: number, e: LiveEvent) => void
   onPermission?: (sessionPk: number, req: PermissionRequest) => void
+  /** Asks a question in the app's own window; resolves to the button chosen. */
+  ask?: (question: Omit<AppDialogRequest, 'id'>) => Promise<number>
 }
 
 export type EngineIpcHandle = {
@@ -214,7 +218,8 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   const pool = new SessionPool({
     idleReapMs: () => getSettings(db).idleReapMin * 60 * 1000,
     transportFactory: (spec) => new Transport(spec, { claudeBin: claudeBin() }),
-    isExternallyLive: isSessionExternallyLive
+    isExternallyLive: isSessionExternallyLive,
+    trustToAttest: cwd => trustToAttest(cwd)
   })
 
   // Fix 2: without this tick, reapIdle() was never called in production --
@@ -370,15 +375,28 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   }
 
   const countChats = db.prepare(`SELECT COUNT(*) AS n FROM sessions s JOIN projects p ON p.id = s.project_id WHERE p.dir_name = ?`)
+  const readClaudeJson = (): string | null => {
+    try { return readFileSync(join(homedir(), '.claude.json'), 'utf8') } catch { return null } // none yet
+  }
+  const isHome = (cwd: string): boolean => sameFolder(cwd, homedir())
+  /** The home folder, once the user trusts it: for this run only, as in Claude Code. */
+  let homeTrusted = false
   /** A folder is fine if Claude Code or the user already trusts it, or chats have
    *  already run there; only a folder Claude has never worked in gets asked about. */
   const isFolderTrusted = (cwd: string): boolean => {
     if (!existsSync(cwd)) return true // creating the chat reports this properly
-    if (listTrusts(cwd, getSettings(db).trustedFolders)) return true
+    if (isHome(cwd)) return homeTrusted
+    if (listTrusts(cwd, getSettings(db).trustedFolders) !== null) return true
     if ((countChats.get(cwdToProjectDir(cwd)) as { n: number }).n > 0) return true
-    let claudeJson: string | null = null
-    try { claudeJson = readFileSync(join(homedir(), '.claude.json'), 'utf8') } catch { /* none yet */ }
-    return claudeTrusts(cwd, claudeJson)
+    return claudeTrusts(cwd, readClaudeJson())
+  }
+  /** Tell Claude Code only what the user answered in ClaudeCord's prompt, and only
+   *  while Claude Code doesn't already trust the folder. */
+  const trustToAttest = (cwd: string): string | null => {
+    if (!existsSync(cwd)) return null
+    if (isHome(cwd)) return homeTrusted ? cwd : null
+    if (listTrusts(cwd, getSettings(db).trustedFolders) === null) return null
+    return claudeTrusts(cwd, readClaudeJson()) ? null : trustKey(cwd)
   }
   const onNewChat = (_e: unknown, options: NewProjectOptions): NewChatOutcome => {
     if (!isFolderTrusted(options.cwd.trim())) return { ok: false, error: "That folder hasn't been trusted yet." }
@@ -417,7 +435,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   // /mcp, /login and anything else headless mode can't do). ClaudeCord's own
   // idle process for the chat is closed first so the two never write at once;
   // the lock monitor then keeps the chat read-only here until the terminal exits.
-  ipcMain.handle(ENGINE_IPC.openInTerminal, async (_e, sessionPk: number): Promise<{ ok: true } | { ok: false; error: string }> => {
+  ipcMain.handle(ENGINE_IPC.openInTerminal, async (_e, sessionPk: number): Promise<{ ok: true } | { ok: false; error: string; cancelled?: true }> => {
     const info = getEngineSessionInfo(db, sessionPk)
     if (info === null) return { ok: false, error: 'That chat is no longer available.' }
     if (pool.isTurnRunning(info.filePath)) {
@@ -426,9 +444,19 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     if (info.cwd === null || info.cwd.length === 0 || !existsSync(info.cwd)) {
       return { ok: false, error: "This chat's folder no longer exists, so it can't be opened in a terminal." }
     }
+    const flags = coordinator.terminalFlags(sessionPk)
+    // Claude Code asks this once in the terminal; ClaudeCord asks it first, in its own window.
+    if (flags.includes('--dangerously-skip-permissions') && hooks.ask !== undefined) {
+      const loc = { claudeDir: claudeHome(), managedFiles: defaultManagedFiles() }
+      if (!bypassAccepted(loc, info.cwd, readClaudeJson())) {
+        if (await hooks.ask(BYPASS_QUESTION) !== BYPASS_ACCEPT_INDEX) return { ok: false, error: '', cancelled: true }
+        // If the file can't be written, the terminal just asks for itself.
+        try { recordBypassAccepted(loc) } catch (err) { console.warn('Could not record bypass acceptance', err) }
+      }
+    }
     try {
       pool.releaseIdle(info.filePath)
-      await openTerminal(terminalCommand(info.cwd, info.resumeId, findClaude(getSettings(db).claudeBin).bin, findWindowsTerminal(), coordinator.terminalFlags(sessionPk)), info.cwd)
+      await openTerminal(terminalCommand(info.cwd, info.resumeId, findClaude(getSettings(db).claudeBin).bin, findWindowsTerminal(), flags), info.cwd)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: `Couldn't open a terminal: ${err instanceof Error ? err.message : String(err)}` }
@@ -442,9 +470,16 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.shellStop, (_e, id: string): void => shellRunner.stop(id))
   ipcMain.handle(ENGINE_IPC.shellDismiss, (_e, id: string): void => shellRunner.dismiss(id))
   ipcMain.handle(ENGINE_IPC.shellList, (_e, sessionPk: number) => shellRunner.list(sessionPk))
-  ipcMain.handle(ENGINE_IPC.folderTrust, (_e, cwd: string): FolderTrust => ({ trusted: isFolderTrusted(cwd), contents: folderContents(cwd) }))
+  ipcMain.handle(ENGINE_IPC.folderTrust, (_e, cwd: string): FolderTrust => {
+    const root = repoRoot(cwd)
+    return { trusted: isFolderTrusted(cwd), contents: folderContents(cwd), repoRoot: root !== null && !sameFolder(root, cwd) ? root : null, home: isHome(cwd) }
+  })
+  // Kept for the repository root when there is one: Claude Code trusts the whole repository too.
   ipcMain.handle(ENGINE_IPC.trustFolder, (_e, cwd: string): void => {
-    updateSettings(db, { trustedFolders: [...getSettings(db).trustedFolders, cwd] })
+    if (isHome(cwd)) { homeTrusted = true; return }
+    const key = trustKey(cwd)
+    const current = getSettings(db).trustedFolders
+    if (!current.some(f => sameFolder(f, key))) updateSettings(db, { trustedFolders: [...current, key] })
   })
   ipcMain.handle(ENGINE_IPC.githubStatus, () => githubStatus(realRunner))
   ipcMain.handle(ENGINE_IPC.githubRepos, async (): Promise<GithubRepoList> => {
@@ -568,9 +603,10 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   ipcMain.handle(ENGINE_IPC.mcpStatus, async (_e, sessionPk: number): Promise<McpServerStatus[] | null> => {
     try { return await chatMcpStatus(sessionPk) } catch { return null }
   })
-  ipcMain.handle(ENGINE_IPC.mcpReconnect, async (_e, sessionPk: number, name: string): Promise<McpCheckResult> => {
+  /** A request to the chat's own Claude process about one server, then where things stand. */
+  const chatMcpRequest = async (sessionPk: number, subtype: string, body: object): Promise<McpCheckResult> => {
     const info = getEngineSessionInfo(db, sessionPk)
-    const answer = info === null ? null : pool.request(info.filePath, 'mcp_reconnect', { serverName: name }, MCP_RECONNECT_TIMEOUT_MS)
+    const answer = info === null ? null : pool.request(info.filePath, subtype, body, MCP_RECONNECT_TIMEOUT_MS)
     if (answer === null) return { ok: false, error: 'This chat has no process running. Send a message to start one.' }
     try {
       await answer
@@ -578,7 +614,12 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
     } catch (err) {
       return { ok: false, error: errorText(err) }
     }
-  })
+  }
+  ipcMain.handle(ENGINE_IPC.mcpReconnect, (_e, sessionPk: number, name: string): Promise<McpCheckResult> =>
+    chatMcpRequest(sessionPk, 'mcp_reconnect', { serverName: name }))
+  // Claude Code saves this itself, so it lasts past the chat's process, as `/mcp disable` does.
+  ipcMain.handle(ENGINE_IPC.mcpToggle, (_e, sessionPk: number, name: string, enabled: boolean): Promise<McpCheckResult> =>
+    chatMcpRequest(sessionPk, 'mcp_toggle', { serverName: name, enabled: enabled === true }))
   ipcMain.handle(ENGINE_IPC.mcpCheck, async (_e, cwd: string | null): Promise<McpCheckResult> => {
     try {
       return { ok: true, servers: await claudeInfo.mcpCheck(folderOrHome(cwd)) }
@@ -868,6 +909,7 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
       ipcMain.removeHandler(ENGINE_IPC.claudeInfo)
       ipcMain.removeHandler(ENGINE_IPC.mcpStatus)
       ipcMain.removeHandler(ENGINE_IPC.mcpReconnect)
+      ipcMain.removeHandler(ENGINE_IPC.mcpToggle)
       ipcMain.removeHandler(ENGINE_IPC.mcpCheck)
       ipcMain.removeHandler(ENGINE_IPC.mcpLogin)
       ipcMain.removeHandler(ENGINE_IPC.hijackChat)

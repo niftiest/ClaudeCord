@@ -77,6 +77,7 @@ export const ENGINE_IPC = {
   mcpStatus: 'engine:mcpStatus',
   /** invoke: reconnect one MCP server in this chat's running process. */
   mcpReconnect: 'engine:mcpReconnect',
+  mcpToggle: 'engine:mcpToggle',
   /** invoke: start a folder's MCP servers in a brief process and report on them. */
   mcpCheck: 'engine:mcpCheck',
   /** invoke: open `claude mcp login` in a terminal. */
@@ -158,6 +159,8 @@ export type EngineApi = {
   /** Null when the chat has no process running. */
   mcpStatus(sessionPk: number): Promise<McpServerStatus[] | null>
   mcpReconnect(sessionPk: number, name: string): Promise<McpCheckResult>
+  /** Turns a server off or on in this chat. Claude Code remembers it, as `/mcp disable` does. */
+  mcpToggle(sessionPk: number, name: string, enabled: boolean): Promise<McpCheckResult>
   /** Starts the folder's MCP servers briefly, as a chat would. Uses no tokens. */
   mcpCheck(cwd: string | null): Promise<McpCheckResult>
   mcpLogin(cwd: string | null, name: string): Promise<{ ok: true } | { ok: false; error: string }>
@@ -273,7 +276,8 @@ export type EngineApi = {
   /** Fires when a chat is taken over by / released from an outside process. */
   onLockChanged(cb: (sessionPk: number, lock: ExternalLock | null) => void): () => void
   /** Opens the chat in an interactive Claude Code terminal (for /mcp, /login…). */
-  openInTerminal(sessionPk: number): Promise<{ ok: true } | { ok: false; error: string }>
+  /** cancelled: the user said no to Claude Code's bypass-mode question, so nothing opened. */
+  openInTerminal(sessionPk: number): Promise<{ ok: true } | { ok: false; error: string; cancelled?: true }>
   /** Chats currently under Remote Control (/rc). */
   listRemote(): Promise<RemoteSession[]>
   onRemoteChanged(cb: (remote: RemoteSession[]) => void): () => void

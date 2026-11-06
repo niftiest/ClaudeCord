@@ -87,7 +87,7 @@ function deletePath(obj: Record<string, unknown>, key: string): void {
 
 const BOOL_KEYS: ReadonlySet<ClaudeSettingKey> = new Set<ClaudeSettingKey>([
   'alwaysThinkingEnabled', 'autoMemoryEnabled', 'autoCompactEnabled', 'remoteControlAtStartup',
-  'enableAllProjectMcpServers', 'includeCoAuthoredBy'
+  'enableAllProjectMcpServers', 'includeCoAuthoredBy', 'skipDangerousModePermissionPrompt'
 ])
 
 /** Validates a value for a key. Returns the cleaned value, or an error. */

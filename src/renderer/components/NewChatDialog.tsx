@@ -3,7 +3,7 @@ import { api } from '../api'
 import { checkoutRows, filterCheckoutRows, resolveNewProjectOptions, type CheckoutRow, type NewChatDefaults, type NewProjectOptions } from '../lib'
 import { EFFORTS } from '../../shared/models'
 import { modelOption, useClaudeModels } from './useClaudeModels'
-import type { FolderContents } from '../../shared/shell-run-types'
+import type { FolderTrust } from '../../shared/shell-run-types'
 import type { GithubRepoOption, GithubStatus } from '../../shared/github-types'
 import { projectSyncState, type RemoteProject, type SyncStatus } from '../../shared/sync-types'
 
@@ -73,7 +73,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
     return () => { alive = false; clearTimeout(timer) }
   }, [cwd])
   // Set while asking about a folder Claude has never worked in.
-  const [trustPrompt, setTrustPrompt] = useState<FolderContents | null>(null)
+  const [trustPrompt, setTrustPrompt] = useState<FolderTrust | null>(null)
 
   // GitHub: only when gh is installed and signed in. A repo picks the folder, and is cloned or
   // pulled on Create, before the trust check, so that check sees what actually arrived.
@@ -177,7 +177,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
       setTrustPrompt(null)
     } else {
       const trust = await api.folderTrust(resolved.options.cwd)
-      if (!trust.trusted) { setError(null); setTrustPrompt(trust.contents); return }
+      if (!trust.trusted) { setError(null); setTrustPrompt(trust); return }
     }
     if (resolved.options.skipPermissions && confirmBypass && !confirming) { setConfirming(true); return }
 
@@ -293,7 +293,7 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
         {error !== null && <div className="modal-error">{error}</div>}
         {linked?.warnings.map(w => <div key={w} className="sync-warn-text" role="alert">{w}</div>)}
         {repoWarning !== null && <div className="modal-error" role="alert">{repoWarning} Press Create again to start the chat anyway.</div>}
-        {trustPrompt !== null && <TrustPrompt contents={trustPrompt} skipPermissions={skipPermissions} />}
+        {trustPrompt !== null && <TrustPrompt trust={trustPrompt} skipPermissions={skipPermissions} />}
         {confirming && (
           <div className="modal-error" role="alert">
             This chat will run every tool without asking, including editing files and running commands. Create it anyway?
@@ -312,8 +312,10 @@ export function NewChatDialog({ defaults, onCancel, onCreate, onOpenProject, con
   )
 }
 
-/** Stands in for Claude Code's own trust prompt, which ClaudeCord's chats skip. */
-function TrustPrompt({ contents, skipPermissions }: { contents: FolderContents; skipPermissions: boolean }) {
+/** Stands in for Claude Code's own trust prompt, which ClaudeCord's chats skip. The wording
+ *  follows Claude Code's. Saying yes also tells Claude Code, so a terminal here won't ask again. */
+function TrustPrompt({ trust, skipPermissions }: { trust: FolderTrust; skipPermissions: boolean }) {
+  const { contents } = trust
   const found = [
     contents.hooks.length > 0 && `hooks that run commands (${contents.hooks.join(', ')})`,
     contents.mcpServers.length > 0 && `MCP servers it can start (${contents.mcpServers.join(', ')})`,
@@ -323,8 +325,10 @@ function TrustPrompt({ contents, skipPermissions }: { contents: FolderContents; 
   ].filter((x): x is string => x !== false)
   return (
     <div className="modal-error trust-prompt" role="alert">
-      <strong>Do you trust the files in this folder?</strong>
-      <p>Claude hasn’t worked here before. Only continue if you created this project or trust where it came from: its files can change what Claude does.</p>
+      <strong>Quick safety check: is this a project you created or one you trust?</strong>
+      <p>Like your own code, a well-known open source project, or work from your team. If not, take a moment to look through this folder first: its files can change what Claude does, and Claude will be able to read, edit and run files here.</p>
+      {trust.repoRoot !== null && <p>This folder is part of the repository at <code>{trust.repoRoot}</code>. Trusting it trusts that whole repository, including when you run Claude Code there in a terminal.</p>}
+      {trust.home && <p>This is your home folder, so trust lasts until ClaudeCord closes and isn’t saved.</p>}
       {found.length > 0 && <>
         <p>This folder includes:</p>
         <ul>{found.map(f => <li key={f}>{f}</li>)}</ul>

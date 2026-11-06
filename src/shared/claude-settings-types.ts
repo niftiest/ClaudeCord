@@ -47,12 +47,15 @@ export const CLAUDE_SETTING_KEYS = [
   'remoteControlAtStartup',
   'enableAllProjectMcpServers',
   'enabledMcpjsonServers',
-  'disabledMcpjsonServers'
+  'disabledMcpjsonServers',
+  // Written only when the user accepts Claude Code's bypass-mode question in ClaudeCord,
+  // the same key accepting it in a terminal writes.
+  'skipDangerousModePermissionPrompt'
 ] as const
 export type ClaudeSettingKey = (typeof CLAUDE_SETTING_KEYS)[number]
 
 /** Keys Claude Code only honours in the user file (or that only make sense there). */
-export const USER_ONLY_KEYS: ReadonlySet<ClaudeSettingKey> = new Set<ClaudeSettingKey>(['cleanupPeriodDays', 'remoteControlAtStartup'])
+export const USER_ONLY_KEYS: ReadonlySet<ClaudeSettingKey> = new Set<ClaudeSettingKey>(['cleanupPeriodDays', 'remoteControlAtStartup', 'skipDangerousModePermissionPrompt'])
 
 /** List-valued keys: lists merge across files (every file's entries apply). */
 export const LIST_KEYS: ReadonlySet<ClaudeSettingKey> = new Set<ClaudeSettingKey>([

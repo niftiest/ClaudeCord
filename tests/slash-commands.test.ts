@@ -12,7 +12,7 @@ import { mcpLoginCommand } from '../src/main/engine/terminal'
 import { ClaudeInfoService, INFO_ARGS, parseCommands } from '../src/main/engine/claude-info'
 import type { ChildLike } from '../src/main/engine/transport'
 import { listProjectFiles } from '../src/main/project-files'
-import { applyCompletion, hideAnsweredCommands, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpProblems, rankFiles } from '../src/renderer/lib'
+import { applyCompletion, hideAnsweredCommands, commandTokenLength, completionAt, fileMention, filterCommands, isClearCommand, matchesCommandName, mcpCommandOf, mcpProblems, rankFiles } from '../src/renderer/lib'
 import type { ClaudeCommand, McpServerStatus } from '../src/shared/claude-info-types'
 
 class FakeProcess extends EventEmitter {
@@ -404,5 +404,26 @@ describe('project files for the @ picker', () => {
   it('copes with no folder', () => {
     expect(listProjectFiles(null)).toEqual([])
     expect(listProjectFiles('')).toEqual([])
+  })
+})
+
+describe('/mcp', () => {
+  it('opens the servers when bare, or for anything it does not act on', () => {
+    expect(mcpCommandOf('/mcp')).toEqual({ action: 'open' })
+    expect(mcpCommandOf('  /MCP  ')).toEqual({ action: 'open' })
+    expect(mcpCommandOf('/mcp reconnect')).toEqual({ action: 'open' })
+    expect(mcpCommandOf('/mcp something')).toEqual({ action: 'open' })
+  })
+
+  it('acts at once, as the terminal does, with all servers when none is named', () => {
+    expect(mcpCommandOf('/mcp reconnect github')).toEqual({ action: 'reconnect', target: 'github' })
+    expect(mcpCommandOf('/mcp disable claude.ai Gmail')).toEqual({ action: 'disable', target: 'claude.ai Gmail' })
+    expect(mcpCommandOf('/mcp enable')).toEqual({ action: 'enable', target: 'all' })
+    expect(mcpCommandOf('/mcp Disable all')).toEqual({ action: 'disable', target: 'all' })
+  })
+
+  it('leaves other messages alone', () => {
+    expect(mcpCommandOf('/mcpx')).toBeNull()
+    expect(mcpCommandOf('tell me about /mcp')).toBeNull()
   })
 })

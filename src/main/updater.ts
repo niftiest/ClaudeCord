@@ -9,8 +9,9 @@ import { downloadPortable, handoffArgs, pickPortableAsset, previousFromArgv, typ
 /** Self-update. Installed (NSIS) builds use electron-updater against the
  *  GitHub Releases feed electron-builder publishes (latest.yml). The portable exe
  *  asks the GitHub API for the latest release and downloads it beside itself (see
- *  portable-update.ts). Either way the update then waits for "Restart to update" or
- *  for ClaudeCord to be idle. Development runs never update. */
+ *  portable-update.ts). A check only finds the new version: nothing is downloaded until
+ *  the user clicks Download. The update then waits for "Restart to update" or for
+ *  ClaudeCord to be idle. Development runs never update. */
 
 const OWNER = 'niftiest'
 const REPO = 'ClaudeCord'
@@ -49,12 +50,13 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   }
 
   if (channel === 'installer') {
-    autoUpdater.autoDownload = true
+    // Only when the user asks (download()): never ahead of time.
+    autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = opts.autoInstall()
     autoUpdater.logger = null
     autoUpdater.on('checking-for-update', () => set({ state: 'checking' }))
     autoUpdater.on('update-not-available', () => set({ state: 'none', checkedAt: Date.now() }))
-    autoUpdater.on('update-available', info => set({ state: 'downloading', version: info.version, percent: 0 }))
+    autoUpdater.on('update-available', info => set({ state: 'available', version: info.version, url: `https://github.com/${OWNER}/${REPO}/releases/tag/v${info.version}` }))
     autoUpdater.on('download-progress', p => {
       const version = state.state === 'downloading' ? state.version : ''
       set({ state: 'downloading', version, percent: Math.round(p.percent) })
@@ -71,12 +73,21 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   const stopWaiting = (): void => { waiting = null; quietSince = null }
   const broadcast = (): void => set(state)
 
-  async function fetchPortable(): Promise<void> {
+  /** The release a portable check found, kept until the user downloads it. */
+  let portableFound: { version: string; url: string | null; asset: PortableAsset | null } | null = null
+  async function checkForPortable(): Promise<void> {
     const found = await checkPortable()
-    if (found.state !== 'available') { set(found); return }
+    if (found.state !== 'available') { portableFound = null; set(found); return }
+    portableFound = found
     const dir = process.env.PORTABLE_EXECUTABLE_DIR
-    const failed = (reason: string): void => set({ ...found, reason })
-    if (found.asset === null || dir === undefined) { failed('this release has no portable download.'); return }
+    if (found.asset === null || dir === undefined) { set({ state: 'available', version: found.version, url: found.url, reason: 'this release has no portable download.' }); return }
+    set({ state: 'available', version: found.version, url: found.url })
+  }
+  async function downloadPortableUpdate(): Promise<void> {
+    const found = portableFound
+    const dir = process.env.PORTABLE_EXECUTABLE_DIR
+    if (found === null || found.asset === null || dir === undefined) return
+    const failed = (reason: string): void => set({ state: 'available', version: found.version, url: found.url, reason })
     set({ state: 'downloading', version: found.version, percent: 0 })
     try {
       portableExe = await downloadPortable(url => net.fetch(url, { headers: { 'User-Agent': 'ClaudeCord' } }), found.asset, dir,
@@ -129,7 +140,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
         await autoUpdater.checkForUpdates()
       } else {
         set({ state: 'checking' })
-        await fetchPortable()
+        await checkForPortable()
       }
     } catch (err) {
       set({ state: 'error', message: friendlyError(err) })
@@ -142,6 +153,16 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   ipcMain.handle(UPDATE_IPC.getStatus, () => status())
   ipcMain.handle(UPDATE_IPC.check, () => check())
   ipcMain.handle(UPDATE_IPC.install, () => { restartIntoUpdate() })
+  // The only way an update is downloaded: the user clicked Download.
+  ipcMain.handle(UPDATE_IPC.download, async () => {
+    if (state.state !== 'available' || state.reason !== undefined) return
+    if (channel === 'installer') {
+      set({ state: 'downloading', version: state.version, percent: 0 })
+      try { await autoUpdater.downloadUpdate() } catch (err) { set({ state: 'error', message: friendlyError(err) }) }
+    } else if (channel === 'portable') {
+      await downloadPortableUpdate()
+    }
+  })
   ipcMain.handle(UPDATE_IPC.setHold, (_e, value: unknown) => { hold = value === true })
   ipcMain.handle(UPDATE_IPC.work, () => currentWork())
   ipcMain.handle(UPDATE_IPC.setOpenChat, (_e, chat: ResumeChat | null) => { openChat = chat })
@@ -202,7 +223,7 @@ export function registerUpdater(window: BrowserWindow, opts: { autoCheck: () => 
   return {
     dispose() {
       for (const t of timers) clearTimeout(t)
-      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.setHold, UPDATE_IPC.work, UPDATE_IPC.restartWhenFinished, UPDATE_IPC.cancelRestart, UPDATE_IPC.openDownload, UPDATE_IPC.setOpenChat, UPDATE_IPC.takeResumedChat]) ipcMain.removeHandler(ch)
+      for (const ch of [UPDATE_IPC.getStatus, UPDATE_IPC.check, UPDATE_IPC.install, UPDATE_IPC.download, UPDATE_IPC.setHold, UPDATE_IPC.work, UPDATE_IPC.restartWhenFinished, UPDATE_IPC.cancelRestart, UPDATE_IPC.openDownload, UPDATE_IPC.setOpenChat, UPDATE_IPC.takeResumedChat]) ipcMain.removeHandler(ch)
     }
   }
 }

@@ -53,7 +53,7 @@ Other things you can do in a chat:
 
 When Claude asks for permission, wants to run a plan past you, or has a question, you get a card to answer with a click. If another chat is waiting on you, a banner tells you which one. When Claude wants to reach a folder outside the project, you can choose Allow for this session, Always allow, or Deny.
 
-Before a new chat starts in a folder Claude has never worked in, ClaudeCord asks whether you trust it and names the hooks, MCP servers, and settings it would pick up. If a chat's MCP server fails or needs a sign-in, the header shows a warning with the reason and a Reconnect or Sign in button. The app also warns you if Claude Code can't save a chat, and a message blocked by a hook comes back to the box.
+Before a new chat starts in a folder Claude has never worked in, ClaudeCord asks whether you trust it and names the hooks, MCP servers, and settings it would pick up. It follows Claude Code's rules, so a folder inside a git repository is trusted with the whole repository, and your answer also stops a terminal there from asking again. If a chat's MCP server fails or needs a sign-in, the header shows a warning with the reason and a Reconnect or Sign in button. Typing `/mcp` lists the chat's servers with Reconnect, Sign in, and Turn off or on for each, and `/mcp reconnect`, `/mcp enable` and `/mcp disable` work as they do in the terminal. The app also warns you if Claude Code can't save a chat, and a message blocked by a hook comes back to the box.
 
 Each chat and the whole app show a running cost, and you can set a spending cap. The chat list footer shows your plan usage, or the current chat's tokens and cost if you aren't on a subscription. A context bar shows how much room a chat has left, with a Compact button for when it fills up.
 
@@ -102,7 +102,7 @@ Right-click a project to open its folder, or to view and edit its `CLAUDE.md` an
 
 Settings also cover Claude Code's own options, for all projects or just one: default model and effort, what Claude may do without asking, whether commits credit Claude, memory, and more. You can edit the settings file directly too. Changes apply in the terminal as well.
 
-ClaudeCord can start with Windows and live in the system tray. The first time you close the window, it asks whether to exit or minimize to the tray, and remembers your answer. It checks for updates every hour and asks before restarting if a chat is working or something is unsent. After an update, it reopens the chat you were in.
+ClaudeCord can start with Windows and live in the system tray. The first time you close the window, it asks whether to exit or minimize to the tray, and remembers your answer. It checks for updates every hour, but downloads a new version only when you click Download, and asks before restarting if a chat is working or something is unsent. After an update, it reopens the chat you were in.
 
 ## Your data
 

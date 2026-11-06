@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs'
+import { dirname } from 'node:path'
 import type { Catalog } from './db'
+import { cwdToProjectDir } from '../indexer/discover'
 import type { ProjectSummary, SessionSummary } from '../../shared/types'
 import { costOfSession } from '../../shared/models'
 
@@ -16,8 +18,42 @@ export function upsertProject(db: Catalog, dirName: string): number {
   return row.id
 }
 
+/** The project's own folder, given a folder its chat recorded. Claude Code records the folder
+ *  Claude is in on each line, which moves when it runs `cd`, but it names the project's
+ *  directory after the folder the chat started in. So that folder is the one, of `cwd` and
+ *  the folders above it, whose name matches. Null when none does. */
+export function projectFolderFor(cwd: string, dirName: string): string | null {
+  let current = cwd.replace(/[\\/]+$/, '')
+  for (;;) {
+    if (cwdToProjectDir(current) === dirName) return current
+    const parent = dirname(current)
+    if (parent === current || parent === '.') return null
+    current = parent
+  }
+}
+
+/** Keeps the project's own folder: a folder Claude moved into only counts through the
+ *  project folder above it, and one that doesn't match is kept only while nothing better is known. */
 export function setProjectCwd(db: Catalog, projectId: number, cwd: string): void {
-  db.prepare('UPDATE projects SET cwd = ? WHERE id = ? AND (cwd IS NULL OR cwd <> ?)').run(cwd, projectId, cwd)
+  const row = db.prepare('SELECT dir_name, cwd FROM projects WHERE id = ?').get(projectId) as { dir_name: string; cwd: string | null } | undefined
+  if (row === undefined) return
+  const own = projectFolderFor(cwd, row.dir_name)
+  if (own === null && row.cwd !== null) return
+  const next = own ?? cwd
+  if (next !== row.cwd) db.prepare('UPDATE projects SET cwd = ? WHERE id = ?').run(next, projectId)
+}
+
+/** Fixes a folder saved before setProjectCwd kept to the project's own (one Claude had `cd`'d into). */
+export function repairProjectCwds(db: Catalog): number {
+  const rows = db.prepare('SELECT id, dir_name, cwd FROM projects WHERE cwd IS NOT NULL').all() as Array<{ id: number; dir_name: string; cwd: string }>
+  const update = db.prepare('UPDATE projects SET cwd = ? WHERE id = ?')
+  let fixed = 0
+  for (const r of rows) {
+    if (cwdToProjectDir(r.cwd) === r.dir_name) continue
+    const own = projectFolderFor(r.cwd, r.dir_name)
+    if (own !== null) { update.run(own, r.id); fixed++ }
+  }
+  return fixed
 }
 
 export function upsertSession(db: Catalog, s: SessionUpsert): number {

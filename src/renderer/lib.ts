@@ -1313,6 +1313,22 @@ export function renameCommandOf(text: string): string | null {
   return m === null ? null : m[1]!.trim()
 }
 
+export type McpCommand = { action: 'open' } | { action: 'reconnect' | 'enable' | 'disable'; target: string }
+
+/** `/mcp` as Claude Code takes it: bare opens the servers, and `reconnect <server>`,
+ *  `enable [<server>|all]` and `disable [<server>|all]` act at once (no name means all, for
+ *  enable and disable). Null for anything else, which goes to Claude as typed. */
+export function mcpCommandOf(text: string): McpCommand | null {
+  const m = /^\s*\/mcp(?:\s+([\s\S]*))?$/i.exec(text)
+  if (m === null) return null
+  const [verb = '', ...rest] = (m[1] ?? '').trim().split(/\s+/).filter(w => w.length > 0)
+  const target = rest.join(' ')
+  const action = verb.toLowerCase()
+  if (action === 'reconnect' && target !== '') return { action, target }
+  if (action === 'enable' || action === 'disable') return { action, target: target === '' ? 'all' : target }
+  return { action: 'open' }
+}
+
 /** The folder in `/add-dir folder`, '' for a bare `/add-dir`, or null for anything else. */
 export function addDirCommandOf(text: string): string | null {
   const m = /^\s*\/add-dir(?:\s+([\s\S]*))?$/.exec(text)

@@ -12,6 +12,7 @@ import { registerUpdater } from './updater'
 import { registerTextMenu } from './text-menu'
 import { saveResume, takeResume, usableBounds } from './update-resume'
 import { getSettings, setLocalThemeCheck, updateSettings } from './catalog/settings'
+import { repairProjectCwds } from './catalog/repos'
 import { hasLocalTheme, localThemesDir } from './local-themes'
 import { AUTOSTART_ARG } from './ipc'
 import { applyStartupSettings } from './elevation'
@@ -56,6 +57,7 @@ function createWindow(): void {
   const icon = devIcon()
   setLocalThemeCheck(name => hasLocalTheme(localThemesDir(app.getPath('userData')), name))
   const db = openCatalog(join(app.getPath('userData'), 'catalog.db'))
+  repairProjectCwds(db)
   const startup = getSettings(db)
   // A login start with "Start minimized": no splash, window stays in the tray
   // (or minimized to the taskbar when there's no tray icon).
@@ -171,7 +173,8 @@ function createWindow(): void {
       desktop?.onEvent(pk, e)
       if (e.kind === 'result') sync?.turnEnded(pk)
     },
-    onPermission: (pk, req) => desktop?.onPermission(pk, req)
+    onPermission: (pk, req) => desktop?.onPermission(pk, req),
+    ask: request => dialogs!.ask(request)
   })
   sync = registerSyncIpc(db, win, engine)
   const manage = registerManageIpc(db, engine, undefined, (from, to) => { void sync?.projectFolderRenamed(from, to) })

@@ -54,7 +54,7 @@ import type { McpServerStatus } from '../shared/claude-info-types'
 import { applyTheme, applyThemeColors, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
 import type { LocalTheme } from '../shared/themes'
 import {
-  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
+  resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, mcpCommandOf, type McpCommand, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
   firstBlockedElsewhere, projectDirFromSessionKey,
   type ComposerImage, type PastedTextChip, type NewProjectOptions, type LivePreview
@@ -1250,6 +1250,31 @@ export function App() {
   const checkingSyncRef = useRef(new Map<number, { text: string; images: ComposerImage[]; cancelled: boolean }>())
   const [syncHeld, setSyncHeld] = useState<(() => void) | null>(null)
 
+  /** `/mcp`, as the terminal does it: the servers, or reconnect / turn on / turn off right away.
+   *  Only state setters are used, so it's safe to call from onSend without being a dependency. */
+  const runMcpCommand = async (pk: number, cmd: McpCommand): Promise<void> => {
+    if (cmd.action === 'open') { setSettingsSection('mcp'); setSettingsOpen(true); return }
+    const servers = await api.mcpStatus(pk).catch(() => null)
+    if (servers === null) { setTerminalNotice('This chat has no process running yet. Send a message first, then try again.'); return }
+    const want = cmd.target.toLowerCase()
+    const fits = (s: McpServerStatus): boolean => cmd.action === 'enable' ? s.status === 'disabled' : s.status !== 'disabled'
+    const targets = want === 'all' ? servers.filter(fits) : servers.filter(s => s.name.toLowerCase() === want)
+    if (targets.length === 0) {
+      setTerminalNotice(want === 'all' ? `No MCP servers to ${cmd.action === 'enable' ? 'turn on' : cmd.action === 'disable' ? 'turn off' : 'reconnect'}.` : `There's no MCP server called "${cmd.target}" in this chat.`)
+      return
+    }
+    const failed: string[] = []
+    for (const s of targets) {
+      const r = cmd.action === 'reconnect' ? await api.mcpReconnect(pk, s.name) : await api.mcpToggle(pk, s.name, cmd.action === 'enable')
+      if (!r.ok) failed.push(`${s.name}: ${r.error}`)
+    }
+    const done = targets.length - failed.length
+    const verb = cmd.action === 'reconnect' ? 'Reconnected' : cmd.action === 'enable' ? 'Turned on' : 'Turned off'
+    const names = done === 1 && failed.length === 0 ? targets[0]!.name : `${done} MCP server${done === 1 ? '' : 's'}`
+    if (failed.length === 0) { setGoodNotice(`${verb} ${names}.`); setTerminalNotice(`${verb} ${names}.`) }
+    else setTerminalNotice(`${done > 0 ? `${verb} ${done}. ` : ''}Couldn't with ${failed.join('; ')}`)
+  }
+
   const onSend = useCallback((text: string, images: ComposerImage[], pastedTexts: PastedTextChip[], uuid?: string) => {
     // Composer is only mounted while a session is open, so this is a
     // defensive no-op, not a reachable path.
@@ -1315,6 +1340,8 @@ export function App() {
       })
       return
     }
+    const mcp = mcpCommandOf(combined)
+    if (mcp !== null) { void runMcpCommand(session.id, mcp); return }
     if (isForkCommand(combined)) { forkChatRef.current(); return }
     if (isRewindCommand(combined)) {
       if (runningRef.current) setTerminalNotice('Claude is still replying here. Press Esc to stop it, then rewind.')
@@ -1378,7 +1405,7 @@ export function App() {
     setTerminalNotice(null)
     void api.openInTerminal(session.id).then(r => {
       if (r.ok) setTerminalPrompt(null)
-      else setTerminalNotice(r.error)
+      else if (r.cancelled !== true) setTerminalNotice(r.error)
     })
   }, [session])
 
@@ -1889,7 +1916,7 @@ export function App() {
           onOpenChat={(pk, dir) => openChatRef.current(pk, dir)} />
       )}
       {settingsOpen && <SettingsWindow onClose={() => setSettingsOpen(false)} onSettingsChanged={setSettings}
-        projectCwd={project?.cwd ?? null} initialSection={settingsSection}
+        projectCwd={project?.cwd ?? null} sessionPk={session?.id ?? null} initialSection={settingsSection}
         projects={channels.map(c => ({ dirName: c.dirName, cwd: c.cwd, name: resolveChannelName(c.meta, c.cwd, c.dirName) }))} />}
       {poolOpen && <EnginePool onClose={() => setPoolOpen(false)}
         channelNameFor={(sessionKey) => {

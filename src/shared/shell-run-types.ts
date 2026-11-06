@@ -23,4 +23,12 @@ export type FolderContents = {
   extensions: boolean
 }
 
-export type FolderTrust = { trusted: boolean; contents: FolderContents }
+export type FolderTrust = {
+  trusted: boolean
+  contents: FolderContents
+  /** The repository this folder is part of, when it isn't the repository's own root:
+   *  trusting the folder trusts all of it, as in Claude Code. */
+  repoRoot: string | null
+  /** The home folder: trusted for this run of ClaudeCord only, never saved. */
+  home: boolean
+}

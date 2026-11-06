@@ -6,27 +6,56 @@ import type { FolderContents } from '../../shared/shell-run-types'
  *  `claude -p`, which skips Claude Code's own "do you trust this folder?" prompt,
  *  so a folder's settings, hooks and MCP servers would otherwise apply unannounced.
  *
- *  The answer is kept in ClaudeCord's settings, not ~/.claude.json: Claude Code
- *  rewrites that file constantly, so editing it from here could lose either side's
- *  change. A terminal may therefore still ask for itself. */
+ *  The rule is Claude Code's own (2.1.318): inside a git repository, trust is kept
+ *  for the repository root, and only the folders from the chat's folder up to that
+ *  root count, so a trusted D:/GIT doesn't cover a new repository inside it. Outside
+ *  a repository, any folder above counts. The home folder is never trusted for good.
+ *
+ *  ClaudeCord keeps its own answers in its settings. It never edits ~/.claude.json,
+ *  which Claude Code rewrites constantly; it tells Claude Code at startup instead
+ *  (initialize's workspaceTrust), and Claude Code records the answer itself. */
 
 function normalize(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
-/** `cwd` and every folder above it, normalized. */
-function withAncestors(cwd: string): string[] {
+export function sameFolder(a: string, b: string): boolean {
+  return normalize(a) === normalize(b)
+}
+
+/** The git repository a folder is in: the nearest folder holding `.git`. */
+export function repoRoot(cwd: string): string | null {
+  let current = cwd
+  for (;;) {
+    if (existsSync(join(current, '.git'))) return current
+    const parent = dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+/** Where trust for this folder is kept: its repository's root, or the folder itself. */
+export function trustKey(cwd: string): string {
+  return repoRoot(cwd) ?? cwd
+}
+
+/** The folders whose trust covers `cwd`, normalized: up to the repository root when
+ *  there is one, otherwise every folder above. */
+function coveringFolders(cwd: string): string[] {
+  const root = repoRoot(cwd)
+  const stop = root === null ? null : normalize(root)
   const out: string[] = []
   let current = cwd
   for (;;) {
     out.push(normalize(current))
+    if (normalize(current) === stop) return out
     const parent = dirname(current)
     if (parent === current) return out
     current = parent
   }
 }
 
-/** Trusted in Claude Code's own records, directly or through a parent folder. */
+/** Trusted in Claude Code's own records. */
 export function claudeTrusts(cwd: string, claudeJson: string | null): boolean {
   if (claudeJson === null) return false
   let root: unknown
@@ -36,13 +65,14 @@ export function claudeTrusts(cwd: string, claudeJson: string | null): boolean {
   const trusted = new Set(Object.entries(projects)
     .filter(([, v]) => (v as { hasTrustDialogAccepted?: unknown } | null)?.hasTrustDialogAccepted === true)
     .map(([k]) => normalize(k)))
-  return withAncestors(cwd).some(p => trusted.has(p))
+  return coveringFolders(cwd).some(p => trusted.has(p))
 }
 
-/** ClaudeCord's own list: the folder or a parent the user already said yes to. */
-export function listTrusts(cwd: string, trustedFolders: string[]): boolean {
-  const trusted = new Set(trustedFolders.map(normalize))
-  return withAncestors(cwd).some(p => trusted.has(p))
+/** ClaudeCord's own list: a folder the user said yes to that covers this one, or null. */
+export function listTrusts(cwd: string, trustedFolders: string[]): string | null {
+  const byKey = new Map(trustedFolders.map(f => [normalize(f), f]))
+  for (const p of coveringFolders(cwd)) { const hit = byKey.get(p); if (hit !== undefined) return hit }
+  return null
 }
 
 function readJson(path: string): Record<string, unknown> | null {

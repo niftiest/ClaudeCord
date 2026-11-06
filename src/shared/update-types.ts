@@ -1,11 +1,12 @@
 /** Self-update surface (renderer <-> main). Installed and portable builds both
- *  download new versions from GitHub Releases by themselves and restart into them
- *  when idle; development runs don't update at all. */
+ *  check GitHub Releases for new versions, download one only when the user clicks
+ *  Download, and then restart into it; development runs don't update at all. */
 
 export const UPDATE_IPC = {
   getStatus: 'update:getStatus',
   check: 'update:check',
   install: 'update:install',
+  download: 'update:download',
   setHold: 'update:setHold',
   work: 'update:work',
   restartWhenFinished: 'update:restartWhenFinished',
@@ -20,7 +21,8 @@ export type UpdateState =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'none'; checkedAt: number }
-  /** Portable builds, when downloading it failed: `reason` says why, `url` is the release page. */
+  /** Found, not downloaded: waiting for the user to click Download. With `reason`, it
+   *  can't be downloaded from here (why), and `url` is the release page instead. */
   | { state: 'available'; version: string; url: string | null; reason?: string }
   | { state: 'downloading'; version: string; percent: number }
   | { state: 'ready'; version: string }
@@ -82,6 +84,8 @@ export type UpdateApi = {
   checkForUpdates(): Promise<UpdateStatus>
   /** Restart into a downloaded update, right now. */
   installUpdate(): Promise<void>
+  /** Download the version a check found. Nothing is downloaded until this is called. */
+  downloadUpdate(): Promise<void>
   /** What restarting now would interrupt. */
   updateRestartWork(): Promise<RestartWork>
   /** Restart once nothing is running and nothing is unsent. */

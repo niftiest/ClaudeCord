@@ -4,12 +4,13 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ShellRunner, clipMiddle, shellCommand, shellRunBlocks, type ShellChild } from '../src/main/engine/shell-run'
-import { claudeTrusts, folderContents, listTrusts } from '../src/main/engine/folder-trust'
+import { claudeTrusts, folderContents, listTrusts, repoRoot, trustKey } from '../src/main/engine/folder-trust'
 import { buildRenderItems } from '../src/main/jsonl/render'
 import { textOf } from '../src/main/jsonl/parse'
 import type { MessageRow } from '../src/main/jsonl/rows'
 import type { ShellRun } from '../src/shared/shell-run-types'
 import { imageSourceUrl } from '../src/renderer/lib'
+import { SessionPool } from '../src/main/engine/pool'
 
 class FakeShell extends EventEmitter {
   stdout = new EventEmitter()
@@ -167,21 +168,49 @@ describe('images in chats', () => {
 })
 
 describe('folder trust', () => {
-  const json = JSON.stringify({ projects: { 'D:/GIT': { hasTrustDialogAccepted: true }, 'C:/Windows/System32': { hasTrustDialogAccepted: false } } })
+  /** A temporary tree: parent/ (plain), parent/plain/deep/, and parent/repo/ (a git
+   *  repository) with repo/sub/. Paths use forward slashes, as ~/.claude.json does. */
+  function tree() {
+    const parent = mkdtempSync(join(tmpdir(), 'cc-trust-')).split('\\').join('/')
+    mkdirSync(`${parent}/plain/deep`, { recursive: true })
+    mkdirSync(`${parent}/repo/.git`, { recursive: true })
+    mkdirSync(`${parent}/repo/sub`, { recursive: true })
+    const claudeJson = (...trusted: string[]) => JSON.stringify({ projects: Object.fromEntries(trusted.map(k => [k, { hasTrustDialogAccepted: true }])) })
+    return { parent, claudeJson, done: () => rmSync(parent, { recursive: true, force: true }) }
+  }
 
-  it('honours Claude Code\'s own record, including through a parent folder', () => {
-    expect(claudeTrusts('D:\\GIT', json)).toBe(true)
-    expect(claudeTrusts('d:\\git\\Some\\Project\\', json)).toBe(true)
-    expect(claudeTrusts('D:\\GITHUB', json)).toBe(false)
-    expect(claudeTrusts('C:\\Windows\\System32', json)).toBe(false)
-    expect(claudeTrusts('D:\\GIT', null)).toBe(false)
-    expect(claudeTrusts('D:\\GIT', 'not json')).toBe(false)
+  it("honours Claude Code's own record through a parent folder, outside a repository", () => {
+    const t = tree()
+    try {
+      expect(claudeTrusts(`${t.parent}/plain/deep`, t.claudeJson(t.parent))).toBe(true)
+      // Backslashes, a trailing one and different case all name the same folder.
+      expect(claudeTrusts(`${t.parent}/plain/deep/`.split('/').join('\\').toUpperCase(), t.claudeJson(t.parent))).toBe(true)
+      expect(claudeTrusts(`${t.parent}/plain`, t.claudeJson(`${t.parent}/plain/deep`))).toBe(false)
+      expect(claudeTrusts(t.parent, null)).toBe(false)
+      expect(claudeTrusts(t.parent, 'not json')).toBe(false)
+    } finally { t.done() }
   })
 
-  it('honours the user\'s answers the same way', () => {
-    expect(listTrusts('C:\\a\\b', ['C:\\A'])).toBe(true)
-    expect(listTrusts('C:\\a', ['C:\\a\\b'])).toBe(false)
-    expect(listTrusts('C:\\ab', ['C:\\a'])).toBe(false)
+  it('stops at the repository root, as Claude Code does: a trusted parent folder does not cover a new repository', () => {
+    const t = tree()
+    try {
+      expect(claudeTrusts(`${t.parent}/repo/sub`, t.claudeJson(t.parent))).toBe(false)
+      expect(claudeTrusts(`${t.parent}/repo/sub`, t.claudeJson(`${t.parent}/repo`))).toBe(true)
+      expect(claudeTrusts(`${t.parent}/repo`, t.claudeJson(`${t.parent}/repo/sub`))).toBe(false)
+      expect(listTrusts(`${t.parent}/repo/sub`, [t.parent])).toBeNull()
+    } finally { t.done() }
+  })
+
+  it('keeps trust for the repository root, and finds the answer that covers a folder', () => {
+    const t = tree()
+    try {
+      expect(trustKey(`${t.parent}/repo/sub`)).toBe(`${t.parent}/repo`)
+      expect(trustKey(`${t.parent}/plain/deep`)).toBe(`${t.parent}/plain/deep`)
+      expect(repoRoot(`${t.parent}/plain`)).toBeNull()
+      expect(listTrusts(`${t.parent}/plain/deep`, [t.parent.toUpperCase()])).toBe(t.parent.toUpperCase())
+      expect(listTrusts(`${t.parent}/plain`, [`${t.parent}/plain/deep`])).toBeNull()
+      expect(listTrusts(`${t.parent}/plainer`, [`${t.parent}/plain`])).toBeNull()
+    } finally { t.done() }
   })
 
   it('names what in the folder would take effect', () => {
@@ -203,5 +232,31 @@ describe('folder trust', () => {
       writeFileSync(join(dir, '.mcp.json'), '{ broken')
       expect(folderContents(dir).mcpServers).toEqual([])
     } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('telling Claude Code about a folder the user trusted', () => {
+  function start(trustToAttest?: (cwd: string) => string | null) {
+    const requests: Array<{ subtype: string; body: object }> = []
+    const pool = new SessionPool({
+      idleReapMs: 100000,
+      ...(trustToAttest !== undefined ? { trustToAttest } : {}),
+      transportFactory: () => ({
+        start() {}, send() {}, on() {}, onExit() {}, interrupt() {}, close() {}, pid: 1,
+        request(subtype: string, body: object) { requests.push({ subtype, body }); return Promise.resolve({}) }
+      }) as never
+    })
+    pool.send('k', { cwd: 'D:/work/repo/sub', skipPermissions: false, sessionId: 's' }, { n: 1 })
+    return requests.find(r => r.subtype === 'initialize')?.body
+  }
+
+  it('says so at startup, naming the folder trust is kept for', () => {
+    expect(start(cwd => cwd === 'D:/work/repo/sub' ? 'D:/work/repo' : null))
+      .toEqual({ perTaskStopAffordance: true, workspaceTrust: { accepted: true, directory: 'D:/work/repo' } })
+  })
+
+  it('says nothing when there is no answer to pass on', () => {
+    expect(start(() => null)).toEqual({ perTaskStopAffordance: true })
+    expect(start()).toEqual({ perTaskStopAffordance: true })
   })
 })
