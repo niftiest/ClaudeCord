@@ -31,7 +31,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'updates', label: 'Updates' }
 ]
 
-const PER_PROJECT_HINT = 'Choose per project adds this to Project options in each chat’s header, shared by every chat in that folder. Any other choice here overrides what each project picked.'
+const PER_PROJECT_HINT = 'This is the default. Each project can change it in Project options, in the chat’s header.'
 
 const IS_WINDOWS = navigator.userAgent.includes('Windows')
 
@@ -161,13 +161,13 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
                 </div>
               </div>
               <Select label="Tool calls" hint={PER_PROJECT_HINT} value={settings.toolDisplay}
-                options={[{ value: 'grouped', label: 'Grouped into one line' }, { value: 'all', label: 'Show all' }, { value: 'hidden', label: 'Hide' }, { value: 'perProject', label: 'Choose per project' }]}
+                options={[{ value: 'grouped', label: 'Grouped into one line' }, { value: 'all', label: 'Show all' }, { value: 'hidden', label: 'Hide' }]}
                 on={v => patch({ toolDisplay: v as AppSettings['toolDisplay'] })} />
               <Select label="Claude's thoughts" hint={`Hiding them doesn't change what Claude does or what it costs. ${PER_PROJECT_HINT}`} value={settings.thinkingDisplay}
-                options={[{ value: 'show', label: 'Show' }, { value: 'hidden', label: 'Hide' }, { value: 'perProject', label: 'Choose per project' }]}
+                options={[{ value: 'show', label: 'Show' }, { value: 'hidden', label: 'Hide' }]}
                 on={v => patch({ thinkingDisplay: v as AppSettings['thinkingDisplay'] })} />
               <Select label="Prompt suggestions" hint={`Claude predicts your next message as a chip above the box. Each one uses a small amount of your plan or API budget. ${PER_PROJECT_HINT}`} value={settings.promptSuggestions}
-                options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }, { value: 'perProject', label: 'Choose per project' }]}
+                options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }]}
                 on={v => patch({ promptSuggestions: v as AppSettings['promptSuggestions'] })} />
               <Toggle label="Show session blade" hint="A column listing a project's sessions, for projects with more than one." value={settings.showBlade} on={v => patch({ showBlade: v })} />
               <Toggle label="Show context rail" hint="The right-hand Files / Context / Usage panel." value={settings.showContextRail} on={v => patch({ showContextRail: v })} />

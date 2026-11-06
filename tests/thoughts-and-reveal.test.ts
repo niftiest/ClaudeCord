@@ -11,22 +11,18 @@ describe("Claude's thoughts in chats", () => {
     expect(DEFAULT_SETTINGS.thinkingDisplay).toBe('show')
     expect(effectiveThinkingDisplay('show', null)).toBe('show')
   })
-  it('a global choice beats what a project picked', () => {
-    expect(effectiveThinkingDisplay('hidden', { thinkingDisplay: 'show' })).toBe('hidden')
-    expect(effectiveThinkingDisplay('show', { thinkingDisplay: 'hidden' })).toBe('show')
-  })
-  it('per project follows the project, showing if it never chose', () => {
-    expect(effectiveThinkingDisplay('perProject', { thinkingDisplay: 'hidden' })).toBe('hidden')
-    expect(effectiveThinkingDisplay('perProject', { thinkingDisplay: 'show' })).toBe('show')
-    expect(effectiveThinkingDisplay('perProject', {})).toBe('show')
-    expect(effectiveThinkingDisplay('perProject', null)).toBe('show')
+  it("a project's own choice wins, and one that never chose follows Settings", () => {
+    expect(effectiveThinkingDisplay('hidden', { thinkingDisplay: 'show' })).toBe('show')
+    expect(effectiveThinkingDisplay('show', { thinkingDisplay: 'hidden' })).toBe('hidden')
+    expect(effectiveThinkingDisplay('hidden', {})).toBe('hidden')
+    expect(effectiveThinkingDisplay('show', null)).toBe('show')
   })
   it('the setting saves, and refuses nonsense', () => {
     const db = openCatalog(':memory:')
     expect(updateSettings(db, { thinkingDisplay: 'hidden' }).thinkingDisplay).toBe('hidden')
-    expect(updateSettings(db, { thinkingDisplay: 'perProject' }).thinkingDisplay).toBe('perProject')
-    expect(updateSettings(db, { thinkingDisplay: 'off' as never }).thinkingDisplay).toBe('perProject')
-    expect(getSettings(db).thinkingDisplay).toBe('perProject')
+    expect(updateSettings(db, { thinkingDisplay: 'perProject' as never }).thinkingDisplay).toBe('hidden')
+    expect(updateSettings(db, { thinkingDisplay: 'off' as never }).thinkingDisplay).toBe('hidden')
+    expect(getSettings(db).thinkingDisplay).toBe('hidden')
   })
   it('a project remembers it, shared by its chats, and refuses nonsense', () => {
     const db = openCatalog(':memory:')

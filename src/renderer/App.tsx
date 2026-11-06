@@ -1410,6 +1410,12 @@ export function App() {
   // shape every per-field setter reduces to: replace one channel's `meta`
   // by dirName, leaving every other channel (and the channel's own other
   // meta fields) untouched.
+  // The open project is a copy taken when it was opened, so a rename, icon or star
+  // change made in the chat list shows in its header too.
+  useEffect(() => {
+    setProject(p => p === null ? p : (channels.find(c => c.id === p.id) ?? p))
+  }, [channels])
+
   function patchMeta(dirName: string, patch: Partial<ChannelMeta>) {
     setChannels(prev => prev.map(c => (c.dirName === dirName ? { ...c, meta: { ...c.meta, ...patch } } : c)))
   }

@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AppSettings } from '../../shared/shell-types'
-import type { ProjectSettings, ThinkingDisplay, ToolDisplay } from '../../shared/project-options'
+import { effectiveThinkingDisplay, effectiveToolDisplay, shownToolDisplay, type ProjectSettings } from '../../shared/project-options'
 import type { SessionSummary } from '../../shared/types'
 import type { ProjectSyncState } from '../../shared/sync-types'
 
-const TOOL_LABEL: Record<string, string> = { grouped: 'Grouped', all: 'Show all', hidden: 'Hide' }
+/** A left/right switch for one of this project's own choices. */
+function Switch({ label, on, onChange }: { label: string; on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="project-option">
+      <span>{label}</span>
+      <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={() => onChange(!on)}>
+        <span className="switch-knob" />
+      </button>
+    </div>
+  )
+}
 
 /** Everything about the open chat and its project that doesn't need to sit in the header:
  *  mode, model, effort and cost, and the choices Settings leaves to
@@ -36,9 +46,10 @@ export function ProjectOptions({ settings, chat, onChange, onOpenSettings, sessi
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  const tools = settings.toolDisplay === 'perProject'
-  const thoughts = settings.thinkingDisplay === 'perProject'
-  const suggestions = settings.promptSuggestions === 'perProject'
+  // Claude Code's own setting can turn suggestions off; that's checked where they're asked for.
+  const tools = effectiveToolDisplay(settings.toolDisplay, chat)
+  const thoughts = effectiveThinkingDisplay(settings.thinkingDisplay, chat)
+  const suggestions = chat.promptSuggestions ?? settings.promptSuggestions === 'on'
 
   return (
     <div className="project-options" ref={rootRef}>
@@ -57,42 +68,14 @@ export function ProjectOptions({ settings, chat, onChange, onOpenSettings, sessi
             </div>
           )}
           {sync !== null && (
-            <label className="project-option">
-              <span>Sync across your PCs</span>
-              <input type="checkbox" checked={sync.kind === 'on'} onChange={() => { setOpen(false); onSync(sync) }} />
-            </label>
+            <Switch label="Sync across your PCs" on={sync.kind === 'on'} onChange={() => { setOpen(false); onSync(sync) }} />
           )}
-          {tools ? (
-            <label className="project-option">
-              <span>Tool calls</span>
-              <select value={chat.toolDisplay ?? 'grouped'} onChange={e => onChange({ toolDisplay: e.target.value as ToolDisplay })}>
-                <option value="grouped">Grouped</option>
-                <option value="all">Show all</option>
-                <option value="hidden">Hide</option>
-              </select>
-            </label>
-          ) : (
-            <div className="project-option"><span>Tool calls</span><span className="project-option-fixed">{TOOL_LABEL[settings.toolDisplay] ?? ''}</span></div>
-          )}
-          {thoughts ? (
-            <label className="project-option">
-              <span>Claude's thoughts</span>
-              <select value={chat.thinkingDisplay ?? 'show'} onChange={e => onChange({ thinkingDisplay: e.target.value as ThinkingDisplay })}>
-                <option value="show">Show</option>
-                <option value="hidden">Hide</option>
-              </select>
-            </label>
-          ) : (
-            <div className="project-option"><span>Claude's thoughts</span><span className="project-option-fixed">{settings.thinkingDisplay === 'hidden' ? 'Hide' : 'Show'}</span></div>
-          )}
-          {suggestions ? (
-            <label className="project-option">
-              <span>Prompt suggestions</span>
-              <input type="checkbox" checked={chat.promptSuggestions === true} onChange={e => onChange({ promptSuggestions: e.target.checked })} />
-            </label>
-          ) : (
-            <div className="project-option"><span>Prompt suggestions</span><span className="project-option-fixed">{settings.promptSuggestions === 'on' ? 'On' : 'Off'}</span></div>
-          )}
+          <Switch label="Tool calls" on={tools !== 'hidden'}
+            onChange={on => onChange({ toolDisplay: on ? shownToolDisplay(settings.toolDisplay) : 'hidden' })} />
+          <Switch label="Claude's thoughts" on={thoughts === 'show'}
+            onChange={on => onChange({ thinkingDisplay: on ? 'show' : 'hidden' })} />
+          <Switch label="Prompt suggestions" on={suggestions}
+            onChange={on => onChange({ promptSuggestions: on })} />
           {/* Added with /add-dir. The way back out is here, so one is never stuck on. */}
           {(chat.extraDirs ?? []).length > 0 && <div className="project-dirs">
             <div className="project-option"><span>Other folders Claude can use</span></div>
@@ -104,11 +87,9 @@ export function ProjectOptions({ settings, chat, onChange, onOpenSettings, sessi
               </div>
             ))}
           </div>}
-          {(!tools || !thoughts || !suggestions) && (
-            <button type="button" className="project-options-link" onClick={() => { setOpen(false); onOpenSettings() }}>
-              Set for all projects. To choose here, pick "Choose per project" in Settings
-            </button>
-          )}
+          <button type="button" className="project-options-link" onClick={() => { setOpen(false); onOpenSettings() }}>
+            Set the default for every project in Settings
+          </button>
       </div>
     </div>
   )

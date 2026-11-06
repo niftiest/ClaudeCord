@@ -77,11 +77,7 @@ export type AppSettings = {
   /** The font everywhere but code. Blank: the app's own fonts. */
   appFont: string
   thinkingExpanded: boolean; toolCardsExpanded: boolean
-  /** When false, tool-call cards (Bash, Read, etc.) are hidden from the
-   *  transcript entirely -- for readers who only care about the conversation,
-   *  not the machinery. Default true (show them). */
-  /** How tool calls show in chats. "perProject" lets each project choose; anything
-   *  else overrides every project's own choice. */
+  /** How tool calls show in chats, for projects that haven't chosen in Project options. */
   toolDisplay: ToolDisplaySetting
   /** Whether Claude's thoughts show in chats. Same rule as toolDisplay. */
   thinkingDisplay: ThinkingDisplaySetting

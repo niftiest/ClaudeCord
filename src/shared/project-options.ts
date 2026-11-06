@@ -1,19 +1,19 @@
 /** Options a project can have its own value for, and how they combine with Settings.
- *  A global setting of anything but "perProject" overrides every project's own choice.
+ *  Settings gives the default; a project's own choice, made in Project options, wins.
  *  Electron-free: shared by the main process and the renderer. */
 
 export type ToolDisplay = 'grouped' | 'all' | 'hidden'
 export const TOOL_DISPLAYS: readonly ToolDisplay[] = ['grouped', 'all', 'hidden']
-export type ToolDisplaySetting = ToolDisplay | 'perProject'
-export const TOOL_DISPLAY_SETTINGS: readonly ToolDisplaySetting[] = [...TOOL_DISPLAYS, 'perProject']
+export type ToolDisplaySetting = ToolDisplay
+export const TOOL_DISPLAY_SETTINGS: readonly ToolDisplaySetting[] = TOOL_DISPLAYS
 
-export type SuggestionsSetting = 'off' | 'on' | 'perProject'
-export const SUGGESTIONS_SETTINGS: readonly SuggestionsSetting[] = ['off', 'on', 'perProject']
+export type SuggestionsSetting = 'off' | 'on'
+export const SUGGESTIONS_SETTINGS: readonly SuggestionsSetting[] = ['off', 'on']
 
 export type ThinkingDisplay = 'show' | 'hidden'
 export const THINKING_DISPLAYS: readonly ThinkingDisplay[] = ['show', 'hidden']
-export type ThinkingDisplaySetting = ThinkingDisplay | 'perProject'
-export const THINKING_DISPLAY_SETTINGS: readonly ThinkingDisplaySetting[] = [...THINKING_DISPLAYS, 'perProject']
+export type ThinkingDisplaySetting = ThinkingDisplay
+export const THINKING_DISPLAY_SETTINGS: readonly ThinkingDisplaySetting[] = THINKING_DISPLAYS
 
 /** What one project remembers, shared by every chat in its folder. */
 export type ProjectSettings = {
@@ -29,20 +29,25 @@ export type ProjectSettings = {
   extraDirs?: string[]
 }
 
-/** With "per project" selected, a project that hasn't chosen behaves like the app's default. */
+/** A project that hasn't chosen follows Settings. */
 export function effectiveToolDisplay(setting: ToolDisplaySetting, project: ProjectSettings | null): ToolDisplay {
-  return setting === 'perProject' ? project?.toolDisplay ?? 'grouped' : setting
+  return project?.toolDisplay ?? setting
 }
 
 export function effectiveThinkingDisplay(setting: ThinkingDisplaySetting, project: ProjectSettings | null): ThinkingDisplay {
-  return setting === 'perProject' ? project?.thinkingDisplay ?? 'show' : setting
+  return project?.thinkingDisplay ?? setting
 }
 
 /** `claudeAllows` is false when the user's Claude Code settings turn suggestions off,
  *  which outranks everything here. */
 export function suggestionsWanted(setting: SuggestionsSetting, project: ProjectSettings | null, claudeAllows: boolean): boolean {
   if (!claudeAllows) return false
-  return setting === 'perProject' ? project?.promptSuggestions === true : setting === 'on'
+  return project?.promptSuggestions ?? setting === 'on'
+}
+
+/** Turning tool calls back on in a project keeps the way Settings shows them, grouped or all. */
+export function shownToolDisplay(setting: ToolDisplaySetting): ToolDisplay {
+  return setting === 'hidden' ? 'grouped' : setting
 }
 
 export type ContextUsage = {

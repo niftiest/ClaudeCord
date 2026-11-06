@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { openCatalog } from '../src/main/catalog/db'
 import { getProjectSettings, getProjectSettingsByDir, updateProjectSettings } from '../src/main/catalog/project-settings'
 import { DEFAULT_SETTINGS, getSettings, updateSettings } from '../src/main/catalog/settings'
-import { effectiveToolDisplay, suggestionsWanted } from '../src/shared/project-options'
+import { effectiveToolDisplay, shownToolDisplay, suggestionsWanted } from '../src/shared/project-options'
 import { parseContextUsage, parseModels } from '../src/main/engine/claude-info'
 import { parseEvent } from '../src/main/engine/events'
 import { SessionPool } from '../src/main/engine/pool'
@@ -17,21 +17,33 @@ function freshDb() {
 }
 
 describe('global setting and per-project choice', () => {
-  it('global overrides the project, unless it says per project', () => {
-    expect(effectiveToolDisplay('hidden', { toolDisplay: 'all' })).toBe('hidden')
-    expect(effectiveToolDisplay('grouped', { toolDisplay: 'all' })).toBe('grouped')
-    expect(effectiveToolDisplay('perProject', { toolDisplay: 'all' })).toBe('all')
-    expect(effectiveToolDisplay('perProject', {})).toBe('grouped')
-    expect(effectiveToolDisplay('perProject', null)).toBe('grouped')
+  it("a project's own choice wins, and one that never chose follows Settings", () => {
+    expect(effectiveToolDisplay('hidden', { toolDisplay: 'all' })).toBe('all')
+    expect(effectiveToolDisplay('grouped', { toolDisplay: 'hidden' })).toBe('hidden')
+    expect(effectiveToolDisplay('all', {})).toBe('all')
+    expect(effectiveToolDisplay('hidden', null)).toBe('hidden')
   })
 
-  it('suggestions follow the same rule, and Claude Code\'s own off switch beats both', () => {
-    expect(suggestionsWanted('on', { promptSuggestions: false }, true)).toBe(true)
-    expect(suggestionsWanted('off', { promptSuggestions: true }, true)).toBe(false)
-    expect(suggestionsWanted('perProject', { promptSuggestions: true }, true)).toBe(true)
-    expect(suggestionsWanted('perProject', {}, true)).toBe(false)
+  it('turning tool calls back on keeps the way Settings shows them', () => {
+    expect(shownToolDisplay('all')).toBe('all')
+    expect(shownToolDisplay('grouped')).toBe('grouped')
+    expect(shownToolDisplay('hidden')).toBe('grouped')
+  })
+
+  it("suggestions follow the same rule, and Claude Code's own off switch beats both", () => {
+    expect(suggestionsWanted('on', { promptSuggestions: false }, true)).toBe(false)
+    expect(suggestionsWanted('off', { promptSuggestions: true }, true)).toBe(true)
+    expect(suggestionsWanted('on', {}, true)).toBe(true)
+    expect(suggestionsWanted('off', null, true)).toBe(false)
     expect(suggestionsWanted('on', {}, false)).toBe(false)
-    expect(suggestionsWanted('perProject', { promptSuggestions: true }, false)).toBe(false)
+    expect(suggestionsWanted('off', { promptSuggestions: true }, false)).toBe(false)
+  })
+
+  it('a stored "choose per project" from an older version reads as the default', () => {
+    const db = freshDb()
+    db.prepare("INSERT INTO settings_kv (key, value) VALUES ('toolDisplay', '\"perProject\"'), ('promptSuggestions', '\"perProject\"')").run()
+    expect(getSettings(db)).toMatchObject({ toolDisplay: 'grouped', promptSuggestions: 'off' })
+    db.close()
   })
 
   it('defaults: grouped tool calls, suggestions off', () => {

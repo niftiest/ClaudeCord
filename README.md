@@ -32,7 +32,7 @@ Pick up any conversation where you left off, or start a new one in any folder. I
 
 Each project remembers its model, effort, and permissions. The model lists come straight from Claude Code, and you can change the mode or model while Claude is working. Shift+Tab switches modes, as it does in the terminal.
 
-Replies appear as Claude writes them, including its thinking text and each subagent's steps. A live line shows how long it's been working, the tokens used, and the current tool. Tool calls collapse into one line you can expand, or you can show or hide them all. Claude's thoughts can be shown or hidden too, everywhere or per project, and consecutive thoughts group into one collapsed item.
+Replies appear as Claude writes them, including its thinking text and each subagent's steps. A live line shows how long it's been working, the tokens used, and the current tool. Tool calls collapse into one line you can expand, or you can show them all. Settings sets whether tool calls and Claude's thoughts show, and each project can switch either off or on in its Project options. Consecutive thoughts group into one collapsed item.
 
 While Claude is busy, you can keep typing and your messages wait in line. Esc stops Claude, or takes back a message it hasn't answered yet so you can edit it. With a message queued, Esc returns the newest one to the box without stopping Claude, and pressing Esc twice clears the box. Up, Down, and Ctrl+R bring back what you've typed.
 
@@ -47,7 +47,7 @@ Other things you can do in a chat:
 - Use `/add-dir` or Project options to add other folders to a project.
 - Open a background task's output, or a subagent's full transcript.
 - Right-click text to copy it or a link, and fix misspelled words from the Windows spell checker.
-- Turn on next-prompt suggestions, which offer a guess at your next message as a chip you can click. They're off by default, and you can set them for everything or per project.
+- Turn on next-prompt suggestions, which offer a guess at your next message as a chip you can click. They're off by default. Turn them on in Settings, or for one project in its Project options.
 
 ## Staying in control
 
