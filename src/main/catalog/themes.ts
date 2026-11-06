@@ -74,7 +74,7 @@ export function saveTheme(db: Catalog, name: string, values: ThemeValues | null)
 export function applyTheme(db: Catalog, name: string): AppSettings | null {
   const theme = listThemes(db).find(t => sameThemeName(t.name, name))
   if (theme === undefined) return null
-  return updateSettings(db, { ...theme.values, activeTheme: theme.name })
+  return updateSettings(db, { themeColors: {}, ...theme.values, activeTheme: theme.name })
 }
 
 /** Removes a saved theme. How the app looks now stays as it is. */

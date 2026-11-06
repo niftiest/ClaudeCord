@@ -1,7 +1,7 @@
 import type { TextMenuAction, TextMenuRequest } from './text-menu'
 import type { ModelPrices } from './models'
 import type { AppDialogRequest } from './app-dialog'
-import type { CustomTheme, ExportThemeResult, ImportThemeResult, SaveThemeResult, ThemeValues } from './themes'
+import type { CustomTheme, LocalTheme, ExportThemeResult, ImportThemeResult, SaveThemeResult, ThemeValues } from './themes'
 import type { ProjectSearchResult } from './project-search'
 import type { ProjectSummary, SessionSummary, SearchHit, TranscriptPage, IndexProgress, ChannelRow } from './types'
 import type { ChannelIcon, ChannelGroup, AppSettings } from './shell-types'
@@ -60,6 +60,8 @@ export const IPC = {
   getSettings: 'settings:get',
   updateSettings: 'settings:update',
   listThemes: 'themes:list',
+  listLocalThemes: 'themes:listLocal',
+  openLocalThemes: 'themes:openLocal',
   saveTheme: 'themes:save',
   applyTheme: 'themes:apply',
   deleteTheme: 'themes:delete',
@@ -145,6 +147,10 @@ export type ClaudeCordApi = {
   getSettings(): Promise<AppSettings>
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>
   listThemes(): Promise<CustomTheme[]>
+  /** Theme files kept in this PC's themes folder. */
+  listLocalThemes(): Promise<LocalTheme[]>
+  /** Opens the themes folder, making it first if needed. */
+  openLocalThemes(): Promise<void>
   /** Saves the app's current look, or `values` from a file, under this name. Asks before
    *  replacing a saved theme, and refuses a built-in's name. */
   saveTheme(name: string, values: ThemeValues | null): Promise<SaveThemeResult>

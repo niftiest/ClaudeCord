@@ -99,7 +99,7 @@ export function Transcript({ pendingToolIds, groupToolCalls = true, items: allIt
   // loadOlder prepend reconciles in place (scroll preservation below relies on it).
   const turns = useMemo(() => groupIntoTurns(items), [items])
 
-  // Discord-style day dividers: the label to render *before* each turn, or null
+  // Day dividers: the label to render *before* each turn, or null
   // if that turn is on the same local day as the previous dated turn. Turns with
   // no timestamp (e.g. a tool-only turn) inherit the running day and never force
   // a divider, so a dateless turn between two same-day turns doesn't split them.

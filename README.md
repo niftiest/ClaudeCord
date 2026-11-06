@@ -1,6 +1,6 @@
 # ClaudeCord
 
-ClaudeCord is a Windows desktop app for Claude Code that looks and feels like Discord. Every project you've worked on gets a place in one list, you can scroll back through every conversation, and you can keep chatting with Claude without opening a terminal.
+ClaudeCord is a Windows desktop app for Claude Code, laid out like a chat app. Every project you've worked on gets a place in one list, you can scroll back through every conversation, and you can keep chatting with Claude without opening a terminal.
 
 > ClaudeCord is an independent, unofficial project with no connection to Discord or Anthropic. Neither company makes, sponsors, endorses, or supports it. Discord is a trademark of Discord Inc., and Claude and Claude Code are trademarks of Anthropic.
 
@@ -90,7 +90,9 @@ Claude Code deletes chats after 30 days unless you change that setting. ClaudeCo
 
 ## Making it yours
 
-There are three built-in looks: Discord-style, a classic terminal, and midnight, for just the chat or the whole app. You can save your appearance settings as a named theme, including your font, and import or export themes as files. If a PC doesn't have a theme's font, the default is used.
+There are six built-in themes: Paper, a light theme and the default, four dark ones (Slate & Teal, Ember, Plum & Rose, and Forest), and Terminal, which looks like Claude Code in a terminal and can cover just the chat or the whole app. Each theme comes with its own font, included with the app. You can save your appearance settings as a named theme, including your font, and import or export themes as files. If a PC doesn't have a theme's font, the default is used.
+
+You can also keep themes of your own on one PC. Put a `.css` file in the themes folder (Settings, Appearance, Open themes folder), and it appears in the theme list under its file name. It can set the theme's colors and style any part of the window, and it never leaves that PC.
 
 Text size is separate for the chat and the sidebars, and holding Ctrl while using the mouse wheel over a chat changes it there. The font list comes from your PC, and code stays monospaced.
 

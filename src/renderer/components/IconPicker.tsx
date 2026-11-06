@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ChannelIcon } from '../../shared/shell-types'
 import { api } from '../api'
-import { dataUrlSizeOk, MAX_ICON_IMAGE_BYTES } from '../lib'
+import { dataUrlSizeOk, MAX_ICON_IMAGE_BYTES, themeAvatarColors } from '../lib'
 import { buildAvatarPrompt } from '../../shared/models'
 import { ImageModelSelect } from './ImageModelSelect'
 
@@ -26,7 +26,6 @@ function downscaleSquare(dataUrl: string, size = 128): Promise<string> {
 }
 
 const PRESET_EMOJI = ['🚀', '💡', '🔥', '🎯', '🛠️', '📦', '🐛', '✨', '📚', '🎨', '⚙️', '🌱']
-const PRESET_COLORS = ['#5865F2', '#3BA55D', '#FAA61A', '#ED4245', '#EB459E', '#9B84EC', '#00A8FC', '#F47B67']
 
 type Tab = 'initials' | 'emoji' | 'color' | 'image' | 'ai'
 
@@ -63,7 +62,7 @@ export function IconPicker({ current, onApply, onCancel }: {
 }) {
   const [tab, setTab] = useState<Tab>(tabOf(current))
   const [emoji, setEmoji] = useState(current.kind === 'emoji' ? current.emoji : '🚀')
-  const [color, setColor] = useState(current.kind === 'color' ? current.color : PRESET_COLORS[0]!)
+  const [color, setColor] = useState(current.kind === 'color' ? current.color : themeAvatarColors()[0]!)
   const [imageDataUrl, setImageDataUrl] = useState(current.kind === 'image' ? current.dataUrl : null)
   const [imageError, setImageError] = useState<string | null>(null)
   const [imageFileName, setImageFileName] = useState<string | null>(null)
@@ -168,7 +167,7 @@ export function IconPicker({ current, onApply, onCancel }: {
           {tab === 'color' && (
             <>
               <div className="icon-picker-swatches">
-                {PRESET_COLORS.map(c => (
+                {themeAvatarColors().map(c => (
                   <button key={c} type="button" className={`icon-picker-swatch${color === c ? ' active' : ''}`}
                     style={{ background: c }} onClick={() => setColor(c)} aria-label={`Use ${c}`} />
                 ))}

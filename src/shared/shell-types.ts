@@ -1,4 +1,5 @@
 import type { SuggestionsSetting, ThinkingDisplaySetting, ToolDisplaySetting } from './project-options'
+import type { ThemeColors } from './theme-colors'
 // App-owned channel customization (rename/favorite/group/icon). Kept in
 // shared/ (electron-free) since both the main-process metadata repos
 // (src/main/catalog/metadata.ts) and the renderer nav need the shape.
@@ -24,8 +25,11 @@ export type ChannelGroup = { id: number; name: string; sortOrder: number; icon: 
 /** App preferences, persisted in the catalog's settings_kv table. Every field
  *  has a default (see DEFAULT_SETTINGS in settings.ts); a stored value always
  *  overrides its default. */
-export type AppTheme = 'discord' | 'terminal' | 'midnight'
-export const APP_THEMES: readonly AppTheme[] = ['discord', 'terminal', 'midnight']
+export type BuiltInTheme = 'paper' | 'slate' | 'ember' | 'plum' | 'forest' | 'terminal'
+export const APP_THEMES: readonly BuiltInTheme[] = ['paper', 'slate', 'ember', 'plum', 'forest', 'terminal']
+export const DEFAULT_THEME: BuiltInTheme = 'paper'
+/** A built-in, or `local:<name>`: a theme file kept in this PC's themes folder. */
+export type AppTheme = BuiltInTheme | `local:${string}`
 /** Where a non-default theme applies: just the chat pane (header, transcript,
  *  composer) or the whole window (rail, chat list, context rail, dialogs). */
 export type AppThemeScope = 'chat' | 'app'
@@ -48,14 +52,15 @@ export type AppSettings = {
   notifyTurnComplete: boolean; notifyInputNeeded: boolean; notifyPermission: boolean; notifyError: boolean
   doNotDisturb: boolean; quietHoursStart: string | null; quietHoursEnd: string | null
   // Appearance
-  /** Visual theme: `discord` (the original look) or `terminal` (Claude Code in
-   *  Windows Terminal: black, monospace, flat). Applied as
-   *  `<html data-theme>`; the terminal skin lives in styles.css. */
+  /** Visual theme, applied as `<html data-theme>`. The built-ins live in
+   *  styles.css; a `local:` theme is a file in this PC's themes folder. */
   theme: AppTheme
   /** Where `theme` applies -- 'chat' (the chat pane only, default) or 'app'. */
   themeScope: AppThemeScope
   /** The saved theme these settings came from, by name. Null: a built-in look. */
   activeTheme: string | null
+  /** Your own colours on top of the theme. Empty: the theme's own. */
+  themeColors: ThemeColors
   /** Check GitHub for a new ClaudeCord version on launch and every few hours. */
   autoCheckUpdates: boolean
   /** Restart into a downloaded update by itself once nothing would be interrupted. */

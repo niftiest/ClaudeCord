@@ -243,7 +243,7 @@ export function projectDirFromSessionKey(sessionKey: string): string | null {
   return parts.length >= 2 ? parts[parts.length - 2]! : null
 }
 
-/** Discord-style default-avatar initials for a channel name: the first letter
+/** Default-avatar initials for a channel name: the first letter
  *  of each word, up to 3 ("ClaudeCord" -> "CC", "LuckyElkMonitor" -> "LEM").
  *  Words are split on separators (- _ . space /) and camelCase / acronym
  *  boundaries. A single-word name falls back to its first two letters
@@ -260,17 +260,30 @@ export function channelInitials(name: string): string {
   return words.slice(0, 3).map(w => w[0]!).join('').toUpperCase()
 }
 
-const AVATAR_COLORS = [
-  '#5865F2', '#3BA55D', '#FAA61A', '#ED4245',
-  '#EB459E', '#9B84EC', '#00A8FC', '#F47B67'
-]
+/** Paper's, for when there's no page to ask (tests) or a theme sets none. */
+const DEFAULT_AVATAR_COLORS = ['#2350D0', '#1F8A4C', '#B7590D', '#B23A48', '#6A4FC2', '#0B7A8A', '#8A5A2B', '#4F6B1F']
+let avatarColorsCache: { key: string; colors: string[] } | null = null
+
+/** The current theme's avatar colours: its `--avatar-colors` variable, a comma-separated
+ *  list, so a theme file on this PC can set its own too. */
+export function themeAvatarColors(): string[] {
+  if (typeof document === 'undefined') return DEFAULT_AVATAR_COLORS
+  const key = `${document.documentElement.dataset.theme ?? ''}|${document.getElementById('local-theme')?.textContent ?? ''}`
+  if (avatarColorsCache?.key !== key) {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--avatar-colors')
+    const colors = raw.split(',').map(c => c.trim()).filter(c => /^#[0-9a-f]{6}$/i.test(c))
+    avatarColorsCache = { key, colors: colors.length > 0 ? colors : DEFAULT_AVATAR_COLORS }
+  }
+  return avatarColorsCache.colors
+}
 
 /** Deterministic avatar background color for a seed (the channel name), so a
- *  channel keeps the same color across renders and launches. */
+ *  channel keeps the same color across renders and launches, within a theme. */
 export function avatarColor(seed: string): string {
   let h = 0
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
-  return AVATAR_COLORS[h % AVATAR_COLORS.length]!
+  const colors = themeAvatarColors()
+  return colors[h % colors.length]!
 }
 
 /** Compact relative timestamp for the nav preview line, Google-Messages style:
@@ -319,7 +332,7 @@ export function localDayKey(iso: string | null | undefined): number | null {
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()
 }
 
-/** Discord-style day-divider label: "Today" / "Yesterday" for the two most
+/** Day-divider label: "Today" / "Yesterday" for the two most
  *  recent local days, otherwise a full localized date ("August 2, 2026").
  *  `nowMs` is injectable so the function is deterministic under test. */
 export function dayDividerLabel(iso: string | null | undefined, nowMs: number = Date.now()): string {

@@ -16,8 +16,8 @@ describe('theme names', () => {
     expect(cleanThemeName(5)).toBeNull()
   })
   it('knows the built-ins, whichever way they are written', () => {
-    for (const name of ['Discord', 'discord', 'MIDNIGHT', 'Terminal', 'Discord (default)', 'midnight (darker)', 'Terminal (Claude Code)']) expect(isBuiltInThemeName(name)).toBe(true)
-    expect(isBuiltInThemeName('Midnight 2')).toBe(false)
+    for (const name of ['Paper', 'paper', 'SLATE', 'Terminal', 'Paper (light, default)', 'slate & teal', 'Terminal (Claude Code)']) expect(isBuiltInThemeName(name)).toBe(true)
+    expect(isBuiltInThemeName('Slate 2')).toBe(false)
   })
   it('treats case as the same name', () => {
     expect(sameThemeName('Mine', 'MINE')).toBe(true)
@@ -39,9 +39,9 @@ describe('what a theme holds', () => {
   })
   it('keeps only theme settings from a file, and only valid ones', () => {
     expect(cleanThemeValues({
-      theme: 'midnight', chatFontScale: 130, appFont: 'Verdana',
+      theme: 'slate', chatFontScale: 130, appFont: 'Verdana',
       extraFlags: ['--dangerously-skip-permissions'], openRouterKey: 'x', promptSuggestions: 'on', defaultSkipPermissions: true, startWithAdmin: true
-    })).toEqual({ theme: 'midnight', appFont: 'Verdana' })
+    })).toEqual({ theme: 'slate', appFont: 'Verdana' })
     expect(cleanThemeValues({ theme: 'neon', density: 'huge', showBlade: 'yes' })).toEqual({})
     expect(cleanThemeValues(null)).toEqual({})
     expect(cleanThemeValues(['theme'])).toEqual({})
@@ -65,7 +65,7 @@ describe('what a theme holds', () => {
     expect(cleanThemeValues({ claudeIcon: { kind: 'initials' } })).toEqual({ claudeIcon: { kind: 'initials' } })
   })
   it('ignores an inherited property', () => {
-    expect(cleanThemeValues(Object.create({ theme: 'midnight' }))).toEqual({})
+    expect(cleanThemeValues(Object.create({ theme: 'slate' }))).toEqual({})
   })
 })
 
@@ -79,21 +79,21 @@ describe('saving and choosing themes', () => {
 
   it('saves the current look and selects it', () => {
     const db = openCatalog(':memory:')
-    updateSettings(db, { theme: 'midnight', chatFontScale: 130, appFont: 'Verdana', navDensity: 'compact' })
+    updateSettings(db, { theme: 'slate', chatFontScale: 130, appFont: 'Verdana', navDensity: 'compact' })
     const r = saveTheme(db, 'Mine', null)
     expect(r.settings.activeTheme).toBe('Mine')
     expect(r.themes).toHaveLength(1)
-    expect(r.themes[0]!.values).toMatchObject({ theme: 'midnight', appFont: 'Verdana', navDensity: 'compact' })
+    expect(r.themes[0]!.values).toMatchObject({ theme: 'slate', appFont: 'Verdana', navDensity: 'compact' })
     expect(r.themes[0]!.values).not.toHaveProperty('chatFontScale')
   })
 
   it('choosing one sets everything it holds, and leaves other settings and text sizes alone', () => {
     const db = openCatalog(':memory:')
-    updateSettings(db, { theme: 'midnight', appFont: 'Verdana', chatFontScale: 130, defaultSkipPermissions: false, promptSuggestions: 'on' })
+    updateSettings(db, { theme: 'slate', appFont: 'Verdana', chatFontScale: 130, defaultSkipPermissions: false, promptSuggestions: 'on' })
     saveTheme(db, 'Mine', null)
-    updateSettings(db, { theme: 'discord', appFont: '', chatFontScale: 150, activeTheme: null })
+    updateSettings(db, { theme: 'paper', appFont: '', chatFontScale: 150, activeTheme: null })
     const after = applyTheme(db, 'mine')!
-    expect(after).toMatchObject({ theme: 'midnight', appFont: 'Verdana', chatFontScale: 150, activeTheme: 'Mine', defaultSkipPermissions: false, promptSuggestions: 'on' })
+    expect(after).toMatchObject({ theme: 'slate', appFont: 'Verdana', chatFontScale: 150, activeTheme: 'Mine', defaultSkipPermissions: false, promptSuggestions: 'on' })
   })
 
   it('a theme that is gone changes nothing', () => {
@@ -114,8 +114,8 @@ describe('saving and choosing themes', () => {
 
   it('never lets a built-in be saved over, even called directly', () => {
     const db = openCatalog(':memory:')
-    expect(() => saveTheme(db, 'Midnight', null)).toThrow(/built-in/)
-    expect(() => saveTheme(db, 'discord (default)', null)).toThrow(/built-in/)
+    expect(() => saveTheme(db, 'Ember', null)).toThrow(/built-in/)
+    expect(() => saveTheme(db, 'paper (light, default)', null)).toThrow(/built-in/)
     expect(() => saveTheme(db, '   ', null)).toThrow()
     expect(listThemes(db)).toEqual([])
   })
@@ -154,9 +154,9 @@ describe('saving and choosing themes', () => {
   it('stored junk is checked again on the way out', () => {
     const db = openCatalog(':memory:')
     db.prepare("INSERT INTO settings_kv (key, value) VALUES ('customThemes', ?)").run(JSON.stringify([
-      { name: 'ok', values: { theme: 'midnight', extraFlags: ['--x'] } }, { name: '' }, null, 5
+      { name: 'ok', values: { theme: 'slate', extraFlags: ['--x'] } }, { name: '' }, null, 5
     ]))
-    expect(listThemes(db)).toEqual([{ name: 'ok', values: { theme: 'midnight' } }])
+    expect(listThemes(db)).toEqual([{ name: 'ok', values: { theme: 'slate' } }])
   })
 })
 
@@ -174,7 +174,7 @@ describe('telling when a theme has been changed', () => {
   })
   it('a file that holds only some settings ignores the rest', () => {
     const settings = { ...DEFAULT_SETTINGS, density: 'compact' as const }
-    expect(themeIsModified(settings, { name: 'x', values: { theme: 'discord' } })).toBe(false)
+    expect(themeIsModified(settings, { name: 'x', values: { theme: 'paper' } })).toBe(false)
   })
   it('has no active theme when the named one has gone', () => {
     expect(activeCustomTheme({ ...DEFAULT_SETTINGS, activeTheme: 'gone' }, [])).toBeNull()
@@ -187,13 +187,13 @@ describe('telling when a theme has been changed', () => {
 
 describe('theme files', () => {
   it('round trips', () => {
-    const values = cleanThemeValues({ theme: 'midnight', appFont: 'Verdana', claudeIcon: { kind: 'image', dataUrl: PNG } })
+    const values = cleanThemeValues({ theme: 'slate', appFont: 'Verdana', claudeIcon: { kind: 'image', dataUrl: PNG } })
     expect(parseThemeFile(themeFileText('Mine', values))).toEqual({ name: 'Mine', values })
   })
   it('refuses what is not a theme', () => {
     expect(parseThemeFile('not json')).toBeNull()
     expect(parseThemeFile('null')).toBeNull()
-    expect(parseThemeFile('{"name":"x","values":{"theme":"midnight"}}')).toBeNull()
+    expect(parseThemeFile('{"name":"x","values":{"theme":"slate"}}')).toBeNull()
     expect(parseThemeFile('{"claudecordTheme":1,"name":"x","values":{}}')).toBeNull()
     expect(parseThemeFile('{"claudecordTheme":1,"name":"x","values":{"extraFlags":["--x"]}}')).toBeNull()
   })
@@ -202,12 +202,12 @@ describe('theme files', () => {
     expect(parseThemeFile(themeFileText('Mine', values))?.values.appFont).toBe('Some Font Nobody Has')
   })
   it('reads an older file that has text sizes, and ignores them', () => {
-    expect(parseThemeFile('{"claudecordTheme":1,"name":"x","values":{"theme":"midnight","chatFontScale":150}}')).toEqual({ name: 'x', values: { theme: 'midnight' } })
+    expect(parseThemeFile('{"claudecordTheme":1,"name":"x","values":{"theme":"slate","chatFontScale":150}}')).toEqual({ name: 'x', values: { theme: 'slate' } })
   })
   it('reads a newer file for what it understands', () => {
-    expect(parseThemeFile('{"claudecordTheme":9,"name":"x","values":{"theme":"midnight","future":1}}')).toEqual({ name: 'x', values: { theme: 'midnight' } })
+    expect(parseThemeFile('{"claudecordTheme":9,"name":"x","values":{"theme":"slate","future":1}}')).toEqual({ name: 'x', values: { theme: 'slate' } })
   })
   it('copes with a bad name', () => {
-    expect(parseThemeFile('{"claudecordTheme":1,"name":"   ","values":{"theme":"midnight"}}')).toEqual({ name: null, values: { theme: 'midnight' } })
+    expect(parseThemeFile('{"claudecordTheme":1,"name":"   ","values":{"theme":"slate"}}')).toEqual({ name: null, values: { theme: 'slate' } })
   })
 })

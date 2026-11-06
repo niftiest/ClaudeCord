@@ -74,3 +74,4 @@ local-secrets.json
 docs/
 *.md
 !README.md
+!THIRD-PARTY-NOTICES.md

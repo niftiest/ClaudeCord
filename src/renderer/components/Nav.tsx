@@ -8,7 +8,7 @@ import { CLAUDE_SETUP_URL, groupChannels } from '../lib'
 import { formatCostWhole } from '../../shared/models'
 import { GroupedNav } from './GroupedNav'
 import { UsageFooter } from './UsageFooter'
-import { useRevealChannel } from './useRevealChannel'
+import { useFollowSelected, useRevealChannel } from './useRevealChannel'
 import { ChannelContextMenu } from './ChannelContextMenu'
 
 /** Chats running and elevation level, which used to fill the footer. Hidden for now,
@@ -103,6 +103,7 @@ export function Nav({
   const [contextMenu, setContextMenu] = useState<{ channel: ChannelRow; x: number; y: number } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   useRevealChannel(listRef, reveal, onRevealed)
+  useFollowSelected(listRef, sections, selectedId)
 
   return (
     <nav className="nav" aria-label="Channels" style={{ width }}>

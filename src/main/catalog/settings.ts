@@ -1,7 +1,9 @@
 import { clampFontScale, FONT_SCALE_DEFAULT, validFontName } from '../../shared/font-settings'
 import type { Catalog } from './db'
+import { validThemeId } from '../../shared/themes'
+import { cleanThemeColors } from '../../shared/theme-colors'
 import { SUGGESTIONS_SETTINGS, THINKING_DISPLAY_SETTINGS, TOOL_DISPLAY_SETTINGS, type SuggestionsSetting, type ThinkingDisplaySetting, type ToolDisplaySetting } from '../../shared/project-options'
-import { APP_THEMES, APP_THEME_SCOPES, CLOSE_ACTIONS, type AppSettings, type ChannelIcon, type CloseAction } from '../../shared/shell-types'
+import { APP_THEME_SCOPES, DEFAULT_THEME, CLOSE_ACTIONS, type AppSettings, type ChannelIcon, type CloseAction } from '../../shared/shell-types'
 
 /** Validate an unknown value as a ChannelIcon (settings persist it as JSON).
  *  Returns undefined when invalid so coerce keeps the prior/default. */
@@ -26,7 +28,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultSkipPermissions: true, defaultBudgetUsd: null,
   notifyTurnComplete: true, notifyInputNeeded: true, notifyPermission: true, notifyError: true,
   doNotDisturb: false, quietHoursStart: null, quietHoursEnd: null,
-  theme: 'discord', themeScope: 'chat', activeTheme: null, autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', navDensity: 'comfortable', chatFontScale: FONT_SCALE_DEFAULT, sidebarFontScale: FONT_SCALE_DEFAULT, appFont: '', thinkingExpanded: false, toolCardsExpanded: false,
+  theme: DEFAULT_THEME, themeScope: 'chat', activeTheme: null, themeColors: {}, autoCheckUpdates: true, autoInstallUpdates: true, chromeIntegration: 'auto', density: 'comfortable', navDensity: 'comfortable', chatFontScale: FONT_SCALE_DEFAULT, sidebarFontScale: FONT_SCALE_DEFAULT, appFont: '', thinkingExpanded: false, toolCardsExpanded: false,
   toolDisplay: 'grouped', thinkingDisplay: 'show', promptSuggestions: 'off', showBlade: true, showContextRail: true,
   openRouterKey: '', avatarModel: 'openai/gpt-image-1', claudeIcon: { kind: 'initials' },
   claudeBin: 'claude', idleReapMin: 10, extraFlags: [],
@@ -36,8 +38,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 }
 
 // Pre-theme builds stored 'dark' | 'light' | 'system' (never applied); those
-// now fail validation and fall back to the 'discord' default.
-const THEMES = new Set<string>(APP_THEMES)
+// now fail validation and fall back to the default.
+let localThemeExists: (name: string) => boolean = () => false
+/** How settings learn which of this PC's own theme files are there (main sets it at startup). */
+export function setLocalThemeCheck(check: (name: string) => boolean): void { localThemeExists = check }
 const DENSITIES = new Set(['comfortable', 'compact'])
 const THEME_SCOPES = new Set<string>(APP_THEME_SCOPES)
 
@@ -54,7 +58,8 @@ export function coerce<K extends keyof AppSettings>(key: K, value: unknown): App
   if (key === 'toolDisplay') return (TOOL_DISPLAY_SETTINGS.includes(value as ToolDisplaySetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'thinkingDisplay') return (THINKING_DISPLAY_SETTINGS.includes(value as ThinkingDisplaySetting) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'promptSuggestions') return (SUGGESTIONS_SETTINGS.includes(value as SuggestionsSetting) ? value : undefined) as AppSettings[K] | undefined
-  if (key === 'theme') return (typeof value === 'string' && THEMES.has(value) ? value : undefined) as AppSettings[K] | undefined
+  if (key === 'theme') return (typeof value === 'string' ? validThemeId(value, localThemeExists) ?? undefined : undefined) as AppSettings[K] | undefined
+  if (key === 'themeColors') return (cleanThemeColors(value) ?? undefined) as AppSettings[K] | undefined
   if (key === 'chromeIntegration') return (value === 'auto' || value === 'on' || value === 'off' ? value : undefined) as AppSettings[K] | undefined
   if (key === 'themeScope') return (typeof value === 'string' && THEME_SCOPES.has(value) ? value : undefined) as AppSettings[K] | undefined
   if (key === 'density' || key === 'navDensity') return (typeof value === 'string' && DENSITIES.has(value) ? value : undefined) as AppSettings[K] | undefined

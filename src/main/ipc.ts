@@ -15,6 +15,7 @@ import { displayText } from './jsonl/synthetic'
 import { readOriginRepo } from './engine/github'
 import { search, searchProject } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
+import { ensureLocalThemesDir, listLocalThemes, localThemesDir } from './local-themes'
 import type { AppSettings, ChannelMeta } from '../shared/shell-types'
 import {
   getChannelMeta, setFriendlyName, setStarred, setChannelIcon, setChannelGroup,
@@ -84,8 +85,8 @@ export async function loadTranscript(
   // What a rewind went past isn't part of the chat any more.
   const chainFilter = session.kind === 'subagent' ? 'AND rewound = 0' : 'AND is_sidechain = 0 AND rewound = 0'
 
-  // A chat-history viewer shows EVERY message in chronological order (like
-  // Discord), not a pruned "live branch". Earlier this walked the parentUuid
+  // A chat-history viewer shows EVERY message in chronological order (like a
+  // chat app), not a pruned "live branch". Earlier this walked the parentUuid
   // tree to drop abandoned rewind branches — but that truncated real sessions
   // catastrophically, for two reasons proven against live data:
   //   1. parentUuid threads through NON-message rows (attachment, summary,
@@ -326,6 +327,8 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
   ipcMain.handle(IPC.isElevated, () => isElevated())
 
   ipcMain.handle(IPC.listThemes, () => listThemes(db))
+  ipcMain.handle(IPC.listLocalThemes, () => listLocalThemes(localThemesDir(app.getPath('userData'))))
+  ipcMain.handle(IPC.openLocalThemes, async () => { await shell.openPath(ensureLocalThemesDir(localThemesDir(app.getPath('userData')))) })
   ipcMain.handle(IPC.saveTheme, async (_e, rawName: unknown, values: ThemeValues | null): Promise<SaveThemeResult> => {
     const name = cleanThemeName(rawName)
     if (name === null) return { ok: false, reason: 'name', message: `Enter a name of up to ${MAX_THEME_NAME} characters.` }

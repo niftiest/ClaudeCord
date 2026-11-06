@@ -63,7 +63,7 @@ describe('settings store', () => {
     const db = openCatalog(':memory:')
     // @ts-expect-error deliberately wrong types at the boundary
     const next = updateSettings(db, { theme: 'neon', idleReapMin: -5, extraFlags: [1, 2] })
-    expect(next.theme).toBe('discord')        // 'neon' rejected
+    expect(next.theme).toBe('paper')        // 'neon' rejected
     expect(next.idleReapMin).toBe(10)          // negative rejected
     expect(next.extraFlags).toEqual([])        // non-string array rejected
   })
@@ -75,17 +75,17 @@ describe('settings store', () => {
     expect(updateSettings(db, { themeScope: 'sidebar' as never }).themeScope).toBe('app') // invalid keeps prior
   })
 
-  it('defaults theme to discord and drops legacy dark/light/system values', () => {
+  it('defaults theme to paper and drops legacy dark/light/system values', () => {
     const db = openCatalog(':memory:')
-    expect(DEFAULT_SETTINGS.theme).toBe('discord')
+    expect(DEFAULT_SETTINGS.theme).toBe('paper')
     // Builds before the theme picker stored an (unused) dark/light/system value.
     for (const legacy of ['dark', 'light', 'system']) {
       db.prepare('INSERT INTO settings_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('theme', JSON.stringify(legacy))
-      expect(getSettings(db).theme).toBe('discord')
+      expect(getSettings(db).theme).toBe('paper')
     }
     expect(updateSettings(db, { theme: 'terminal' }).theme).toBe('terminal')
-    expect(updateSettings(db, { theme: 'discord' }).theme).toBe('discord')
+    expect(updateSettings(db, { theme: 'slate' }).theme).toBe('slate')
   })
 
   it('floors a non-integer idle limit', () => {
@@ -98,7 +98,7 @@ describe('settings store', () => {
     db.prepare("INSERT INTO settings_kv (key, value) VALUES ('theme', 'not json')").run()
     db.prepare("INSERT INTO settings_kv (key, value) VALUES ('idleReapMin', '\"nope\"')").run()
     const s = getSettings(db)
-    expect(s.theme).toBe('discord')
+    expect(s.theme).toBe('paper')
     expect(s.idleReapMin).toBe(10)
   })
 

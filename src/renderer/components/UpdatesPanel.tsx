@@ -116,7 +116,7 @@ export function UpdatesPanel({ autoInstall }: { autoInstall: boolean }) {
   )
 }
 
-/** The corner icon, as in Discord: there's a new version, and a click updates. */
+/** The corner icon: there's a new version, and a click updates. */
 export function UpdateIcon() {
   const status = useUpdateStatus()
   const restart = useRestartRequest()

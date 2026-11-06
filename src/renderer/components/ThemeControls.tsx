@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { ThemeColorEditor } from './ThemeColorEditor'
 import { api } from '../api'
 import type { AppSettings, AppTheme } from '../../shared/shell-types'
-import { BUILT_IN_THEMES, MAX_THEME_NAME, activeCustomTheme, themeIsModified, type CustomTheme, type ThemeValues } from '../../shared/themes'
+import { BUILT_IN_THEMES, MAX_THEME_NAME, activeCustomTheme, themeIsModified, type CustomTheme, type LocalTheme, type ThemeValues } from '../../shared/themes'
 
 const CUSTOM = 'custom:'
 
@@ -14,12 +15,13 @@ export function ThemeControls({ settings, onChanged, patch }: {
   patch: (p: Partial<AppSettings>) => Promise<void>
 }) {
   const [themes, setThemes] = useState<CustomTheme[]>([])
+  const [local, setLocal] = useState<LocalTheme[]>([])
   // Open while naming a theme: `values` is what a file brought, null is the app's current look.
   const [naming, setNaming] = useState<{ name: string; values: ThemeValues | null; note: string | null } | null>(null)
   const [message, setMessage] = useState<{ text: string; bad: boolean } | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { void api.listThemes().then(setThemes) }, [])
+  useEffect(() => { void api.listThemes().then(setThemes); void api.listLocalThemes().then(setLocal) }, [])
   useEffect(() => { if (naming !== null) { nameRef.current?.focus(); nameRef.current?.select() } }, [naming === null])
 
   const active = activeCustomTheme(settings, themes)
@@ -32,7 +34,8 @@ export function ThemeControls({ settings, onChanged, patch }: {
       if (after !== null) onChanged(after)
       return
     }
-    await patch({ theme: value as AppTheme, activeTheme: null, ...(active !== null ? { appFont: '' } : {}) })
+    // Your colours were made for the theme you're leaving.
+    await patch({ theme: value as AppTheme, activeTheme: null, themeColors: {}, ...(active !== null ? { appFont: '' } : {}) })
   }
 
   async function save(): Promise<void> {
@@ -95,6 +98,11 @@ export function ThemeControls({ settings, onChanged, patch }: {
         <div className="settings-row-label">Theme</div>
         <select value={active !== null ? `${CUSTOM}${active.name}` : settings.theme} onChange={e => void choose(e.target.value)}>
           {BUILT_IN_THEMES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          {local.length > 0 && (
+            <optgroup label="On this PC only">
+              {local.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </optgroup>
+          )}
           {themes.length > 0 && (
             <optgroup label="Your themes">
               {themes.map(t => <option key={t.name} value={`${CUSTOM}${t.name}`}>{t === active && modified ? `${t.name} (modified)` : t.name}</option>)}
@@ -102,15 +110,25 @@ export function ThemeControls({ settings, onChanged, patch }: {
           )}
         </select>
       </label>
+      <ThemeColorEditor settings={settings} patch={patch} />
       <div className="settings-row theme-actions-row">
         <div className="settings-row-label">
-          <span className="settings-hint">A saved theme holds the settings on this page, except text sizes and prompt suggestions.</span>
+          <span className="settings-hint">A saved theme holds the settings on this page, your colors included, except text sizes and prompt suggestions.</span>
         </div>
         <div className="theme-actions">
           <button type="button" className="btn-secondary" onClick={() => { setMessage(null); setNaming({ name: active?.name ?? '', values: null, note: null }) }}>Save as theme…</button>
           <button type="button" className="btn-secondary" onClick={() => void importFile()}>Import…</button>
           <button type="button" className="btn-secondary" onClick={() => void exportFile()}>Export…</button>
           {active !== null && <button type="button" className="btn-secondary" onClick={() => void remove()}>Delete</button>}
+        </div>
+      </div>
+      <div className="settings-row theme-actions-row">
+        <div className="settings-row-label">
+          <span className="settings-hint">Themes on this PC only are .css files in your themes folder. They never leave this PC, and each file's name is the theme's name.</span>
+        </div>
+        <div className="theme-actions">
+          <button type="button" className="btn-secondary" onClick={() => void api.openLocalThemes()}>Open themes folder</button>
+          <button type="button" className="btn-secondary" onClick={() => void api.listLocalThemes().then(setLocal)}>Refresh</button>
         </div>
       </div>
       {naming !== null && (

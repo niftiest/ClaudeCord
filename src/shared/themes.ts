@@ -1,10 +1,10 @@
-import type { AppSettings, AppTheme } from './shell-types'
+import { APP_THEMES, type AppSettings, type AppTheme, type BuiltInTheme } from './shell-types'
 
 /** What a saved theme holds: how the app looks. Text sizes stay out: they suit the person and
  *  their screen, whatever the theme. So do prompt suggestions, which spend tokens, so a theme,
  *  and above all someone else's theme file, can't turn them on. */
 export const THEME_KEYS = [
-  'theme', 'themeScope', 'appFont', 'navDensity', 'density',
+  'theme', 'themeScope', 'themeColors', 'appFont', 'navDensity', 'density',
   'claudeIcon', 'toolDisplay', 'thinkingDisplay', 'showBlade', 'showContextRail', 'thinkingExpanded', 'toolCardsExpanded'
 ] as const satisfies ReadonlyArray<keyof AppSettings>
 
@@ -12,11 +12,30 @@ export type ThemeKey = typeof THEME_KEYS[number]
 export type ThemeValues = Partial<Pick<AppSettings, ThemeKey>>
 export type CustomTheme = { name: string; values: ThemeValues }
 
-export const BUILT_IN_THEMES: ReadonlyArray<{ id: AppTheme; label: string }> = [
-  { id: 'discord', label: 'Discord (default)' },
-  { id: 'terminal', label: 'Terminal (Claude Code)' },
-  { id: 'midnight', label: 'Midnight (darker)' }
+export const BUILT_IN_THEMES: ReadonlyArray<{ id: BuiltInTheme; label: string }> = [
+  { id: 'paper', label: 'Paper (light, default)' },
+  { id: 'slate', label: 'Slate & Teal' },
+  { id: 'ember', label: 'Ember' },
+  { id: 'plum', label: 'Plum & Rose' },
+  { id: 'forest', label: 'Forest' },
+  { id: 'terminal', label: 'Terminal (Claude Code)' }
 ]
+
+/** A theme file from this PC's themes folder. Its id is `local:<name>`. */
+export const LOCAL_THEME_PREFIX = 'local:'
+export type LocalTheme = { id: AppTheme; name: string; css: string }
+
+export function isLocalTheme(theme: string): boolean {
+  return theme.startsWith(LOCAL_THEME_PREFIX)
+}
+
+/** A usable theme id: a built-in, or a theme file that's on this PC. Null otherwise,
+ *  so settings fall back to the default. */
+export function validThemeId(raw: string, hasLocal: (name: string) => boolean): AppTheme | null {
+  if (APP_THEMES.includes(raw as BuiltInTheme)) return raw as BuiltInTheme
+  if (isLocalTheme(raw) && hasLocal(raw.slice(LOCAL_THEME_PREFIX.length))) return raw as AppTheme
+  return null
+}
 
 export const THEME_FILE_EXTENSION = 'claudecord-theme'
 export const MAX_THEME_NAME = 60

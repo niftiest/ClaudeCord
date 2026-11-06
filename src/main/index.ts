@@ -11,7 +11,8 @@ import { registerSyncIpc, type SyncIpcHandle } from './sync-ipc'
 import { registerUpdater } from './updater'
 import { registerTextMenu } from './text-menu'
 import { saveResume, takeResume, usableBounds } from './update-resume'
-import { getSettings, updateSettings } from './catalog/settings'
+import { getSettings, setLocalThemeCheck, updateSettings } from './catalog/settings'
+import { hasLocalTheme, localThemesDir } from './local-themes'
 import { AUTOSTART_ARG } from './ipc'
 import { applyStartupSettings } from './elevation'
 import { registerClaudeSettingsIpc } from './claude-settings-ipc'
@@ -53,6 +54,7 @@ function devIcon(): string | undefined {
 
 function createWindow(): void {
   const icon = devIcon()
+  setLocalThemeCheck(name => hasLocalTheme(localThemesDir(app.getPath('userData')), name))
   const db = openCatalog(join(app.getPath('userData'), 'catalog.db'))
   const startup = getSettings(db)
   // A login start with "Start minimized": no splash, window stays in the tray

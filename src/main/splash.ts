@@ -24,10 +24,10 @@ const HTML = `<!DOCTYPE html><html><head><meta charset="utf-8">
   .mark line{stroke:#fff;stroke-width:9.5;stroke-linecap:round}
   .mark{animation:turn 1.5s cubic-bezier(.65,0,.35,1) infinite}
   @keyframes turn{0%{transform:rotate(0)}70%,100%{transform:rotate(45deg)}}
-  #status{margin-top:24px;max-width:240px;font-size:13.5px;font-weight:600;color:#f2f3f5;text-align:center;
+  #status{margin-top:24px;max-width:240px;font-size:13.5px;font-weight:600;color:#eef0f2;text-align:center;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bar{margin-top:12px;width:150px;height:8px;border-radius:4px;background:#2a2c33;overflow:hidden}
-  .bar i{display:block;height:100%;width:0;border-radius:4px;background:#5865f2;transition:width .2s ease}
+  .bar i{display:block;height:100%;width:0;border-radius:4px;background:#2350d0;transition:width .2s ease}
   .bar.indet i{width:35%;animation:slide 1.1s ease-in-out infinite}
   @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}
 </style></head><body><div class="tile">

@@ -51,7 +51,8 @@ import { ProjectSearchBox, ProjectSearchResults } from './components/ProjectSear
 import type { ProjectSearchResult } from '../shared/project-search'
 import type { ShellRun } from '../shared/shell-run-types'
 import type { McpServerStatus } from '../shared/claude-info-types'
-import { applyTheme, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
+import { applyTheme, applyThemeColors, cachedTheme, chatPaneTheme, type ThemeChoice } from './theme'
+import type { LocalTheme } from '../shared/themes'
 import {
   resolveChannelName, isStaleResponse, clamp, buildOutgoingText, terminalOnlyCommand, isClearCommand, reduceLivePreview, appendRowsToItems, hasUserRenderItem, retryLabel, nextPermissionMode, permissionModeLabel, isRewindCommand, spawnErrorNotice, sideQuestionOf, renameCommandOf, addDirCommandOf, isForkCommand,
   renderItemsFromStreamedRows, applyStreamedToolResults, pendingTools, shouldApplyReload, clearsRunning, hasAssistantRenderItem, suppressSealedPreview, mergeReloadedPage, dropCancelledMessage,
@@ -126,6 +127,8 @@ export function App() {
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('cc.blade.collapsed') === 'true')
   const [newChatOpen, setNewChatOpen] = useState(false)
+  // A folder to start in: only from an empty project's own New chat button.
+  const [newChatCwd, setNewChatCwd] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   // A project opened from outside the chat list, which has to bring it into view.
   const [revealChannel, setRevealChannel] = useState<number | null>(null)
@@ -430,9 +433,9 @@ export function App() {
     }
   }, [])
 
-  // Theme: `<html data-theme>` drives the [data-theme="terminal"] overrides in
-  // styles.css. Cached in localStorage so main.tsx can apply it before first
-  // paint (no Discord flash while settings load).
+  // Theme: `<html data-theme>` picks the theme's block in styles.css, or a theme
+  // file from this PC's themes folder. Cached in localStorage so main.tsx can
+  // apply it before first paint (no flash of the default while settings load).
   // `themeScope` decides whether the skin covers the whole window (<html>) or
   // just the chat pane (<main data-theme> below). Until settings load, the
   // cached choice is used so the first paint already matches.
@@ -440,10 +443,14 @@ export function App() {
   const themeChoice: ThemeChoice = settings === null
     ? cachedChoice
     : { theme: settings.theme, scope: settings.themeScope }
+  // Read again on each change, so an edited theme file shows when it's chosen.
+  const [localThemes, setLocalThemes] = useState<LocalTheme[] | null>(null)
+  useEffect(() => { void api.listLocalThemes().then(setLocalThemes) }, [themeChoice.theme])
   useEffect(() => {
     if (settings === null) return
-    applyTheme(themeChoice)
-  }, [themeChoice.theme, themeChoice.scope])
+    applyTheme(themeChoice, localThemes ?? [])
+    applyThemeColors(settings.themeColors)
+  }, [themeChoice.theme, themeChoice.scope, localThemes, JSON.stringify(settings?.themeColors ?? {})])
 
   // Poll the engine pool for the chat-list footer count (the pool HUD polls
   // its own detail while open). Cheap and bounded to a handful of engines.
@@ -1566,7 +1573,7 @@ export function App() {
         sidebarExpanded={false} reveal={revealChannel} onRevealed={() => setRevealChannel(null)}
         onSelect={p => { setManageOpen(false); void openProject(p) }}
         onToggleSidebar={() => { setManageOpen(false); setSidebarExpanded(true) }}
-        onNewChat={() => setNewChatOpen(true)} onOpenSearch={() => setSearchOpen(true)}
+        onNewChat={() => { setNewChatCwd(null); setNewChatOpen(true) }} onOpenSearch={() => setSearchOpen(true)}
         onOpenSettings={() => { setSettingsSection(undefined); setSettingsOpen(true) }}
         onOpenManage={() => setManageOpen(o => !o)} manageOpen={manageOpen} />
       )}
@@ -1583,7 +1590,7 @@ export function App() {
             onCollapse={() => setSidebarExpanded(false)} channels={channels} groups={groups} selectedId={project?.id ?? null} width={navWidth}
             reveal={revealChannel} onRevealed={() => setRevealChannel(null)}
             unread={unread} remote={remoteProjects} showRepos={githubReady} totalCost={totalCost} elevated={elevated} activeChats={activeChats} planUsage={planUsage} session={session}
-            onSelect={p => void openProject(p)} onNewChat={() => setNewChatOpen(true)}
+            onSelect={p => void openProject(p)} onNewChat={() => { setNewChatCwd(null); setNewChatOpen(true) }}
             onOpenSearch={() => setSearchOpen(true)} onOpenPool={() => setPoolOpen(true)}
             onRename={onRenameChannel} onToggleStar={onToggleStar} onMoveToGroup={onMoveToGroup}
             onCreateGroup={onCreateGroup} onDeleteGroup={onDeleteGroup} onRenameGroup={onRenameGroup}
@@ -1669,7 +1676,7 @@ export function App() {
         </header>
         {session !== null && <SyncChatBanner info={syncChat.info} onOpenSettings={() => { setSettingsSection('sync'); setSettingsOpen(true) }} />}
         {session === null
-          ? <EmptyPane project={project === null ? undefined : channels.find(c => c.id === project.id)} onNewChat={() => setNewChatOpen(true)} />
+          ? <EmptyPane project={project === null ? undefined : channels.find(c => c.id === project.id)} onNewChat={() => { setNewChatCwd(project?.cwd ?? null); setNewChatOpen(true) }} />
           // Keyed on the session id: forces a fresh Transcript instance (and
           // fresh internal scroll/height refs) per session, so the scroll-
           // preservation math never mixes geometry from a previously open
@@ -1850,7 +1857,7 @@ export function App() {
         // stays freely editable and Browse still opens on any directory.
         <NewChatDialog
           defaults={{
-            cwd: project?.cwd ?? settings?.defaultCwd ?? undefined,
+            cwd: newChatCwd ?? settings?.defaultCwd ?? undefined,
             skipPermissions: settings?.defaultSkipPermissions ?? true,
             model: settings?.defaultModel ?? undefined,
             effort: settings?.defaultEffort ?? undefined

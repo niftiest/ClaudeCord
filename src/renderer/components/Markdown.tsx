@@ -1,4 +1,4 @@
-import { memo, useState, type ComponentProps, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -48,9 +48,29 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   )
 }
 
+/** A table keeps whole words in its cells, and breaks them only while the chat is too
+ *  narrow for that, so it never needs a scrollbar. */
+function Table({ children }: { children?: ReactNode }) {
+  const wrap = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const box = wrap.current, table = box?.firstElementChild as HTMLElement | null | undefined
+    if (box == null || table == null) return
+    let needs = 0 // the width the table took with whole words, while it's breaking them
+    const check = () => {
+      if (needs === 0) {
+        if (table.offsetWidth > box.clientWidth + 1) { needs = table.offsetWidth; box.classList.add('tight') }
+      } else if (box.clientWidth >= needs) { needs = 0; box.classList.remove('tight'); check() }
+    }
+    const watch = new ResizeObserver(check)
+    watch.observe(box); watch.observe(table)
+    return () => watch.disconnect()
+  }, [])
+  return <div className="md-table" ref={wrap}><table>{children}</table></div>
+}
+
 const COMPONENTS: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-  table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
+  table: ({ children }) => <Table>{children}</Table>,
   // Never navigates the app's own window; the main process only opens web and mail links.
   a: ({ href, children }) => (
     <a href={href} title={href} onClick={e => {
