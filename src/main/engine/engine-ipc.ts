@@ -43,6 +43,13 @@ import { listSessions } from '../catalog/repos'
 import type { SessionSummary } from '../../shared/types'
 import { isCatalogSettled } from '../indexer/indexer'
 import { addAllowRule, defaultManagedFiles } from '../claude-settings/files'
+import { addHook, removeHook } from '../claude-settings/hooks-edit'
+import { loadTranscript } from '../ipc'
+import { exportFileName, exportText } from '../export-chat'
+import {
+  parseHooksListing, parsePlugins, parseWorkspaceDiff, pluginArgsAllowed,
+  type ExportChatResult, type HookEntry, type HookScope, type HooksListing, type PanelResult, type PluginActionResult, type PluginsState, type WorkspaceDiff
+} from '../../shared/command-panels-types'
 import { BYPASS_ACCEPT_INDEX, BYPASS_QUESTION, bypassAccepted, recordBypassAccepted } from './bypass-consent'
 import type { AppDialogRequest } from '../../shared/app-dialog'
 import type { ElicitationAnswer, LiveEvent, PermissionRequest } from '../../shared/engine-types'
@@ -168,6 +175,11 @@ const SIDE_QUESTION_MS = 120_000
 const MCP_RECONNECT_TIMEOUT_MS = 40_000
 
 const PLAN_CHECK_DELAY_MS = 3000
+/** /hooks and /diff: a big diff takes Claude Code a while to gather. */
+const PANEL_TIMEOUT_MS = 45_000
+const PLUGIN_CLI_TIMEOUT_MS = 60_000
+/** Installing clones the plugin's repo. */
+const PLUGIN_INSTALL_TIMEOUT_MS = 5 * 60_000
 
 
 export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: EngineHooks = {}): EngineIpcHandle {
@@ -620,6 +632,114 @@ export function registerEngineIpc(db: Catalog, window: BrowserWindow, hooks: Eng
   // Claude Code saves this itself, so it lasts past the chat's process, as `/mcp disable` does.
   ipcMain.handle(ENGINE_IPC.mcpToggle, (_e, sessionPk: number, name: string, enabled: boolean): Promise<McpCheckResult> =>
     chatMcpRequest(sessionPk, 'mcp_toggle', { serverName: name, enabled: enabled === true }))
+  /** A question for Claude Code about a chat: its own process if it has one, so the answer is
+   *  that chat's, otherwise a brief process in its folder. */
+  const askAboutChat = async (sessionPk: number, subtype: string, opts: { quiet?: boolean } = {}): Promise<unknown> => {
+    const info = getEngineSessionInfo(db, sessionPk)
+    if (info === null) throw new Error('That chat is no longer available.')
+    const live = pool.request(info.filePath, subtype, {}, PANEL_TIMEOUT_MS)
+    if (live !== null) return await live
+    return await claudeInfo.control(folderOrHome(info.cwd), subtype, {}, opts)
+  }
+  const hooksOf = async (sessionPk: number): Promise<PanelResult<HooksListing>> => {
+    try { return { ok: true, value: parseHooksListing(await askAboutChat(sessionPk, 'get_hooks_listing')) } } catch (err) { return { ok: false, error: errorText(err) } }
+  }
+  /** Hooks are read when a process starts, so running chats in the folder start again. */
+  const reloadChatsIn = (cwd: string | null): void => {
+    for (const s of pool.snapshot()) {
+      const row = db.prepare('SELECT p.cwd AS cwd FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.file_path = ?').get(s.sessionKey) as { cwd: string | null } | undefined
+      if (cwd === null || (row?.cwd != null && sameFolder(row.cwd, cwd))) pool.restartForReload(s.sessionKey)
+    }
+  }
+  const settingsLoc = () => ({ claudeDir: claudeHome(), managedFiles: defaultManagedFiles() })
+  ipcMain.handle(ENGINE_IPC.hooksListing, (_e, sessionPk: number) => hooksOf(sessionPk))
+  ipcMain.handle(ENGINE_IPC.addHook, async (_e, sessionPk: number, scope: HookScope, hook: { event: string; matcher: string | null; command: string; timeout?: number }): Promise<PanelResult<HooksListing>> => {
+    const cwd = getEngineSessionInfo(db, sessionPk)?.cwd ?? null
+    try { addHook(settingsLoc(), scope, cwd, hook) } catch (err) { return { ok: false, error: errorText(err) } }
+    reloadChatsIn(scope === 'user' ? null : cwd)
+    return hooksOf(sessionPk)
+  })
+  ipcMain.handle(ENGINE_IPC.removeHook, async (_e, sessionPk: number, hook: HookEntry): Promise<PanelResult<HooksListing> | { ok: false; cancelled: true }> => {
+    if (hook.scope === null || hook.config === null) return { ok: false, error: 'That hook isn’t in a settings file ClaudeCord can change.' }
+    const choice = await hooks.ask?.({
+      title: 'Remove this hook?',
+      detail: [`${hook.event}${hook.matcher !== null ? ` (${hook.matcher})` : ''}: ${hook.text}`, `It’s taken out of ${hook.sourceLabel}.`],
+      buttons: [{ label: 'Cancel', kind: 'secondary' }, { label: 'Remove', kind: 'danger' }],
+      defaultIndex: 0,
+      cancelIndex: 0
+    })
+    if (choice !== 1) return { ok: false, cancelled: true }
+    const cwd = getEngineSessionInfo(db, sessionPk)?.cwd ?? null
+    try {
+      if (!removeHook(settingsLoc(), hook.scope, cwd, { event: hook.event, matcher: hook.matcher, config: hook.config })) return { ok: false, error: 'That hook isn’t in the file any more. It may have been changed elsewhere.' }
+    } catch (err) { return { ok: false, error: errorText(err) } }
+    reloadChatsIn(hook.scope === 'user' ? null : cwd)
+    return hooksOf(sessionPk)
+  })
+  ipcMain.handle(ENGINE_IPC.workspaceDiff, async (_e, sessionPk: number): Promise<PanelResult<WorkspaceDiff>> => {
+    try { return { ok: true, value: parseWorkspaceDiff(await askAboutChat(sessionPk, 'get_workspace_diff', { quiet: true })) } } catch (err) { return { ok: false, error: errorText(err) } }
+  })
+  ipcMain.handle(ENGINE_IPC.exportChat, async (_e, sessionPk: number, mode: 'file' | 'text', fileName?: string): Promise<ExportChatResult> => {
+    try {
+      const row = db.prepare('SELECT s.title AS title, p.cwd AS cwd FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.id = ?').get(sessionPk) as { title: string | null; cwd: string | null } | undefined
+      if (row === undefined) return { status: 'failed', message: 'That chat is no longer available.' }
+      const page = await loadTranscript(db, sessionPk, { limit: Number.MAX_SAFE_INTEGER })
+      const text = exportText(page.items, { title: row.title ?? 'Chat', cwd: row.cwd })
+      if (mode === 'text') return { status: 'text', text }
+      let path: string
+      const named = (fileName ?? '').trim()
+      if (named !== '' && row.cwd !== null && existsSync(row.cwd)) {
+        // As `/export name` does in the terminal: into the chat's folder, as .txt.
+        path = resolve(row.cwd, /\.[a-z0-9]+$/i.test(named) ? named : `${named}.txt`)
+      } else {
+        const picked = await dialog.showSaveDialog(window, {
+          title: 'Export chat',
+          defaultPath: join(row.cwd !== null && existsSync(row.cwd) ? row.cwd : homedir(), exportFileName()),
+          filters: [{ name: 'Text', extensions: ['txt', 'md'] }]
+        })
+        if (picked.canceled || picked.filePath === undefined) return { status: 'cancelled' }
+        path = picked.filePath
+      }
+      writeFileSync(path, text, 'utf8')
+      return { status: 'saved', path }
+    } catch (err) {
+      return { status: 'failed', message: errorText(err) }
+    }
+  })
+  /** `claude plugin …`, run in the folder (project-scope plugins are per folder). */
+  const runPluginCli = (cwd: string | null, args: string[], timeoutMs = PLUGIN_CLI_TIMEOUT_MS): Promise<string> => new Promise((done, fail) => {
+    execFile(claudeBin(), ['plugin', ...args], { cwd: folderOrHome(cwd), windowsHide: true, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err !== null) fail(new Error((String(stderr).trim() || String(stdout).trim() || err.message).split('\n').slice(-6).join('\n')))
+      else done(String(stdout))
+    })
+  })
+  ipcMain.handle(ENGINE_IPC.pluginsList, async (_e, cwd: string | null): Promise<PanelResult<PluginsState>> => {
+    try {
+      const [list, markets] = await Promise.all([runPluginCli(cwd, ['list', '--json', '--available']), runPluginCli(cwd, ['marketplace', 'list', '--json'])])
+      return { ok: true, value: parsePlugins(JSON.parse(list), JSON.parse(markets)) }
+    } catch (err) {
+      return { ok: false, error: errorText(err) }
+    }
+  })
+  ipcMain.handle(ENGINE_IPC.pluginAction, async (_e, cwd: string | null, args: string[]): Promise<PluginActionResult> => {
+    if (!pluginArgsAllowed(args)) {
+      return { ok: false, error: 'ClaudeCord doesn’t run that plugin command.' }
+    }
+    try {
+      const output = await runPluginCli(cwd, args, PLUGIN_INSTALL_TIMEOUT_MS)
+      // What the terminal's /reload-plugins does, for every chat with a process running.
+      let reloaded = 0
+      await Promise.all(pool.snapshot().map(async s => {
+        const answer = pool.request(s.sessionKey, 'reload_plugins', {}, PANEL_TIMEOUT_MS)
+        if (answer === null) return
+        try { await answer; reloaded++ } catch { pool.restartForReload(s.sessionKey); reloaded++ }
+      }))
+      claudeInfo.forget()
+      return { ok: true, output: output.trim(), reloaded }
+    } catch (err) {
+      return { ok: false, error: errorText(err) }
+    }
+  })
   ipcMain.handle(ENGINE_IPC.mcpCheck, async (_e, cwd: string | null): Promise<McpCheckResult> => {
     try {
       return { ok: true, servers: await claudeInfo.mcpCheck(folderOrHome(cwd)) }

@@ -1314,12 +1314,10 @@ describe('timeBucket', () => {
 describe('terminalOnlyCommand', () => {
   it('flags commands that need the terminal', async () => {
     const { terminalOnlyCommand } = await import('../src/renderer/lib')
-    expect(terminalOnlyCommand('/hooks')).toBe('/hooks')
+    expect(terminalOnlyCommand('/ide')).toBe('/ide')
     expect(terminalOnlyCommand('  /Login  ')).toBe('/login')
-    expect(terminalOnlyCommand('/tasks')).toBe('/tasks')
     // ClaudeCord has its own screen for these.
-    expect(terminalOnlyCommand('/chrome')).toBeNull()
-    expect(terminalOnlyCommand('/memory')).toBeNull()
+    for (const c of ['/chrome', '/memory', '/hooks', '/tasks', '/bashes', '/diff', '/export', '/plugin', '/plugins', '/marketplace']) expect(terminalOnlyCommand(c)).toBeNull()
   })
   it('leaves commands that work headlessly, skills and ordinary text alone', async () => {
     const { terminalOnlyCommand } = await import('../src/renderer/lib')

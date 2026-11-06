@@ -47,6 +47,7 @@ import { RewindDialog } from './components/RewindDialog'
 import { TextMenuHost } from './components/TextMenu'
 import type { PinnedMessage } from '../shared/engine-ipc-contract'
 import { TaskOutputDialog } from './components/TaskOutputDialog'
+import { DiffDialog, ExportDialog, HooksDialog, TasksDialog } from './components/CommandPanels'
 import { reduceAgentRuns, type AgentRun } from '../shared/subagent-activity'
 import { ProjectSearchBox, ProjectSearchResults } from './components/ProjectSearch'
 import type { ProjectSearchResult } from '../shared/project-search'
@@ -184,6 +185,9 @@ export function App() {
   const [liveThinking, setLiveThinking] = useState<string | null>(null)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [taskOutputOpen, setTaskOutputOpen] = useState<{ id: string; title: string } | null>(null)
+  /** The screen a terminal command opened: /hooks, /diff, /tasks or /export. */
+  const [panel, setPanel] = useState<'hooks' | 'diff' | 'tasks' | 'export' | null>(null)
+  const closePanel = useCallback((): void => setPanel(null), [])
   const closeSubagent = useCallback((): void => setSubagentOpen(null), [])
   const closeRewind = useCallback((): void => setRewindOpen(false), [])
   const [railView, setRailView] = useState<RailView>(() => window.localStorage.getItem('cc.ui.railView') === 'pins' ? 'pins' : 'files')
@@ -664,6 +668,7 @@ export function App() {
     setLiveThinking(null)
     setRewindOpen(false)
     setTaskOutputOpen(null)
+    setPanel(null)
     setQueuedCount(0)
     setExternalLock(null)
     setSettledPk(null)
@@ -1331,6 +1336,25 @@ export function App() {
           ].filter(Boolean).join(' · ') + '. Account and connection details are in Claude Code’s own /status, in a terminal.')
         })
         return
+      case 'hooks': setPanel('hooks'); return
+      case 'diff': setPanel('diff'); return
+      case 'tasks': setPanel('tasks'); return
+      case 'export':
+        if (cmd.fileName === '') { setPanel('export'); return }
+        void api.exportChat(pk, 'file', cmd.fileName).then(r => {
+          if (r.status === 'saved') say(`Saved this chat to ${r.path}`)
+          else if (r.status === 'failed') say(`Couldn’t export: ${r.message}`, false)
+        })
+        return
+      case 'pluginAction': {
+        const what = cmd.args.join(' ')
+        say(`Running claude plugin ${what}…`)
+        void api.pluginAction(project?.cwd ?? null, cmd.args).then(r => {
+          if (!r.ok) { say(`claude plugin ${what}: ${r.error}`, false); return }
+          say([r.output !== '' ? r.output.split('\n').slice(-3).join(' ') : `Done: claude plugin ${what}.`, r.reloaded > 0 ? `Running chats reloaded their plugins.` : null].filter(Boolean).join(' '))
+        })
+        return
+      }
       case 'releaseNotes': void api.openLink('https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md'); return
       case 'exit': say('There’s nothing to exit here. Close the window, or pick another chat.'); return
       case 'note': say(cmd.text); return
@@ -1868,6 +1892,11 @@ export function App() {
         )}
         {session !== null && <SubagentsLive runs={agentRunsByPk.get(session.id) ?? NO_AGENT_RUNS} onView={setSubagentOpen} />}
         {session !== null && <BackgroundTasksLine tasks={backgroundTasks} running={running} onStop={id => { void api.stopTask(session.id, id) }} onShowOutput={(id, title) => setTaskOutputOpen({ id, title })} />}
+        {session !== null && panel === 'hooks' && <HooksDialog sessionPk={session.id} onClose={closePanel} />}
+        {session !== null && panel === 'diff' && <DiffDialog sessionPk={session.id} onClose={closePanel} />}
+        {session !== null && panel === 'tasks' && <TasksDialog tasks={backgroundTasks} onStop={id => { void api.stopTask(session.id, id) }} onShowOutput={(id, title) => { setPanel(null); setTaskOutputOpen({ id, title }) }} onClose={closePanel} />}
+        {session !== null && panel === 'export' && <ExportDialog sessionPk={session.id} onClose={closePanel}
+          onDone={(text, good) => { setPanel(null); if (good) setGoodNotice(text); setTerminalNotice(text) }} />}
         {session !== null && taskOutputOpen !== null && <TaskOutputDialog sessionPk={session.id} taskId={taskOutputOpen.id} title={taskOutputOpen.title} onClose={closeTaskOutput} />}
         {session !== null && rewindOpen && (
           <RewindDialog sessionPk={session.id} onClose={closeRewind} onDone={r => {

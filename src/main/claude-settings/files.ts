@@ -124,7 +124,7 @@ export function validateSetting(key: ClaudeSettingKey, value: unknown): { ok: tr
 }
 
 /** Keeps the user file's previous version (last 10) before ClaudeCord edits it. */
-function backupUserFile(loc: SettingsLocations, path: string): void {
+export function backupUserFile(loc: SettingsLocations, path: string): void {
   if (!existsSync(path)) return
   const dir = join(loc.claudeDir, 'backups', 'claudecord')
   mkdirSync(dir, { recursive: true })

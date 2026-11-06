@@ -7,7 +7,7 @@ import { LOCAL_THEME_PREFIX, type LocalTheme } from '../shared/themes'
  *  nested inside the theme's own selector, so it can set the colour variables and
  *  style any part of the window. */
 export const LOCAL_THEMES_FOLDER = 'themes'
-const MAX_BYTES = 256 * 1024
+export const MAX_LOCAL_THEME_BYTES = 256 * 1024
 
 export function localThemesDir(userData: string): string {
   return join(userData, LOCAL_THEMES_FOLDER)
@@ -30,7 +30,7 @@ export function listLocalThemes(dir: string): LocalTheme[] {
     if (name === null) continue
     const path = join(dir, file)
     try {
-      if (!statSync(path).isFile() || statSync(path).size > MAX_BYTES) continue
+      if (!statSync(path).isFile() || statSync(path).size > MAX_LOCAL_THEME_BYTES) continue
       out.push({ id: `${LOCAL_THEME_PREFIX}${name}`, name, css: readFileSync(path, 'utf8') })
     } catch { /* unreadable: left out */ }
   }

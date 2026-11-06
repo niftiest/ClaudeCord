@@ -57,6 +57,12 @@ export function ThemeControls({ settings, onChanged, patch }: {
     const file = await api.importTheme()
     if (file.status === 'cancelled') return
     if (file.status === 'invalid') { setMessage({ text: file.message, bad: true }); return }
+    if (file.status === 'css') {
+      setLocal(await api.listLocalThemes())
+      await choose(file.id)
+      setMessage({ text: `Imported ${file.name}. It’s in your themes folder, on this PC only.`, bad: false })
+      return
+    }
     if (file.conflict === 'none') {
       const result = await api.saveTheme(file.name, file.values)
       if (result.ok) {
@@ -124,7 +130,7 @@ export function ThemeControls({ settings, onChanged, patch }: {
       </div>
       <div className="settings-row theme-actions-row">
         <div className="settings-row-label">
-          <span className="settings-hint">Themes on this PC only are .css files in your themes folder. They never leave this PC, and each file's name is the theme's name.</span>
+          <span className="settings-hint">Themes on this PC only are .css files in your themes folder. They never leave this PC, and each file's name is the theme's name. Import… takes a .css file too, and copies it there.</span>
         </div>
         <div className="theme-actions">
           <button type="button" className="btn-secondary" onClick={() => void api.openLocalThemes()}>Open themes folder</button>

@@ -42,7 +42,7 @@ Other things you can do in a chat:
 
 - Rewind to an earlier message, or pin a message to find it again later.
 - Type `/` to list every skill and command Claude has for that project, including plugins, or `@` to find project files to mention.
-- Use `/compact`, `/context`, `/usage`, and other commands right in the chat. `/clear` starts a new chat in the same folder, `/fork` copies a chat so you can take it another way, `/rename` names it, and `/btw` asks a side question without touching the chat. Terminal commands that ClaudeCord has its own screen for open it: `/memory`, `/skills`, `/permissions`, `/theme`, `/mcp`, `/resume` and `/config`. `/status`, `/usage`, `/copy`, `/plan`, `/focus`, `/model` and `/effort` work here too, and the `/` menu lists them all. Commands that only work in Claude Code's terminal, such as `/login` or `/hooks`, offer to open the chat in one.
+- Use `/compact`, `/context`, `/usage`, and other commands right in the chat. `/clear` starts a new chat in the same folder, `/fork` copies a chat so you can take it another way, `/rename` names it, and `/btw` asks a side question without touching the chat. Terminal commands that ClaudeCord has its own screen for open it: `/memory`, `/skills`, `/permissions`, `/theme`, `/mcp`, `/resume`, `/config`, `/hooks` (see, add and remove hooks), `/diff` (what changed, file by file), `/tasks` (background tasks, with their output and a stop button), `/export` (copy the chat or save it as text) and `/plugin` (install, turn on or off, update and remove plugins and marketplaces). `/status`, `/usage`, `/copy`, `/plan`, `/focus`, `/model` and `/effort` work here too, and the `/` menu lists them all. Commands that only work in Claude Code's terminal, such as `/login` or `/ide`, offer to open the chat in one.
 - Start a message with `!` to run a shell command in the chat's folder, as you would in the terminal.
 - Use `/add-dir` or Project options to add other folders to a project.
 - Open a background task's output, or a subagent's full transcript.
@@ -92,7 +92,7 @@ Claude Code deletes chats after 30 days unless you change that setting. ClaudeCo
 
 There are six built-in themes: Paper, a light theme and the default, four dark ones (Slate & Teal, Ember, Plum & Rose, and Forest), and Terminal, which looks like Claude Code in a terminal and can cover just the chat or the whole app. Each theme comes with its own font, included with the app. You can save your appearance settings as a named theme, including your font, and import or export themes as files. If a PC doesn't have a theme's font, the default is used.
 
-You can also keep themes of your own on one PC. Put a `.css` file in the themes folder (Settings, Appearance, Open themes folder), and it appears in the theme list under its file name. It can set the theme's colors and style any part of the window, and it never leaves that PC.
+You can also keep themes of your own on one PC. Put a `.css` file in the themes folder (Settings, Appearance, Open themes folder), and it appears in the theme list under its file name. It can set the theme's colors and style any part of the window, and it never leaves that PC. Import also takes a `.css` file and copies it into that folder for you.
 
 Text size is separate for the chat and the sidebars, and holding Ctrl while using the mouse wheel over a chat changes it there. The font list comes from your PC, and code stays monospaced.
 

@@ -21,6 +21,8 @@ export const MCP_CHECK_ARGS = BASE_ARGS
 export const PLAN_USAGE_ARGS = [...INFO_ARGS, '--settings', '{"disableAllHooks":true}']
 
 const TIMEOUT_MS = 20_000
+/** A big diff takes a while to gather. */
+const CONTROL_TIMEOUT_MS = 45_000
 /** Long enough that opening several chats in one folder asks only once, short
  *  enough that a newly installed skill turns up without restarting. */
 const CACHE_MS = 5 * 60_000
@@ -229,6 +231,22 @@ export class ClaudeInfoService {
     const session = new ControlSession(this.spawnFn, this.bin(), PLAN_USAGE_ARGS, cwd)
     try {
       return await session.request('get_usage', { skip_behaviors: true })
+    } finally {
+      session.close()
+    }
+  }
+
+  /** Drops what's cached, so the next ask sees newly installed plugins' commands. */
+  forget(): void {
+    this.cache.clear()
+  }
+
+  /** One control request to a short-lived process in the folder, for a chat with no
+   *  process running. `quiet` keeps the user's startup hooks from running for it. */
+  async control(cwd: string, subtype: string, body: object = {}, opts: { quiet?: boolean } = {}): Promise<unknown> {
+    const session = new ControlSession(this.spawnFn, this.bin(), opts.quiet === true ? PLAN_USAGE_ARGS : INFO_ARGS, cwd)
+    try {
+      return await session.request(subtype, body, CONTROL_TIMEOUT_MS)
     } finally {
       session.close()
     }

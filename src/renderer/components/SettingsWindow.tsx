@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { AppSettings } from '../../shared/shell-types'
 import { McpSettings } from './McpSettings'
 import { SkillsSettings } from './SkillsSettings'
+import { PluginsSettings } from './PluginsSettings'
 import { EFFORTS } from '../../shared/models'
 import { modelOption, useClaudeModels } from './useClaudeModels'
 import { IconPicker } from './IconPicker'
@@ -14,7 +15,7 @@ import { ChatHistorySettings } from './ChatHistorySettings'
 import { SyncSettings } from './SyncSettings'
 import { ThemeControls } from './ThemeControls'
 
-export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'sync' | 'mcp' | 'skills' | 'openrouter' | 'engine'
+export type SettingsSection = 'startup' | 'updates' | 'defaults' | 'notifications' | 'appearance' | 'claude' | 'history' | 'sync' | 'mcp' | 'skills' | 'plugins' | 'openrouter' | 'engine'
 type Section = SettingsSection
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'startup', label: 'Startup & System' },
@@ -26,6 +27,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'sync', label: 'Project sync' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'skills', label: 'Skills & commands' },
+  { id: 'plugins', label: 'Plugins' },
   { id: 'openrouter', label: 'OpenRouter' },
   { id: 'engine', label: 'Engine' },
   { id: 'updates', label: 'Updates' }
@@ -185,6 +187,11 @@ export function SettingsWindow({ onClose, onSettingsChanged, projectCwd = null, 
           {section === 'skills' && (
             <Group title="Skills & commands">
               <SkillsSettings projectCwd={projectCwd} />
+            </Group>
+          )}
+          {section === 'plugins' && (
+            <Group title="Plugins">
+              <PluginsSettings projectCwd={projectCwd} />
             </Group>
           )}
           {section === 'openrouter' && (

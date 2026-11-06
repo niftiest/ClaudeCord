@@ -1318,7 +1318,14 @@ export function renameCommandOf(text: string): string | null {
  *  Code can't run them headless ("isn't available in this environment") or only prints a
  *  summary pointing back to the terminal. Checked against 2.1.318. */
 export type AppCommand =
-  | { kind: 'settings'; section: 'appearance' | 'skills' | 'claude' | 'engine' }
+  | { kind: 'settings'; section: 'appearance' | 'skills' | 'claude' | 'engine' | 'plugins' }
+  | { kind: 'hooks' }
+  | { kind: 'diff' }
+  | { kind: 'tasks' }
+  /** Bare opens the choice of copy or save; with a name it saves to the chat's folder. */
+  | { kind: 'export'; fileName: string }
+  /** `claude plugin <args>`, run at once, as `/plugin install x` does in the terminal. */
+  | { kind: 'pluginAction'; args: string[] }
   | { kind: 'memory' }
   | { kind: 'search' }
   | { kind: 'copy'; nth: number }
@@ -1368,9 +1375,34 @@ export function appCommandOf(text: string): AppCommand | null {
       if (level === 'auto' || level === 'default') return { kind: 'effort', value: '' }
       return (EFFORTS as readonly string[]).includes(level) ? { kind: 'effort', value: level } : null
     }
+    case 'hooks': return { kind: 'hooks' }
+    case 'diff': return { kind: 'diff' }
+    case 'tasks': case 'bashes': return { kind: 'tasks' }
+    case 'export': return { kind: 'export', fileName: args }
+    case 'plugin': case 'plugins': return pluginCommand(args)
+    case 'marketplace': return pluginCommand(`marketplace ${args}`)
     case 'focus': return { kind: 'focus', on: args.toLowerCase() === 'on' ? true : args.toLowerCase() === 'off' ? false : null }
     default: return null
   }
+}
+
+/** `/plugin …` as the terminal takes it: bare, `manage`, `list` or `marketplace` alone open the
+ *  Plugins screen; `install|uninstall|enable|disable|update <plugin>` and
+ *  `marketplace add|remove|update …` run at once. Anything else opens the screen too. */
+function pluginCommand(args: string): AppCommand {
+  const words = args.split(/\s+/).filter(w => w !== '')
+  const open: AppCommand = { kind: 'settings', section: 'plugins' }
+  const verb = (words[0] ?? '').toLowerCase()
+  const alias: Record<string, string> = { i: 'install', remove: 'uninstall', rm: 'uninstall' }
+  const action = alias[verb] ?? verb
+  if (['install', 'uninstall', 'enable', 'disable', 'update'].includes(action)) return words.length >= 2 ? { kind: 'pluginAction', args: [action, ...words.slice(1)] } : open
+  if (action === 'marketplace') {
+    const sub = (words[1] ?? '').toLowerCase()
+    const m = sub === 'rm' ? 'remove' : sub
+    if (m === 'add' || m === 'remove') return words.length >= 3 ? { kind: 'pluginAction', args: ['marketplace', m, ...words.slice(2)] } : open
+    if (m === 'update') return { kind: 'pluginAction', args: ['marketplace', 'update', ...words.slice(2)] }
+  }
+  return open
 }
 
 /** The nth-latest reply of Claude's, as `/copy N` counts them, or null. */

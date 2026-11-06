@@ -1,9 +1,9 @@
 import { ipcMain, app, shell, dialog, type BrowserWindow } from 'electron'
-import { readFile, stat, writeFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { copyFile, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { basename, resolve } from 'node:path'
 import { applyTheme, cleanThemeValues, deleteTheme, hasTheme, listThemes, parseThemeFile, saveTheme, themeFileText } from './catalog/themes'
 import {
-  MAX_THEME_FILE_BYTES, MAX_THEME_NAME, THEME_FILE_EXTENSION, cleanThemeName, isBuiltInThemeName, themeFileName, themeNameFromPath, themeValuesOf,
+  LOCAL_THEME_PREFIX, MAX_THEME_FILE_BYTES, MAX_THEME_NAME, THEME_FILE_EXTENSION, cleanThemeName, isBuiltInThemeName, themeFileName, themeNameFromPath, themeValuesOf,
   type ExportThemeResult, type ImportThemeResult, type SaveThemeResult, type ThemeValues
 } from '../shared/themes'
 import type { AppDialogRequest } from '../shared/app-dialog'
@@ -15,8 +15,8 @@ import { displayText } from './jsonl/synthetic'
 import { readOriginRepo } from './engine/github'
 import { search, searchProject } from './catalog/search'
 import { getSettings, updateSettings } from './catalog/settings'
-import { ensureLocalThemesDir, listLocalThemes, localThemesDir } from './local-themes'
-import type { AppSettings, ChannelMeta } from '../shared/shell-types'
+import { MAX_LOCAL_THEME_BYTES, ensureLocalThemesDir, listLocalThemes, localThemeName, localThemesDir } from './local-themes'
+import type { AppSettings, AppTheme, ChannelMeta } from '../shared/shell-types'
 import {
   getChannelMeta, setFriendlyName, setStarred, setChannelIcon, setChannelGroup,
   listGroups, createGroup, renameGroup, deleteGroup, setHidden, setGroupIcon
@@ -380,14 +380,49 @@ export function registerIpc(db: Catalog, window: BrowserWindow, hooks: IpcHooks 
       return { status: 'failed', message: e instanceof Error ? e.message : String(e) }
     }
   })
+  /** A .css theme goes into this PC's themes folder, where the app looks for them. A file
+   *  already there (picked from that folder) is used as it is. */
+  async function importCssTheme(path: string): Promise<ImportThemeResult> {
+    const name = localThemeName(basename(path))
+    if (name === null) return { status: 'invalid', message: `${basename(path)} can’t be a theme name. Rename the file, keeping .css, and import it again.` }
+    try {
+      if ((await stat(path)).size > MAX_LOCAL_THEME_BYTES) return { status: 'invalid', message: `${basename(path)} is too big for a theme (the limit is 256 KB).` }
+      const dir = ensureLocalThemesDir(localThemesDir(app.getPath('userData')))
+      const target = join(dir, `${name}.css`)
+      if (resolve(target).toLowerCase() !== resolve(path).toLowerCase()) {
+        const existing = listLocalThemes(dir).find(t => t.name.toLowerCase() === name.toLowerCase())
+        if (existing !== undefined) {
+          const choice = await hooks.ask?.({
+            title: `Replace ${existing.name}?`,
+            detail: [`Your themes folder already has ${existing.name}.css. Importing replaces it with this file.`],
+            buttons: [{ label: 'Cancel', kind: 'secondary' }, { label: 'Replace', kind: 'danger' }],
+            defaultIndex: 0,
+            cancelIndex: 0
+          })
+          if (choice !== 1) return { status: 'cancelled' }
+          // A file named Midnight.css replaces midnight.css, rather than sitting next to it.
+          if (existing.name !== name) await unlink(join(dir, `${existing.name}.css`)).catch(() => undefined)
+        }
+        await copyFile(path, target)
+      }
+      return { status: 'css', name, id: `${LOCAL_THEME_PREFIX}${name}` as AppTheme }
+    } catch (e) {
+      return { status: 'invalid', message: `Couldn’t import ${basename(path)}: ${e instanceof Error ? e.message : String(e)}` }
+    }
+  }
   ipcMain.handle(IPC.importTheme, async (): Promise<ImportThemeResult> => {
     const result = await dialog.showOpenDialog(window, {
       title: 'Import theme',
       properties: ['openFile'],
-      filters: [{ name: 'ClaudeCord theme', extensions: [THEME_FILE_EXTENSION, 'json'] }]
+      filters: [
+        { name: 'Themes', extensions: [THEME_FILE_EXTENSION, 'json', 'css'] },
+        { name: 'ClaudeCord theme', extensions: [THEME_FILE_EXTENSION, 'json'] },
+        { name: 'Theme stylesheet (this PC only)', extensions: ['css'] }
+      ]
     })
     const path = result.filePaths[0]
     if (result.canceled || path === undefined) return { status: 'cancelled' }
+    if (/\.css$/i.test(path)) return importCssTheme(path)
     const notTheme = { status: 'invalid', message: `${basename(path)} isn’t a ClaudeCord theme file.` } as const
     let text: string
     try {

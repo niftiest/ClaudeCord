@@ -57,12 +57,12 @@ export type ClaudeInfoResult = { ok: true; info: ClaudeInfo } | { ok: false; err
  *  Claude's own command list can't answer this alone: it lists a few of these
  *  and leaves out aliases that do work, such as /cost. */
 export const TERMINAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
-  'artifacts', 'autofix-pr', 'background', 'bashes', 'brief', 'bug', 'cd', 'cloud-plugins', 'daemon', 'design-login',
-  'desktop', 'diff', 'export', 'feedback', 'hooks', 'ide', 'install', 'install-github-app',
-  'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'mobile', 'passes', 'plugin', 'plugins', 'marketplace',
+  'artifacts', 'autofix-pr', 'background', 'brief', 'bug', 'cd', 'cloud-plugins', 'daemon', 'design-login',
+  'desktop', 'feedback', 'ide', 'install', 'install-github-app',
+  'install-slack-app', 'keybindings', 'login', 'logout', 'loops', 'mobile', 'passes',
   'powerup', 'privacy-settings', 'radio', 'rate-limit-options', 'rc', 'remote-control', 'remote-env',
   'restart', 'sandbox', 'scroll-speed', 'send-to-project', 'session', 'setup-bedrock', 'setup-vertex',
-  'statusline', 'stickers', 'subtask', 'tasks', 'teleport', 'terminal-setup', 'todos', 'tui', 'ultraplan', 'upgrade',
+  'statusline', 'stickers', 'subtask', 'teleport', 'terminal-setup', 'todos', 'tui', 'ultraplan', 'upgrade',
   'vim', 'voice', 'web-setup', 'wellbeing', 'workflows'
 ])
 
@@ -85,6 +85,11 @@ export const APP_COMMANDS: ReadonlyArray<Pick<ClaudeCommand, 'name' | 'descripti
   { name: 'chrome', description: 'Claude in Chrome settings', argumentHint: '', aliases: [] },
   { name: 'color', description: 'In the terminal, the prompt bar’s color; here, how to tell chats apart', argumentHint: '', aliases: [] },
   { name: 'release-notes', description: 'Claude Code’s release notes', argumentHint: '', aliases: [] },
+  { name: 'hooks', description: 'See, add and remove the hooks Claude Code runs', argumentHint: '', aliases: [] },
+  { name: 'diff', description: 'See what has changed in this folder, file by file', argumentHint: '', aliases: [] },
+  { name: 'tasks', description: 'See, follow and stop this chat’s background tasks', argumentHint: '', aliases: ['bashes'] },
+  { name: 'export', description: 'Copy or save this chat as text', argumentHint: '[filename]', aliases: [] },
+  { name: 'plugin', description: 'Install, turn on or off, update and remove plugins and marketplaces', argumentHint: '[install|enable|disable|update|uninstall <plugin>]', aliases: ['plugins', 'marketplace'] },
   { name: 'help', description: 'How commands work here', argumentHint: '', aliases: [] }
 ]
 

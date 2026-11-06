@@ -50,6 +50,8 @@ export type ImportThemeResult =
   | { status: 'cancelled' }
   | { status: 'invalid'; message: string }
   | { status: 'ready'; name: string; values: ThemeValues; conflict: 'none' | 'custom' | 'builtin' }
+  /** A .css file, now in this PC's themes folder. */
+  | { status: 'css'; name: string; id: AppTheme }
 
 export type ExportThemeResult =
   | { status: 'cancelled' }

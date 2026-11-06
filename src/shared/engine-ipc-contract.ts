@@ -5,6 +5,7 @@ import type { MemoryFile, MemoryFileContent, MemorySaveResult } from './project-
 import type { ProjectSettings, ContextUsage } from './project-options'
 import type { ClaudeInfoResult, McpCheckResult, McpServerStatus } from './claude-info-types'
 import type { SessionSummary } from './types'
+import type { ExportChatResult, HookEntry, HookScope, HooksListing, PanelResult, PluginActionResult, PluginsState, WorkspaceDiff } from './command-panels-types'
 import type { ElicitationAnswer, LiveEvent, PermissionRequest, PermissionDecision, EngineSnapshot, ExternalLock, RemoteSession, TurnInfo, BackgroundTask } from './engine-types'
 export type { EngineSnapshot, ExternalLock, RemoteSession } from './engine-types'
 // Type-only import: StreamedRow's home module reads real files (node:fs), but
@@ -78,6 +79,17 @@ export const ENGINE_IPC = {
   /** invoke: reconnect one MCP server in this chat's running process. */
   mcpReconnect: 'engine:mcpReconnect',
   mcpToggle: 'engine:mcpToggle',
+  /** invoke: /hooks -- the hooks Claude Code has for this chat, and adding or removing one. */
+  hooksListing: 'engine:hooksListing',
+  addHook: 'engine:addHook',
+  removeHook: 'engine:removeHook',
+  /** invoke: /diff -- what has changed in the chat's folder. */
+  workspaceDiff: 'engine:workspaceDiff',
+  /** invoke: /export -- the chat as text, saved to a file or handed back. */
+  exportChat: 'engine:exportChat',
+  /** invoke: /plugin -- installed and available plugins, and running `claude plugin ...`. */
+  pluginsList: 'engine:pluginsList',
+  pluginAction: 'engine:pluginAction',
   /** invoke: start a folder's MCP servers in a brief process and report on them. */
   mcpCheck: 'engine:mcpCheck',
   /** invoke: open `claude mcp login` in a terminal. */
@@ -161,6 +173,18 @@ export type EngineApi = {
   mcpReconnect(sessionPk: number, name: string): Promise<McpCheckResult>
   /** Turns a server off or on in this chat. Claude Code remembers it, as `/mcp disable` does. */
   mcpToggle(sessionPk: number, name: string, enabled: boolean): Promise<McpCheckResult>
+  /** The chat's own process answers if it has one, otherwise a brief one in its folder. */
+  hooksListing(sessionPk: number): Promise<PanelResult<HooksListing>>
+  addHook(sessionPk: number, scope: HookScope, hook: { event: string; matcher: string | null; command: string; timeout?: number }): Promise<PanelResult<HooksListing>>
+  /** Asks first, in the app's own dialog. */
+  removeHook(sessionPk: number, hook: HookEntry): Promise<PanelResult<HooksListing> | { ok: false; cancelled: true }>
+  workspaceDiff(sessionPk: number): Promise<PanelResult<WorkspaceDiff>>
+  /** 'file' asks where to save (or uses `fileName` in the chat's folder, as `/export name` does);
+   *  'text' just returns it, for the clipboard. */
+  exportChat(sessionPk: number, mode: 'file' | 'text', fileName?: string): Promise<ExportChatResult>
+  pluginsList(cwd: string | null): Promise<PanelResult<PluginsState>>
+  /** Runs `claude plugin <args>` in the folder, then has running chats reload their plugins. */
+  pluginAction(cwd: string | null, args: string[]): Promise<PluginActionResult>
   /** Starts the folder's MCP servers briefly, as a chat would. Uses no tokens. */
   mcpCheck(cwd: string | null): Promise<McpCheckResult>
   mcpLogin(cwd: string | null, name: string): Promise<{ ok: true } | { ok: false; error: string }>
